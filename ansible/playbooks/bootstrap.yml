@@ -1,0 +1,90 @@
+---
+- name: Bootstrap all servers
+  hosts: all
+  become: yes
+  gather_facts: yes
+  
+  tasks:
+    - name: Update package manager cache
+      yum:
+        update_cache: yes
+      when: ansible_os_family == "RedHat"
+    
+    - name: Install essential packages
+      yum:
+        name:
+          - python3
+          - python3-pip
+          - git
+          - vim
+          - wget
+          - htop
+          - tmux
+          - jq
+          - net-tools
+        state: present
+      when: ansible_os_family == "RedHat"
+    
+    - name: Install Docker
+      yum:
+        name:
+          - docker
+        state: present
+      when: ansible_os_family == "RedHat"
+    
+    - name: Install Python modules
+      pip:
+        name:
+          - boto3
+          - ansible
+        state: present
+        executable: pip3
+    
+    - name: Enable and start SSH service
+      systemd:
+        name: sshd
+        enabled: yes
+        state: started
+    
+    - name: Enable and start Docker service
+      systemd:
+        name: docker
+        enabled: yes
+        state: started
+      when: ansible_os_family == "RedHat"
+    
+    - name: Add ec2-user to docker group
+      user:
+        name: ec2-user
+        group: docker
+        append: yes
+      when: ansible_user == 'ec2-user'
+    
+    - name: Configure sudoers for ec2-user
+      lineinfile:
+        path: /etc/sudoers.d/90-cloud-init-users
+        state: present
+        regexp: "^ec2-user"
+        line: "ec2-user ALL=(ALL) NOPASSWD:ALL"
+        create: yes
+        mode: '0440'
+      when: ansible_user == 'ec2-user'
+    
+    - name: Create /opt directory if not exists
+      file:
+        path: /opt/aiops
+        state: directory
+        mode: '0755'
+    
+    - name: Display system info
+      debug:
+        msg: "{{ inventory_hostname }} ({{ ansible_default_ipv4.address }}): OS={{ ansible_distribution }} {{ ansible_distribution_version }}, IP={{ ansible_default_ipv4.address }}"
+    
+    - name: Verify Docker installation
+      shell: docker --version
+      register: docker_version
+      changed_when: false
+    
+    - name: Display Docker version
+      debug:
+        msg: "Docker on {{ inventory_hostname }}: {{ docker_version.stdout }}"

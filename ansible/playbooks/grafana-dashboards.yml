@@ -1,0 +1,122 @@
+---
+- name: Setup Grafana Dashboards
+  hosts: monitor
+  become: yes
+  gather_facts: no
+  
+  vars:
+    grafana_url: "http://localhost:3000"
+    grafana_user: "admin"
+    grafana_password: "admin"
+    prometheus_url: "http://prometheus:9090"
+  
+  tasks:
+    - name: Wait for Grafana to be ready
+      uri:
+        url: "{{ grafana_url }}/api/health"
+        method: GET
+        status_code: 200
+      retries: 30
+      delay: 1
+      register: grafana_ready
+      until: grafana_ready.status == 200
+    
+    - name: Create Prometheus datasource
+      uri:
+        url: "{{ grafana_url }}/api/datasources"
+        method: POST
+        user: "{{ grafana_user }}"
+        password: "{{ grafana_password }}"
+        force_basic_auth: yes
+        body_format: json
+        body: |
+          {
+            "name": "Prometheus",
+            "type": "prometheus",
+            "access": "proxy",
+            "url": "http://localhost:9090",
+            "isDefault": true,
+            "jsonData": {
+              "timeInterval": "15s"
+            }
+          }
+        status_code: [200, 409]
+      register: datasource_result
+    
+    - name: Create System Overview Dashboard
+      shell: |
+        curl -X POST "http://admin:admin@localhost:3000/api/dashboards/db" \
+          -H "Content-Type: application/json" \
+          -d @- <<'EOF'
+        {
+          "dashboard": {
+            "title": "System Overview",
+            "description": "System metrics overview",
+            "tags": ["system"],
+            "timezone": "browser",
+            "panels": [
+              {
+                "id": 1,
+                "title": "CPU Usage",
+                "type": "timeseries",
+                "gridPos": {"x": 0, "y": 0, "w": 12, "h": 8},
+                "targets": [
+                  {
+                    "expr": "100 - (avg by (instance) (irate(node_cpu_seconds_total{mode=\"idle\"}[5m])) * 100)"
+                  }
+                ]
+              },
+              {
+                "id": 2,
+                "title": "Memory Usage",
+                "type": "timeseries",
+                "gridPos": {"x": 12, "y": 0, "w": 12, "h": 8},
+                "targets": [
+                  {
+                    "expr": "100 - (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes * 100)"
+                  }
+                ]
+              },
+              {
+                "id": 3,
+                "title": "Disk Usage",
+                "type": "timeseries",
+                "gridPos": {"x": 0, "y": 8, "w": 12, "h": 8},
+                "targets": [
+                  {
+                    "expr": "100 - (node_filesystem_avail_bytes{mountpoint=\"/\"} / node_filesystem_size_bytes{mountpoint=\"/\"} * 100)"
+                  }
+                ]
+              },
+              {
+                "id": 4,
+                "title": "Network Traffic In",
+                "type": "timeseries",
+                "gridPos": {"x": 12, "y": 8, "w": 12, "h": 8},
+                "targets": [
+                  {
+                    "expr": "rate(node_network_receive_bytes_total{device!=\"lo\"}[5m])"
+                  }
+                ]
+              }
+            ],
+            "refresh": "30s",
+            "schemaVersion": 37,
+            "version": 0,
+            "overwrite": true
+          }
+        }
+        EOF
+      ignore_errors: yes
+    
+    - name: Display Grafana Dashboard URLs
+      debug:
+        msg: |
+          ✓ Grafana Dashboards Created Successfully!
+          
+          Access Grafana at: http://47.131.157.132:3000
+          Username: admin
+          Password: admin
+          
+          Dashboards Created:
+          - System Overview (CPU, Memory, Disk, Network metrics)

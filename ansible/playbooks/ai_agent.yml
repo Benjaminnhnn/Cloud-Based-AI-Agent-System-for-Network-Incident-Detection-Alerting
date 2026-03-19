@@ -1,0 +1,55 @@
+---
+- name: Deploy AI Agent
+  hosts: monitor
+  become: yes
+  gather_facts: yes
+  
+  tasks:
+    - name: Create AI Agent directory
+      file:
+        path: /opt/aiops/ai-agent
+        state: directory
+        mode: '0755'
+    
+    - name: Install AI Agent dependencies
+      yum:
+        name:
+          - python3-devel
+          - gcc
+          - libffi-devel
+          - openssl-devel
+        state: present
+      when: ansible_os_family == "RedHat"
+    
+    - name: Install ML libraries
+      pip:
+        name:
+          - numpy
+          - pandas
+          - scikit-learn
+          - requests
+        state: present
+        executable: pip3
+    
+    - name: Create AI Agent systemd service
+      copy:
+        content: |
+          [Unit]
+          Description=AI Operations Agent
+          After=network.target
+          
+          [Service]
+          Type=simple
+          User=ec2-user
+          WorkingDirectory=/opt/aiops/ai-agent
+          ExecStart=/usr/bin/python3 /opt/aiops/ai-agent/agent.py
+          Restart=on-failure
+          
+          [Install]
+          WantedBy=multi-user.target
+        dest: /etc/systemd/system/ai-agent.service
+        mode: '0644'
+    
+    - name: Display AI Agent status
+      debug:
+        msg: "AI Agent ready to deploy on {{ inventory_hostname }}"

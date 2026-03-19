@@ -1,0 +1,34 @@
+# Global variables for all hosts
+---
+# Application settings
+app_name: "aiops-bank"
+environment: "dev"
+project_owner: "aiops-team"
+
+# Directory structure
+app_root: "/opt/aiops"
+data_root: "/var/aiops"
+log_root: "/var/log/aiops"
+
+# Python settings
+python_version: "3.9"
+python_requirements: []
+
+# System settings
+timezone: "Asia/Ho_Chi_Minh"
+ntp_enabled: true
+ntp_servers:
+  - ntp.ubuntu.com
+  - pool.ntp.org
+
+# Security settings
+firewall_enabled: true
+selinux_mode: "disabled"
+
+# Monitoring settings
+monitor_enabled: true
+metrics_collection_interval: 300  # seconds
+
+# Backup settings
+backup_enabled: true
+backup_retention_days: 30

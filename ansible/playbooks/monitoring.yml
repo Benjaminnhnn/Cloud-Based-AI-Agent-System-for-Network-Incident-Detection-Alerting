@@ -1,0 +1,238 @@
+---
+# Deploy Node Exporter on all nodes
+- name: Deploy Node Exporter on all nodes
+  hosts: all
+  become: yes
+  gather_facts: yes
+  
+  tasks:
+    - name: Download node_exporter
+      shell: |
+        cd /tmp
+        wget https://github.com/prometheus/node_exporter/releases/download/v1.7.0/node_exporter-1.7.0.linux-amd64.tar.gz
+        tar xzf node_exporter-1.7.0.linux-amd64.tar.gz
+        cp node_exporter-1.7.0.linux-amd64/node_exporter /usr/local/bin/
+        chmod +x /usr/local/bin/node_exporter
+        rm -rf node_exporter-1.7.0.linux-amd64*
+      args:
+        creates: /usr/local/bin/node_exporter
+    
+    - name: Create node_exporter systemd service
+      copy:
+        content: |
+          [Unit]
+          Description=Node Exporter
+          After=network.target
+          
+          [Service]
+          Type=simple
+          User=nobody
+          ExecStart=/usr/local/bin/node_exporter --collector.processes
+          Restart=on-failure
+          
+          [Install]
+          WantedBy=multi-user.target
+        dest: /etc/systemd/system/node_exporter.service
+        mode: '0644'
+      notify: restart node_exporter
+    
+    - name: Enable and start node_exporter
+      systemd:
+        name: node_exporter
+        enabled: yes
+        state: started
+        daemon_reload: yes
+    
+    - name: Verify node_exporter is running
+      shell: curl -s http://localhost:9100/metrics | head -5
+      register: node_exporter_check
+      changed_when: false
+    
+    - name: Display node_exporter status
+      debug:
+        msg: "node_exporter running on {{ inventory_hostname }}:9100"
+  
+  handlers:
+    - name: restart node_exporter
+      systemd:
+        name: node_exporter
+        state: restarted
+        daemon_reload: yes
+
+- name: Deploy Prometheus
+  hosts: monitor
+  become: yes
+  gather_facts: yes
+  
+  tasks:
+    - name: Create prometheus user
+      user:
+        name: prometheus
+        shell: /bin/false
+        createhome: no
+        state: present
+    
+    - name: Create prometheus directories
+      file:
+        path: "{{ item }}"
+        state: directory
+        owner: prometheus
+        group: prometheus
+        mode: '0755'
+      loop:
+        - /opt/prometheus
+        - /opt/prometheus/conf
+        - /var/lib/prometheus
+    
+    - name: Download Prometheus
+      shell: |
+        cd /tmp
+        wget https://github.com/prometheus/prometheus/releases/download/v2.48.1/prometheus-2.48.1.linux-amd64.tar.gz
+        tar xzf prometheus-2.48.1.linux-amd64.tar.gz
+        cp prometheus-2.48.1.linux-amd64/prometheus /usr/local/bin/
+        cp prometheus-2.48.1.linux-amd64/promtool /usr/local/bin/
+        chmod +x /usr/local/bin/prometheus /usr/local/bin/promtool
+        cp prometheus-2.48.1.linux-amd64/consoles -r /opt/prometheus/
+        cp prometheus-2.48.1.linux-amd64/console_libraries -r /opt/prometheus/
+        chown -R prometheus:prometheus /opt/prometheus
+        rm -rf prometheus-2.48.1.linux-amd64*
+      args:
+        creates: /usr/local/bin/prometheus
+    
+    - name: Create Prometheus configuration
+      copy:
+        content: |
+          global:
+            scrape_interval: 15s
+            evaluation_interval: 15s
+          
+          scrape_configs:
+            - job_name: 'prometheus'
+              static_configs:
+                - targets: ['localhost:9090']
+            
+            - job_name: 'node'
+              static_configs:
+                - targets: 
+                  - 'localhost:9100'
+                  - '10.10.1.169:9100'
+                  - '10.10.1.56:9100'
+                  - '10.10.1.232:9100'
+        dest: /opt/prometheus/conf/prometheus.yml
+        owner: prometheus
+        group: prometheus
+        mode: '0644'
+    
+    - name: Create Prometheus systemd service
+      copy:
+        content: |
+          [Unit]
+          Description=Prometheus
+          Wants=network-online.target
+          After=network-online.target
+          
+          [Service]
+          Type=simple
+          User=prometheus
+          Group=prometheus
+          ExecStart=/usr/local/bin/prometheus \
+            --config.file=/opt/prometheus/conf/prometheus.yml \
+            --storage.tsdb.path=/var/lib/prometheus
+          Restart=on-failure
+          
+          [Install]
+          WantedBy=multi-user.target
+        dest: /etc/systemd/system/prometheus.service
+        mode: '0644'
+      notify: restart prometheus
+    
+    - name: Enable and start Prometheus
+      systemd:
+        name: prometheus
+        enabled: yes
+        state: started
+        daemon_reload: yes
+    
+    - name: Verify Prometheus is running
+      shell: curl -s http://localhost:9090/api/v1/query?query=up | head -10
+      register: prometheus_check
+      changed_when: false
+    
+    - name: Display Prometheus info
+      debug:
+        msg: "Prometheus running at http://47.131.157.132:9090"
+  
+  handlers:
+    - name: restart prometheus
+      systemd:
+        name: prometheus
+        state: restarted
+        daemon_reload: yes
+
+- name: Deploy Grafana
+  hosts: monitor
+  become: yes
+  gather_facts: yes
+  
+  tasks:
+    - name: Create Grafana container
+      shell: |
+        docker run -d \
+          --name grafana \
+          --restart=always \
+          -p 3000:3000 \
+          -e "GF_SECURITY_ADMIN_PASSWORD=admin" \
+          -e "GF_USERS_ALLOW_SIGN_UP=false" \
+          grafana/grafana:latest
+      args:
+        creates: /var/lib/docker/containers/
+      ignore_errors: yes
+    
+    - name: Wait for Grafana to be ready
+      uri:
+        url: http://localhost:3000/api/health
+        method: GET
+        status_code: 200
+      register: grafana_status
+      retries: 30
+      delay: 2
+      until: grafana_status.status == 200
+      ignore_errors: yes
+    
+    - name: Add Prometheus datasource to Grafana
+      shell: |
+        curl -X POST http://admin:admin@localhost:3000/api/datasources \
+          -H "Content-Type: application/json" \
+          -d '{
+            "name": "Prometheus",
+            "type": "prometheus",
+            "access": "proxy",
+            "url": "http://localhost:9090",
+            "isDefault": true
+          }'
+      ignore_errors: yes
+    
+    - name: Display Grafana info
+      debug:
+        msg: |
+          Grafana running at http://47.131.157.132:3000
+          Default credentials: admin / admin
+
+- name: Monitoring Stack Summary
+  hosts: monitor
+  gather_facts: no
+  
+  tasks:
+    - name: Display monitoring stack status
+      debug:
+        msg: |
+          ✓ MONITORING STACK DEPLOYED
+          
+          Services:
+          - Node Exporter: http://47.131.157.132:9100/metrics
+          - Prometheus: http://47.131.157.132:9090
+          - Grafana: http://47.131.157.132:3000
+          
+          Default Credentials:
+          - Grafana: admin / admin
+          - Prometheus: (no auth required)

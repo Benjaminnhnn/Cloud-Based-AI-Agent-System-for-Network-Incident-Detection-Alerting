@@ -1,0 +1,52 @@
+# Terraform
+*.tfstate
+*.tfstate.*
+*.tfstate.backup
+terraform/.terraform/
+terraform/.terraform.lock.hcl
+terraform/apply_output.txt
+.terraform/
+
+# Ansible
+*.retry
+.ansible-vault
+
+# AWS & Credentials
+.aws/
+*.pem
+*.pub
+id_rsa
+id_rsa.pub
+.env
+.env.local
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+dist/
+build/
+venv/
+env/
+
+# VS Code & IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Temporary
+*.tmp
+/tmp/
+temp/
+.history
+
+# Sensitive data
+secrets/
+keys/
+*.key
