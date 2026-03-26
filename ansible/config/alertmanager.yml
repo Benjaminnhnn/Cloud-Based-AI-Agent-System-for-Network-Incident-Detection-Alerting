@@ -66,3 +66,6 @@ inhibit_rules:
 
 receivers:
   - name: 'default'
+    webhook_configs:
+      - url: 'http://localhost:8080/webhook'
+        send_resolved: true
