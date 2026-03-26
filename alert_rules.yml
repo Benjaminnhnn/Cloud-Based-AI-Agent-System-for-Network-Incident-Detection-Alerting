@@ -1,0 +1,98 @@
+groups:
+  - name: system_alerts
+    interval: 15s
+    rules:
+      # CPU Alerts
+      - alert: HighCPUUsage
+        expr: (100 - (avg by (instance) (irate(node_cpu_seconds_total{mode="idle"}[5m])) * 100)) > 80
+        for: 2m
+        labels:
+          severity: warning
+          service: system
+        annotations:
+          summary: "High CPU usage on {{ $labels.instance }}"
+          description: "CPU usage is {{ $value }}% on {{ $labels.instance }}"
+      
+      - alert: CriticalCPUUsage
+        expr: (100 - (avg by (instance) (irate(node_cpu_seconds_total{mode="idle"}[5m])) * 100)) > 95
+        for: 1m
+        labels:
+          severity: critical
+          service: system
+        annotations:
+          summary: "CRITICAL CPU usage on {{ $labels.instance }}"
+          description: "CPU usage is {{ $value }}% on {{ $labels.instance }}"
+      
+      # Memory Alerts
+      - alert: HighMemoryUsage
+        expr: (100 - (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes * 100)) > 85
+        for: 2m
+        labels:
+          severity: warning
+          service: system
+        annotations:
+          summary: "High memory usage on {{ $labels.instance }}"
+          description: "Memory usage is {{ $value }}% on {{ $labels.instance }}"
+      
+      - alert: CriticalMemoryUsage
+        expr: (100 - (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes * 100)) > 95
+        for: 1m
+        labels:
+          severity: critical
+          service: system
+        annotations:
+          summary: "CRITICAL memory usage on {{ $labels.instance }}"
+          description: "Memory usage is {{ $value }}% on {{ $labels.instance }}"
+      
+      # Disk Alerts
+      - alert: HighDiskUsage
+        expr: (100 - (node_filesystem_avail_bytes{mountpoint="/"} / node_filesystem_size_bytes{mountpoint="/"} * 100)) > 80
+        for: 5m
+        labels:
+          severity: warning
+          service: system
+        annotations:
+          summary: "High disk usage on {{ $labels.instance }}"
+          description: "Disk usage is {{ $value }}% on {{ $labels.instance }}"
+      
+      - alert: CriticalDiskUsage
+        expr: (100 - (node_filesystem_avail_bytes{mountpoint="/"} / node_filesystem_size_bytes{mountpoint="/"} * 100)) > 90
+        for: 2m
+        labels:
+          severity: critical
+          service: system
+        annotations:
+          summary: "CRITICAL disk usage on {{ $labels.instance }}"
+          description: "Disk usage is {{ $value }}% on {{ $labels.instance }}"
+      
+      # Network Alerts
+      - alert: HighNetworkTraffic
+        expr: rate(node_network_receive_bytes_total{device!="lo"}[5m]) > 10000000
+        for: 2m
+        labels:
+          severity: warning
+          service: system
+        annotations:
+          summary: "High network traffic on {{ $labels.instance }}"
+          description: "Network receive traffic is {{ $value | humanizePercentage }} on {{ $labels.instance }}"
+      
+      # Service Availability Alerts
+      - alert: ServiceDown
+        expr: up{service!=""} == 0
+        for: 1m
+        labels:
+          severity: critical
+          service: availability
+        annotations:
+          summary: "Service {{ $labels.service }} is DOWN"
+          description: "{{ $labels.service }} service on {{ $labels.instance }} is not responding"
+      
+      - alert: ServiceUnreachable
+        expr: up{service!=""} == 0
+        for: 30s
+        labels:
+          severity: warning
+          service: availability
+        annotations:
+          summary: "Service {{ $labels.service }} is unreachable"
+          description: "{{ $labels.service }} on {{ $labels.instance }} failed health check"

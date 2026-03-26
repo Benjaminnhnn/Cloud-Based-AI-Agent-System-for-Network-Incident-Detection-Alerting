@@ -1,0 +1,133 @@
+.login-container {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+}
+
+.login-card {
+  width: 100%;
+  max-width: 500px;
+  border-radius: 22px;
+  border: 1px solid rgba(76, 196, 131, 0.2);
+  background:
+    radial-gradient(circle at 100% 0%, rgba(43, 168, 116, 0.12), transparent 32%),
+    rgba(14, 19, 30, 0.94);
+  box-shadow: 0 24px 52px rgba(0, 0, 0, 0.4);
+  padding: 26px;
+  color: var(--text-primary);
+}
+
+.login-header {
+  margin-bottom: 18px;
+  text-align: center;
+}
+
+.login-header h1 {
+  font-size: clamp(1.5rem, 2.5vw, 2rem);
+  margin-bottom: 4px;
+}
+
+.login-header p {
+  color: var(--text-secondary);
+}
+
+.login-form {
+  display: grid;
+  gap: 12px;
+}
+
+.login-card .form-group {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.login-card .form-group label {
+  font-size: 0.84rem;
+  color: #d6e0f8;
+}
+
+.login-card .input-group {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid rgba(126, 143, 183, 0.33);
+  border-radius: 12px;
+  padding: 0 10px;
+  background: rgba(24, 30, 48, 0.86);
+}
+
+.login-card .input-icon {
+  color: #8ea2d2;
+}
+
+.login-card .form-group input {
+  width: 100%;
+  border: 0;
+  background: transparent;
+  color: var(--text-primary);
+  padding: 10px 0;
+  outline: none;
+}
+
+.error-message {
+  border-radius: 10px;
+  border: 1px solid rgba(255, 142, 167, 0.42);
+  background: rgba(117, 41, 64, 0.38);
+  color: #ffc7d5;
+  font-size: 0.86rem;
+  padding: 8px 10px;
+}
+
+.login-btn,
+.demo-btn {
+  border-radius: 12px;
+  padding: 10px 14px;
+  font-weight: 700;
+}
+
+.login-btn {
+  color: #f0f5ff;
+  background: linear-gradient(135deg, var(--green-300), var(--green-500));
+}
+
+.login-btn:disabled {
+  opacity: 0.6;
+}
+
+.login-footer {
+  margin: 12px 0;
+  text-align: center;
+  color: var(--text-secondary);
+}
+
+.toggle-btn {
+  color: var(--green-100);
+  margin-left: 6px;
+  font-weight: 700;
+}
+
+.demo-credentials {
+  border-radius: 12px;
+  border: 1px solid rgba(123, 141, 182, 0.35);
+  background: rgba(24, 31, 49, 0.8);
+  padding: 12px;
+  font-size: 0.88rem;
+  color: #dbe4ff;
+}
+
+.demo-credentials p {
+  margin-bottom: 4px;
+}
+
+.demo-credentials p:last-of-type {
+  margin-bottom: 10px;
+}
+
+.demo-btn {
+  width: 100%;
+  border: 1px solid rgba(124, 142, 181, 0.4);
+  background: rgba(35, 44, 68, 0.84);
+  color: #dbe4ff;
+}

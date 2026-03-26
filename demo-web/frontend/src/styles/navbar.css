@@ -1,0 +1,173 @@
+.navbar {
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+}
+
+.navbar-search {
+  flex: 1;
+  max-width: 420px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: linear-gradient(155deg, rgba(29, 42, 50, 0.8), rgba(19, 24, 39, 0.92));
+  border: 1px solid rgba(147, 178, 161, 0.22);
+  border-radius: 14px;
+  padding: 11px 14px;
+}
+
+.search-icon {
+  color: #95a2c3;
+}
+
+.navbar-search input {
+  width: 100%;
+  border: 0;
+  background: transparent;
+  color: var(--text-primary);
+  font-size: 0.92rem;
+  outline: none;
+}
+
+.navbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.nav-icon-btn {
+  width: 38px;
+  height: 38px;
+  border-radius: 11px;
+  display: grid;
+  place-items: center;
+  background: rgba(20, 25, 40, 0.92);
+  border: 1px solid rgba(137, 152, 192, 0.25);
+  color: #ced8f2;
+}
+
+.action-btn {
+  height: 40px;
+  border-radius: 12px;
+  padding: 0 16px;
+  font-weight: 600;
+  font-size: 0.9rem;
+}
+
+.withdraw-btn {
+  background: rgba(26, 31, 46, 0.94);
+  border: 1px solid rgba(124, 139, 180, 0.34);
+  color: #d5def7;
+}
+
+.deposit-btn {
+  background: linear-gradient(135deg, var(--green-300), var(--green-500));
+  color: #f0f5ff;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  box-shadow: 0 10px 28px rgba(43, 168, 116, 0.35);
+}
+
+.user-menu {
+  position: relative;
+}
+
+.user-btn {
+  border-radius: 12px;
+  border: 1px solid rgba(125, 144, 186, 0.32);
+  background: rgba(18, 24, 39, 0.92);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 12px 6px 8px;
+}
+
+.user-avatar {
+  width: 34px;
+  height: 34px;
+  border-radius: 999px;
+  background: linear-gradient(145deg, var(--green-300), var(--green-700));
+  display: grid;
+  place-items: center;
+  font-weight: 800;
+  color: #f0f5ff;
+}
+
+.user-meta {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  line-height: 1.15;
+}
+
+.user-meta strong {
+  font-size: 0.88rem;
+  color: #f0f6ff;
+}
+
+.user-meta small {
+  font-size: 0.75rem;
+  color: #95a1bd;
+}
+
+.dropdown-menu {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  min-width: 180px;
+  border-radius: 12px;
+  overflow: hidden;
+  border: 1px solid rgba(136, 153, 194, 0.35);
+  background: rgba(14, 18, 29, 0.97);
+  box-shadow: var(--shadow-soft);
+  z-index: 10;
+}
+
+.dropdown-menu button {
+  width: 100%;
+  text-align: left;
+  padding: 10px 12px;
+  color: #e3e9fa;
+  border-bottom: 1px solid rgba(104, 117, 155, 0.25);
+}
+
+.dropdown-menu button:last-child {
+  border-bottom: none;
+}
+
+.dropdown-menu button:hover {
+  background: rgba(30, 38, 59, 0.92);
+}
+
+.logout-link {
+  color: #ffc4d2;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+@media (max-width: 991px) {
+  .navbar {
+    flex-wrap: wrap;
+    justify-content: flex-start;
+  }
+
+  .navbar-search {
+    min-width: 240px;
+    max-width: 100%;
+    flex: 1 1 100%;
+  }
+
+  .user-meta {
+    display: none;
+  }
+}
+
+@media (max-width: 640px) {
+  .action-btn.withdraw-btn {
+    display: none;
+  }
+}

@@ -12,19 +12,19 @@ resource "aws_security_group" "monitor_sg" {
   }
 
   ingress {
-    description = "Grafana from my IP"
-    from_port   = 3000
-    to_port     = 3000
+    description = "Grafana from internet"
+    from_port   = 3001
+    to_port     = 3001
     protocol    = "tcp"
-    cidr_blocks = [var.my_ip_cidr]
+    cidr_blocks = ["0.0.0.0/0"]
   }
 
   ingress {
-    description = "Prometheus from my IP"
+    description = "Prometheus from internet"
     from_port   = 9090
     to_port     = 9090
     protocol    = "tcp"
-    cidr_blocks = [var.my_ip_cidr]
+    cidr_blocks = ["0.0.0.0/0"]
   }
 
   ingress {
@@ -62,11 +62,11 @@ resource "aws_security_group" "web_sg" {
   }
 
   ingress {
-    description = "Web app demo from my IP"
-    from_port   = 8080
-    to_port     = 8080
+    description = "Web app from internet"
+    from_port   = 3000
+    to_port     = 3000
     protocol    = "tcp"
-    cidr_blocks = [var.my_ip_cidr]
+    cidr_blocks = ["0.0.0.0/0"]
   }
 
   ingress {
@@ -117,6 +117,14 @@ resource "aws_security_group" "core_sg" {
     to_port     = 22
     protocol    = "tcp"
     cidr_blocks = [var.my_ip_cidr]
+  }
+
+  ingress {
+    description = "API from internet"
+    from_port   = 8000
+    to_port     = 8000
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
   }
 
   ingress {

@@ -1,5 +1,5 @@
 aws_region       = "ap-southeast-1"
-my_ip_cidr       = "210.245.33.200/32"
+my_ip_cidr       = "171.246.136.39/32"
 public_key_path  = "/mnt/c/Users/win/.ssh/id_rsa.pub"
 private_key_path = "/mnt/c/Users/win/.ssh/id_rsa"
 

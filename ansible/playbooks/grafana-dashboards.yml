@@ -7,7 +7,7 @@
   vars:
     grafana_url: "http://localhost:3000"
     grafana_user: "admin"
-    grafana_password: "admin"
+    grafana_password: "admin123"
     prometheus_url: "http://prometheus:9090"
   
   tasks:
@@ -20,6 +20,16 @@
       delay: 1
       register: grafana_ready
       until: grafana_ready.status == 200
+    
+    - name: Wait for Prometheus to be ready
+      uri:
+        url: "{{ prometheus_url }}/api/v1/query"
+        method: GET
+        status_code: 200
+      retries: 30
+      delay: 1
+      register: prometheus_ready
+      until: prometheus_ready.status == 200
     
     - name: Create Prometheus datasource
       uri:
@@ -34,7 +44,7 @@
             "name": "Prometheus",
             "type": "prometheus",
             "access": "proxy",
-            "url": "http://localhost:9090",
+            "url": "http://prometheus:9090",
             "isDefault": true,
             "jsonData": {
               "timeInterval": "15s"
@@ -43,66 +53,324 @@
         status_code: [200, 409]
       register: datasource_result
     
-    - name: Create System Overview Dashboard
+    - name: Create System Overview Dashboard with Status Indicators
       shell: |
-        curl -X POST "http://admin:admin@localhost:3000/api/dashboards/db" \
+        curl -s -X POST "http://admin:admin123@localhost:3000/api/dashboards/db" \
           -H "Content-Type: application/json" \
           -d @- <<'EOF'
         {
           "dashboard": {
-            "title": "System Overview",
-            "description": "System metrics overview",
-            "tags": ["system"],
+            "title": "System Overview - Real-time Monitoring",
+            "description": "Real-time system metrics with status indicators (Green/Yellow/Red)",
+            "tags": ["system", "monitoring"],
             "timezone": "browser",
+            "refresh": "5s",
+            "time": {
+              "from": "now-6h",
+              "to": "now"
+            },
             "panels": [
               {
                 "id": 1,
-                "title": "CPU Usage",
-                "type": "timeseries",
-                "gridPos": {"x": 0, "y": 0, "w": 12, "h": 8},
+                "title": "CPU Usage %",
+                "type": "gauge",
+                "gridPos": {"x": 0, "y": 0, "w": 6, "h": 8},
+                "fieldConfig": {
+                  "defaults": {
+                    "unit": "percent",
+                    "custom": {
+                      "hideFrom": {
+                        "tooltip": false,
+                        "viz": false,
+                        "legend": false
+                      }
+                    },
+                    "color": {
+                      "mode": "thresholds"
+                    },
+                    "thresholds": {
+                      "mode": "absolute",
+                      "steps": [
+                        {"color": "green", "value": null},
+                        {"color": "yellow", "value": 70},
+                        {"color": "orange", "value": 85},
+                        {"color": "red", "value": 95}
+                      ]
+                    }
+                  }
+                },
                 "targets": [
                   {
-                    "expr": "100 - (avg by (instance) (irate(node_cpu_seconds_total{mode=\"idle\"}[5m])) * 100)"
+                    "expr": "100 - (avg by (instance) (irate(node_cpu_seconds_total{mode=\"idle\"}[5m])) * 100)",
+                    "legendFormat": "{{ instance }}"
                   }
                 ]
               },
               {
                 "id": 2,
-                "title": "Memory Usage",
-                "type": "timeseries",
-                "gridPos": {"x": 12, "y": 0, "w": 12, "h": 8},
+                "title": "Memory Usage %",
+                "type": "gauge",
+                "gridPos": {"x": 6, "y": 0, "w": 6, "h": 8},
+                "fieldConfig": {
+                  "defaults": {
+                    "unit": "percent",
+                    "custom": {
+                      "hideFrom": {
+                        "tooltip": false,
+                        "viz": false,
+                        "legend": false
+                      }
+                    },
+                    "color": {
+                      "mode": "thresholds"
+                    },
+                    "thresholds": {
+                      "mode": "absolute",
+                      "steps": [
+                        {"color": "green", "value": null},
+                        {"color": "yellow", "value": 70},
+                        {"color": "orange", "value": 85},
+                        {"color": "red", "value": 95}
+                      ]
+                    }
+                  }
+                },
                 "targets": [
                   {
-                    "expr": "100 - (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes * 100)"
+                    "expr": "100 - (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes * 100)",
+                    "legendFormat": "{{ instance }}"
                   }
                 ]
               },
               {
                 "id": 3,
-                "title": "Disk Usage",
-                "type": "timeseries",
-                "gridPos": {"x": 0, "y": 8, "w": 12, "h": 8},
+                "title": "Disk Usage %",
+                "type": "gauge",
+                "gridPos": {"x": 12, "y": 0, "w": 6, "h": 8},
+                "fieldConfig": {
+                  "defaults": {
+                    "unit": "percent",
+                    "custom": {
+                      "hideFrom": {
+                        "tooltip": false,
+                        "viz": false,
+                        "legend": false
+                      }
+                    },
+                    "color": {
+                      "mode": "thresholds"
+                    },
+                    "thresholds": {
+                      "mode": "absolute",
+                      "steps": [
+                        {"color": "green", "value": null},
+                        {"color": "yellow", "value": 75},
+                        {"color": "orange", "value": 85},
+                        {"color": "red", "value": 95}
+                      ]
+                    }
+                  }
+                },
                 "targets": [
                   {
-                    "expr": "100 - (node_filesystem_avail_bytes{mountpoint=\"/\"} / node_filesystem_size_bytes{mountpoint=\"/\"} * 100)"
+                    "expr": "100 - (node_filesystem_avail_bytes{mountpoint=\"/\"} / node_filesystem_size_bytes{mountpoint=\"/\"} * 100)",
+                    "legendFormat": "{{ device }}"
                   }
                 ]
               },
               {
                 "id": 4,
-                "title": "Network Traffic In",
+                "title": "CPU Usage Over Time",
                 "type": "timeseries",
-                "gridPos": {"x": 12, "y": 8, "w": 12, "h": 8},
+                "gridPos": {"x": 0, "y": 8, "w": 12, "h": 8},
+                "fieldConfig": {
+                  "defaults": {
+                    "unit": "percent",
+                    "custom": {
+                      "lineWidth": 2,
+                      "fillOpacity": 20
+                    },
+                    "color": {
+                      "mode": "palette-classic"
+                    }
+                  }
+                },
                 "targets": [
                   {
-                    "expr": "rate(node_network_receive_bytes_total{device!=\"lo\"}[5m])"
+                    "expr": "100 - (avg by (instance) (irate(node_cpu_seconds_total{mode=\"idle\"}[5m])) * 100)",
+                    "legendFormat": "{{ instance }}"
+                  }
+                ]
+              },
+              {
+                "id": 5,
+                "title": "Memory Usage Over Time",
+                "type": "timeseries",
+                "gridPos": {"x": 12, "y": 8, "w": 12, "h": 8},
+                "fieldConfig": {
+                  "defaults": {
+                    "unit": "percent",
+                    "custom": {
+                      "lineWidth": 2,
+                      "fillOpacity": 20
+                    },
+                    "color": {
+                      "mode": "palette-classic"
+                    }
+                  }
+                },
+                "targets": [
+                  {
+                    "expr": "100 - (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes * 100)",
+                    "legendFormat": "{{ instance }}"
+                  }
+                ]
+              },
+              {
+                "id": 6,
+                "title": "Disk Usage Over Time",
+                "type": "timeseries",
+                "gridPos": {"x": 0, "y": 16, "w": 12, "h": 8},
+                "fieldConfig": {
+                  "defaults": {
+                    "unit": "percent",
+                    "custom": {
+                      "lineWidth": 2,
+                      "fillOpacity": 20
+                    },
+                    "color": {
+                      "mode": "palette-classic"
+                    }
+                  }
+                },
+                "targets": [
+                  {
+                    "expr": "100 - (node_filesystem_avail_bytes{mountpoint=\"/\"} / node_filesystem_size_bytes{mountpoint=\"/\"} * 100)",
+                    "legendFormat": "{{ device }}"
+                  }
+                ]
+              },
+              {
+                "id": 7,
+                "title": "Network Traffic (Bytes/sec)",
+                "type": "timeseries",
+                "gridPos": {"x": 12, "y": 16, "w": 12, "h": 8},
+                "fieldConfig": {
+                  "defaults": {
+                    "unit": "Bps",
+                    "custom": {
+                      "lineWidth": 2,
+                      "fillOpacity": 10
+                    },
+                    "color": {
+                      "mode": "palette-classic"
+                    }
+                  }
+                },
+                "targets": [
+                  {
+                    "expr": "rate(node_network_receive_bytes_total{device!=\"lo\"}[15s])",
+                    "legendFormat": "RX {{ device }}"
+                  },
+                  {
+                    "expr": "rate(node_network_transmit_bytes_total{device!=\"lo\"}[15s])",
+                    "legendFormat": "TX {{ device }}"
+                  }
+                ]
+              },
+              {
+                "id": 8,
+                "title": "Active Alerts",
+                "type": "stat",
+                "gridPos": {"x": 0, "y": 24, "w": 6, "h": 4},
+                "fieldConfig": {
+                  "defaults": {
+                    "unit": "short",
+                    "color": {
+                      "mode": "thresholds"
+                    },
+                    "thresholds": {
+                      "mode": "absolute",
+                      "steps": [
+                        {"color": "green", "value": null},
+                        {"color": "yellow", "value": 1},
+                        {"color": "red", "value": 5}
+                      ]
+                    }
+                  }
+                },
+                "targets": [
+                  {
+                    "expr": "count(ALERTS{severity=\"warning\"})",
+                    "legendFormat": "Warning"
+                  }
+                ]
+              },
+              {
+                "id": 9,
+                "title": "Critical Alerts",
+                "type": "stat",
+                "gridPos": {"x": 6, "y": 24, "w": 6, "h": 4},
+                "fieldConfig": {
+                  "defaults": {
+                    "unit": "short",
+                    "color": {
+                      "mode": "thresholds"
+                    },
+                    "thresholds": {
+                      "mode": "absolute",
+                      "steps": [
+                        {"color": "green", "value": null, "text": "OK"},
+                        {"color": "red", "value": 1, "text": "CRITICAL"}
+                      ]
+                    }
+                  }
+                },
+                "targets": [
+                  {
+                    "expr": "count(ALERTS{severity=\"critical\"})",
+                    "legendFormat": "Critical"
+                  }
+                ]
+              },
+              {
+                "id": 10,
+                "title": "Service Status",
+                "type": "stat",
+                "gridPos": {"x": 12, "y": 24, "w": 12, "h": 4},
+                "fieldConfig": {
+                  "defaults": {
+                    "unit": "short",
+                    "custom": {
+                      "hideFrom": {
+                        "tooltip": false,
+                        "viz": false,
+                        "legend": false
+                      }
+                    },
+                    "color": {
+                      "mode": "thresholds"
+                    },
+                    "thresholds": {
+                      "mode": "absolute",
+                      "steps": [
+                        {"color": "red", "value": null, "text": "DOWN"},
+                        {"color": "green", "value": 1, "text": "UP"}
+                      ]
+                    }
+                  }
+                },
+                "targets": [
+                  {
+                    "expr": "up{service!=\"\"}",
+                    "legendFormat": "{{ service }} ({{ instance }})"
                   }
                 ]
               }
             ],
-            "refresh": "30s",
+            "refresh": "5s",
             "schemaVersion": 37,
-            "version": 0,
+            "version": 1,
             "overwrite": true
           }
         }
@@ -112,11 +380,53 @@
     - name: Display Grafana Dashboard URLs
       debug:
         msg: |
-          ✓ Grafana Dashboards Created Successfully!
+          ✓ Grafana Monitoring Setup Complete!
           
-          Access Grafana at: http://47.131.157.132:3000
+          DASHBOARDS & ALERTS:
+          ==================
+          1. Grafana Dashboard: http://{{ ansible_host }}:3001
+             - Real-time metrics with 5s refresh
+             - Status indicators: Green (OK) → Yellow (Warning) → Red (Critical)
+             - CPU, Memory, Disk, Network panels
+             - Active alerts display
+          
+          2. AlertManager: http://{{ ansible_host }}:9093
+             - Alert deduplication status
+             - Grouped alerts by severity
+             - No spam - each incident = 1 alert
+          
+          3. Prometheus: http://{{ ansible_host }}:9090
+             - Query metrics directly
+             - Alert rules
+          
+          LOGIN CREDENTIALS:
+          ==================
           Username: admin
-          Password: admin
+          Password: admin123
+          
+          METRIC COLLECTION:
+          ==================
+          ✓ Interval: Every 15 seconds
+          ✓ Retention: 24/7 continuous
+          ✓ Metrics: CPU, RAM, Disk, Network
+          ✓ Alert Deduplication: ENABLED
+          
+          ALERT RULES CONFIGURED:
+          ========================
+          - High CPU (>80%) - Yellow, Critical (>95%) - Red
+          - High Memory (>85%) - Yellow, Critical (>95%) - Red
+          - High Disk (>80%) - Yellow, Critical (>90%) - Red
+          - High Network Traffic
+          - Service Down/Unreachable
+          
+          DEDUPLICATION SETTINGS (No Spam):
+          ==================================
+          - Critical alerts: Re-notify every 1 hour
+          - Warning alerts: Re-notify every 4 hours
+          - System alerts: Re-notify every 6 hours
+          - Group wait: 5-10 seconds
+          - Inhibition: Suppress warnings when critical exists
+
           
           Dashboards Created:
           - System Overview (CPU, Memory, Disk, Network metrics)

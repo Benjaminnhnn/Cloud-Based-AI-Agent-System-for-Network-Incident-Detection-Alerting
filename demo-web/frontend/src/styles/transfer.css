@@ -1,0 +1,234 @@
+.transfer {
+  color: var(--text-primary);
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.transfer-header h1 {
+  font-size: clamp(1.45rem, 2.3vw, 2rem);
+  margin-bottom: 4px;
+}
+
+.transfer-header p {
+  color: var(--text-secondary);
+}
+
+.transfer-container {
+  display: grid;
+  grid-template-columns: minmax(0, 1.8fr) minmax(270px, 1fr);
+  gap: 16px;
+}
+
+.transfer-form-wrapper,
+.transfer-info,
+.transfer-success .success-card {
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--glass-border);
+  background: var(--glass-card);
+  box-shadow: var(--shadow-soft);
+}
+
+.transfer-form {
+  padding: 16px;
+  display: grid;
+  gap: 14px;
+}
+
+.transfer .form-section {
+  border: 1px solid rgba(121, 138, 178, 0.3);
+  border-radius: 14px;
+  padding: 14px;
+}
+
+.transfer .form-section legend {
+  color: #c5d1ef;
+  font-weight: 700;
+  padding: 0 8px;
+}
+
+.transfer .form-group {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.transfer .form-group label {
+  color: #d6e0f8;
+  font-size: 0.88rem;
+}
+
+.transfer .form-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
+.transfer .input-group,
+.transfer .form-group input,
+.transfer .form-group textarea,
+.transfer .account-select {
+  border: 1px solid rgba(127, 145, 184, 0.35);
+  background: rgba(23, 30, 48, 0.8);
+  border-radius: 12px;
+}
+
+.transfer .input-group {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 10px;
+}
+
+.transfer .input-icon,
+.transfer .currency-symbol {
+  color: var(--text-secondary);
+}
+
+.transfer .input-group input,
+.transfer .form-group input,
+.transfer .form-group textarea,
+.transfer .account-select {
+  width: 100%;
+  border: 0;
+  background: transparent;
+  color: var(--text-primary);
+  outline: none;
+  padding: 10px;
+}
+
+.transfer .transfer-summary {
+  border: 1px solid rgba(124, 142, 180, 0.3);
+  border-radius: 14px;
+  padding: 12px;
+  background: rgba(23, 31, 47, 0.75);
+}
+
+.transfer .transfer-summary h3 {
+  margin-bottom: 8px;
+}
+
+.transfer .summary-item {
+  display: flex;
+  justify-content: space-between;
+  padding: 7px 0;
+  color: var(--text-secondary);
+}
+
+.transfer .summary-item.total {
+  color: #e8efff;
+  font-weight: 700;
+}
+
+.transfer .summary-divider {
+  border-top: 1px solid rgba(126, 143, 181, 0.35);
+}
+
+.transfer .form-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.transfer .transfer-btn,
+.transfer .reset-btn,
+.transfer .recipient-btn,
+.transfer .danger-btn {
+  border-radius: 12px;
+  padding: 10px 14px;
+}
+
+.transfer .transfer-btn {
+  flex: 1;
+  display: inline-flex;
+  justify-content: center;
+  align-items: center;
+  gap: 8px;
+  color: #f0f5ff;
+  font-weight: 700;
+  background: linear-gradient(135deg, var(--green-300), var(--green-500));
+}
+
+.transfer .transfer-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.transfer .reset-btn {
+  border: 1px solid rgba(126, 143, 180, 0.4);
+  background: rgba(28, 35, 54, 0.8);
+  color: #d3dcf8;
+}
+
+.transfer .transfer-info {
+  padding: 16px;
+  display: grid;
+  gap: 10px;
+  align-content: start;
+}
+
+.transfer .info-card,
+.transfer .recent-recipients {
+  border-radius: 12px;
+  border: 1px solid rgba(119, 138, 178, 0.3);
+  background: rgba(25, 33, 52, 0.82);
+  padding: 12px;
+}
+
+.transfer .info-card h3,
+.transfer .recent-recipients h3 {
+  margin-bottom: 6px;
+  font-size: 0.98rem;
+}
+
+.transfer .info-card p {
+  color: var(--text-secondary);
+  font-size: 0.88rem;
+}
+
+.transfer .recipient-list {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.transfer .recipient-btn {
+  border: 1px solid rgba(124, 142, 181, 0.4);
+  background: rgba(31, 39, 59, 0.88);
+  color: #d8e2fd;
+}
+
+.transfer-success {
+  min-height: calc(100vh - 150px);
+  display: grid;
+  place-items: center;
+}
+
+.transfer-success .success-card {
+  padding: 28px;
+  text-align: center;
+}
+
+.success-icon {
+  color: var(--green-100);
+  font-size: 3rem;
+  margin-bottom: 10px;
+}
+
+.success-ref,
+.success-time {
+  color: var(--text-secondary);
+}
+
+@media (max-width: 1024px) {
+  .transfer-container {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 760px) {
+  .transfer .form-row,
+  .transfer .form-actions {
+    grid-template-columns: 1fr;
+    display: grid;
+  }
+}
