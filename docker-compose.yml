@@ -141,6 +141,27 @@ services:
       - aiops-network
     restart: unless-stopped
 
+  # AI Ops Agent - Webhook Handler
+  ai-agent:
+    build:
+      context: ./agent_src
+      dockerfile: Dockerfile
+    container_name: ai-agent
+    environment:
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-test-key}
+      TELEGRAM_TOKEN: ${TELEGRAM_TOKEN:-test-token}
+      TELEGRAM_CHAT_ID: ${TELEGRAM_CHAT_ID:-test-chat}
+    ports:
+      - "5000:8000"
+    volumes:
+      - ./agent_src:/app
+    command: python -m uvicorn main:app --host 0.0.0.0 --port 8000
+    networks:
+      - aiops-network
+    restart: unless-stopped
+    depends_on:
+      - alertmanager
+
 volumes:
   postgres_data:
   prometheus_data:

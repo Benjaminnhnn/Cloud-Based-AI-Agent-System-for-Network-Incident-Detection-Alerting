@@ -11,7 +11,7 @@ alerting:
         - targets: ['alertmanager:9093']
 
 rule_files:
-  - "ansible/config/alert_rules.yml"
+  - "/etc/prometheus/alert_rules.yml"
 
 scrape_configs:
   # Prometheus itself

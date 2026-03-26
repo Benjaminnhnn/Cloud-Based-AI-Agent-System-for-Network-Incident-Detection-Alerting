@@ -67,5 +67,5 @@ inhibit_rules:
 receivers:
   - name: 'default'
     webhook_configs:
-      - url: 'http://localhost:8080/webhook'
+      - url: 'http://ai-agent:8000/webhook'
         send_resolved: true
