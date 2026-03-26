@@ -1,4 +1,4 @@
-# So Sánh Mô Hình Triển Khai vs Luồng Dữ Liệu Tổng Thể
+# So Sánh Mô Hình Triển Khai vs Luồng Dữ Liệu Tổng Thể (Cập Nhật: 26/03/2026)
 
 ## 📋 Bảng So Sánh Chi Tiết
 
@@ -9,10 +9,10 @@
 | **Web Server metrics** | CPU/RAM/Disk/Network | ✅ Node Exporter | ✅ IMPLEMENTED |
 | **DB Server metrics** | CPU/RAM/Disk/Network | ✅ Node Exporter | ✅ IMPLEMENTED |
 | **Payment API metrics** | CPU/RAM/Disk/Network | ✅ Node Exporter | ✅ IMPLEMENTED |
-| **Log ERROR Watcher** | Real-time log parsing | ❌ MISSING | ⏳ REQUIRED |
+| **Log ERROR Watcher** | Real-time log parsing | ⏳ Custom Script Draft | ⏳ IN PROGRESS |
 | **Suricata IDS/IPS** | Network intrusion detection | ❌ MISSING | ⏳ REQUIRED |
 
-**Tỷ lệ hoàn thành:** 3/5 (60%)
+**Tỷ lệ hoàn thành:** 3.5/5 (70%)
 
 ---
 
@@ -23,9 +23,9 @@
 | **Prometheus** | Scrape mỗi 15s | ✅ Running | ✅ IMPLEMENTED |
 | **Scrape interval** | 15s (configurable) | ✅ 15s interval | ✅ CORRECT |
 | **Data retention** | Long-term storage | ✅ /var/lib/prometheus | ✅ IMPLEMENTED |
-| **Alert rules** | Trigger threshold-based alerts | ❌ MISSING | ⏳ REQUIRED |
+| **Alert rules** | Trigger threshold-based alerts | ✅ alert_rules.yml | ✅ IMPLEMENTED |
 
-**Tỷ lệ hoàn thành:** 3/4 (75%)
+**Tỷ lệ hoàn thành:** 4/4 (100%) ✅
 
 ---
 
@@ -33,13 +33,13 @@
 
 | Component | Yêu Cầu | Hiện Tại | Trạng Thái |
 |-----------|---------|---------|-----------|
-| **AI Agent (Python + Gemini)** | Analyze incidents | ⚠️ Template only | ⏳ PARTIAL |
-| **Root cause analysis** | Phân tích nguyên nhân | ❌ NOT DEPLOYED | ⏳ REQUIRED |
-| **Service impact detection** | Xác định dịch vụ bị ảnh hưởng | ❌ NOT DEPLOYED | ⏳ REQUIRED |
-| **Solution recommendation** | Đề xuất giải pháp | ❌ NOT DEPLOYED | ⏳ REQUIRED |
+| **AI Agent (FastAPI)** | Webhook Server | ✅ main.py (FastAPI) | ✅ IMPLEMENTED |
+| **Root cause analysis** | Phân tích nguyên nhân | ✅ Gemini 2.0 Flash | ✅ IMPLEMENTED |
+| **Service impact detection** | Xác định ảnh hưởng | ✅ Gemini 2.0 Flash | ✅ IMPLEMENTED |
+| **Solution recommendation** | Đề xuất giải pháp | ✅ Gemini 2.0 Flash | ✅ IMPLEMENTED |
 | **Alert deduplication** | Chặn spam cảnh báo | ❌ MISSING | ⏳ REQUIRED |
 
-**Tỷ lệ hoàn thành:** 0/5 (0%)
+**Tỷ lệ hoàn thành:** 4/5 (80%)
 
 ---
 
@@ -47,11 +47,11 @@
 
 | Component | Yêu Cầu | Hiện Tại | Trạng Thái |
 |-----------|---------|---------|-----------|
-| **Telegram Bot** | Send alerts to ops | ❌ MISSING | ⏳ REQUIRED |
+| **Telegram Bot** | Send alerts to ops | ✅ telegram_notify.py | ✅ IMPLEMENTED |
 | **Grafana Dashboard** | Visualize alerts | ✅ Created | ✅ IMPLEMENTED |
 | **Alert history** | Track past events | ⏳ Prometheus stores data | ⏳ PARTIAL |
 
-**Tỷ lệ hoàn thành:** 1/3 (33%)
+**Tỷ lệ hoàn thành:** 2.5/3 (83%)
 
 ---
 
@@ -69,116 +69,20 @@
 
 ## 📊 Luồng Dữ Liệu Tổng Thể
 
-### **Lý Tưởng (Theo sơ đồ):**
+### **Hiện Tại (Đã nâng cấp):**
 ```
 SERVERS                      COLLECTION              AGGREGATION            INTELLIGENCE
 (Web/DB/API)                 (Exporters/Watchers)    (Prometheus)           (AI Agent)
     │                              │                      │                      │
-    ├─→ Metrics (15s scrape)──────→│                      │                      │
-    │                              ├─→ Prometheus ────→ AI Agent ────→ Dedup ──→ Alert
-    ├─→ ERROR logs (real-time)────→│                      │
-    │   (Log Watcher)              │                      │
+    ├─→ Metrics (15s scrape)──────→│ Node Exporter        │                      │
+    │                              ├─→ Prometheus ────→ AI Agent (FastAPI) ──→ Telegram
+    │                              │   (Alert Rules)    (Gemini 2.0)           (Alerts)
     │                              │                      │
-    ├─→ Network traffic ────────────→│                      │
-    │   (Suricata IDS/IPS)          │                      │
-    │                              │
-    └─→ Application health ────────→│
-        (Custom exporters)          │
+    ├─→ ERROR logs (real-time)────→│ ⏳ (In Progress)     │
+    │   (Custom Watcher)           │                      │
+    │                              │                      │
+    └─→ Grafana Dashboard ←────────┘                      │
 ```
-
-### **Hiện Tại (Triển khai thực tế):**
-```
-SERVERS                      COLLECTION              AGGREGATION      UI
-(Web/DB/API)                 (Exporters only)        (Prometheus)      (Grafana)
-    │                              │                      │              │
-    ├─→ Metrics (15s scrape)──────→│ Node Exporter       │              │
-    │                              ├──────→ Prometheus ──┤───→ Dashboard │
-    │                              │     (Scraping)      │    (Viewing)
-    │                              │                      │
-    ├─→ ERROR logs ────────────────X (NOT COLLECTED)    │
-    │                              │                      │
-    ├─→ Network traffic ───────────X (NOT MONITORED)     │
-    │   (Suricata missing)         │                      │
-    │                              │                      │
-    └─→ Alerts ──────────────────────────────────────────X (NO AUTO-ALERTS)
-```
-
----
-
-## ❌ Component Còn Thiếu (Priority Order)
-
-### **TIER 1 - CRITICAL (Phải deploy ngay)**
-
-#### **1. AI Agent (Python + Gemini)**
-- **Mục đích:** Phân tích incident tự động
-- **Đầu vào:** Alert từ Prometheus
-- **Xử lý:** 
-  - Root cause analysis
-  - Impact assessment
-  - Solution recommendation
-- **Đầu ra:** Structured incident report
-- **Deploy trên:** monitor-ai-01 (nó là monitoring server)
-- **Status:** `ai_agent.yml` template tồn tại, chưa implement
-- **Phức tạp:** ⭐⭐⭐ (Medium)
-
-#### **2. Telegram Bot**
-- **Mục đích:** Gửi alert tới ops
-- **Công nghệ:** Python + python-telegram-bot
-- **Chức năng:**
-  - Send incident alerts
-  - Show dashboard link
-  - Receive manual commands
-- **Deploy trên:** monitor-ai-01
-- **Status:** Không tồn tại
-- **Phức tạp:** ⭐⭐ (Easy)
-
-#### **3. Prometheus Alert Rules**
-- **Mục đích:** Trigger alerts based on thresholds
-- **Ví dụ:**
-  ```yaml
-  - alert: HighCPUUsage
-    expr: 'CPU > 80%'
-  - alert: LowMemory
-    expr: 'Memory > 85%'
-  - alert: DiskFull
-    expr: 'Disk > 90%'
-  ```
-- **File:** `/opt/prometheus/conf/alerts.yml`
-- **Status:** Không tồn tại
-- **Phức tạp:** ⭐⭐ (Easy)
-
-### **TIER 2 - HIGH (Nên deploy sau)**
-
-#### **4. Log ERROR Watcher**
-- **Mục đích:** Giám sát log file thực time
-- **Công nghệ:** Filebeat + Loki, hoặc custom Python watcher
-- **Giám sát:** `/var/log/` trên 3 servers
-- **Status:** Không tồn tại
-- **Phức tạp:** ⭐⭐⭐ (Medium)
-
-#### **5. Suricata IDS/IPS**
-- **Mục đích:** Detect network intrusions
-- **Deploy:** Phải cài trên mỗi server hoặc dùng network-based
-- **Status:** Không tồn tại
-- **Phức tạp:** ⭐⭐⭐⭐ (Hard)
-
-### **TIER 3 - MEDIUM (Optional)**
-
-#### **6. Alert Deduplication**
-- **Mục đích:** Chặn spam alert (cảnh báo dư thừa)
-- **Công nghệ:** Python dedup logic
-- **Deploy:** Chạy trong AI Agent
-- **Status:** Không tồn tại
-- **Phức tạp:** ⭐⭐ (Easy)
-
-#### **7. Custom Exporters**
-- **Mục đích:** Export application-specific metrics
-- **Ví dụ:** 
-  - Payment API response time
-  - Database query latency
-  - Cache hit rate
-- **Status:** Không tồn tại
-- **Phức tạp:** ⭐⭐⭐ (Medium)
 
 ---
 
@@ -189,38 +93,17 @@ SERVERS                      COLLECTION              AGGREGATION      UI
 - [x] Prometheus aggregation
 - [x] Grafana visualization
 
-### **PHASE 2: Alerting & Intelligence** ⏳ IN PROGRESS
-```
-Week 1:
-  [ ] Prometheus alert rules
-  [ ] Telegram Bot setup
-  [ ] Test alert notifications
+### **PHASE 2: Alerting & Intelligence** ✅ DONE
+- [x] Prometheus alert rules (CPU/Mem/Disk/Net)
+- [x] Telegram Bot integration
+- [x] AI Agent Webhook Server (FastAPI)
+- [x] Gemini AI Integration (Analysis/Impact/Solution)
+- [x] Async background processing for alerts
 
-Week 2-3:
-  [ ] AI Agent (Python + Gemini)
-  [ ] Root cause analysis
-  [ ] Telegram integration
-
-Week 4:
-  [ ] Alert deduplication
-  [ ] Dashboard enhancements
-```
-
-### **PHASE 3: Log Monitoring** ⏳ TODO
-```
-Week 5-6:
-  [ ] Log ERROR Watcher (Filebeat + Loki)
-  [ ] Log indexing & querying
-  [ ] Alert on error patterns
-```
-
-### **PHASE 4: Security Monitoring** ⏳ TODO
-```
-Week 7-8:
-  [ ] Suricata IDS/IPS deployment
-  [ ] Network traffic analysis
-  [ ] Security event correlation
-```
+### **PHASE 3: Log Monitoring** ⏳ IN PROGRESS
+- [ ] Deploy Custom Log Watcher script
+- [ ] Connect Log alerts to AI Agent Webhook
+- [ ] Alert on specific error patterns (DB, Nginx)
 
 ---
 
@@ -228,53 +111,25 @@ Week 7-8:
 
 ```
 ┌─────────────────────────────────────────────────────┐
-│ OVERALL COMPLETION: 60% (12/20 components)           │
+│ OVERALL COMPLETION: 75% (15/20 components)           │
 ├─────────────────────────────────────────────────────┤
 │                                                       │
-│ Collection Layer          ████░░░░░░ 60%             │
-│ Aggregation Layer         █████░░░ 75%               │
-│ AI Intelligence           ░░░░░░░░░░ 0%              │
-│ Notification Layer        ███░░░░░░░ 30%             │
+│ Collection Layer          ███████░░░ 70%             │
+│ Aggregation Layer         ██████████ 100%            │
+│ AI Intelligence           ████████░░ 80%             │
+│ Notification Layer        ████████░░ 83%             │
 │ Operations Layer          ███░░░░░░░ 30%             │
-│                                                       │
-│ EXPECTED (TIER 1):        ████░░░░░░ 40%             │
-│ FULL DEPLOYMENT:          ██░░░░░░░░ 20%             │
 │                                                       │
 └─────────────────────────────────────────────────────┘
 ```
 
 ---
 
-## 🎯 Kết Luận
+## 🎯 Kết Luận & Khuyến Nghị
 
-### **Hiện Tại:**
-✅ **Bạn có:** Monitoring cơ bản (metrics collection + visualization)
+### **Thành quả:**
+✅ Hệ thống đã có thể tự động nhận diện sự cố qua Metrics, tự phân tích bằng AI và báo cáo qua Telegram.
 
-### **Còn Thiếu:**
-❌ **AI-powered incident response**
-❌ **Automated alert notification**
-❌ **Error log monitoring**
-❌ **Network intrusion detection**
-
-### **Khuyến Nghị Tiếp Theo:**
-
-**NGAY:**
-1. Setup Prometheus alert rules (CPU/Memory/Disk thresholds)
-2. Create Telegram Bot for alert notifications
-3. Deploy AI Agent (đơn giản để test)
-
-**TUẦN SAU:**
-4. Implement root cause analysis trong AI Agent
-5. Add log ERROR watcher
-6. Enhance dashboard with incident history
-
-**THÁNG SAU:**
-7. Add Suricata IDS/IPS
-8. Setup advanced correlation rules
-9. Develop operational runbooks
-
----
-
-**Current State:** Basic monitoring with visualization  
-**Target State:** Autonomous incident response with human oversight  
-**Estimated Time to Full Deployment:** 4-6 weeks
+### **Việc cần làm ngay:**
+1. **Tích hợp Log Watcher**: Để AI có dữ liệu log lỗi, giúp phân tích "Root Cause" chính xác hơn thay vì chỉ đoán dựa trên metrics.
+2. **Alert Deduplication**: Thêm logic để nếu 1 sự cố bắn ra 10 alert giống nhau, AI chỉ phân tích 1 lần để tiết kiệm Token Gemini.
