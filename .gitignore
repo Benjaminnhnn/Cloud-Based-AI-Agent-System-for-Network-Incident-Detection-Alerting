@@ -18,6 +18,9 @@ terraform/apply_output.txt
 id_rsa
 id_rsa.pub
 .env
+
+# Documentation (local only)
+docs/
 .env.local
 
 # Python
