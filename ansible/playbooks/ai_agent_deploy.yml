@@ -1,0 +1,318 @@
+---
+# Deploy AI Agent to monitor-ai-01 using Ansible
+# Usage: ansible-playbook -i inventory.ini playbooks/ai_agent_deploy.yml
+
+- name: Deploy AI Agent to Monitor Server
+  hosts: monitor
+  become: yes
+  gather_facts: yes
+  
+  vars:
+    app_name: "ai-agent"
+    app_user: "ec2-user"
+    app_home: "/home/{{ app_user }}"
+    app_path: "{{ app_home }}/aws-hybrid-ai-agent"
+    docker_compose_version: "1.29.2"
+    
+    # These should be set from command line or group_vars/monitor.yml
+    gemini_api_key: "{{ lookup('env', 'GEMINI_API_KEY') }}"
+    telegram_token: "{{ lookup('env', 'TELEGRAM_TOKEN') }}"
+    telegram_chat_id: "{{ lookup('env', 'TELEGRAM_CHAT_ID') }}"
+  
+  pre_tasks:
+    - name: Validate required environment variables
+      fail:
+        msg: "{{ item }} environment variable is not set"
+      when: vars[item] | length == 0
+      with_items:
+        - gemini_api_key
+        - telegram_token
+        - telegram_chat_id
+      tags:
+        - validate
+
+    - name: Display deployment information
+      debug:
+        msg:
+          - "========================================"
+          - "Deploying AI Agent"
+          - "========================================"
+          - "Target Host: {{ inventory_hostname }}"
+          - "App Path: {{ app_path }}"
+          - "Docker Compose: {{ docker_compose_version }}"
+          - "========================================"
+      tags:
+        - always
+  
+  tasks:
+    # ============ Install Docker & Dependencies ============
+    - name: Install Docker
+      yum:
+        name: docker
+        state: present
+      tags:
+        - docker
+        - packages
+    
+    - name: Install Docker Compose
+      get_url:
+        url: "https://github.com/docker/compose/releases/download/{{ docker_compose_version }}/docker-compose-Linux-x86_64"
+        dest: /usr/local/bin/docker-compose
+        mode: '0755'
+      tags:
+        - docker
+        - packages
+    
+    - name: Start Docker daemon
+      systemd:
+        name: docker
+        enabled: yes
+        state: started
+      tags:
+        - docker
+    
+    - name: Add ec2-user to docker group
+      user:
+        name: "{{ app_user }}"
+        groups: docker
+        append: yes
+      tags:
+        - docker
+    
+    # ============ Setup Application Directory ============
+    - name: Create application directory
+      file:
+        path: "{{ app_path }}"
+        state: directory
+        owner: "{{ app_user }}"
+        group: "{{ app_user }}"
+        mode: '0755'
+      tags:
+        - setup
+    
+    # ============ Copy Application Code ============
+    - name: Check if code needs to be updated
+      stat:
+        path: "{{ app_path }}/agent_src"
+      register: agent_src_stat
+      tags:
+        - code
+    
+    - name: Copy agent source code
+      copy:
+        src: "{{ playbook_dir }}/../../agent_src/"
+        dest: "{{ app_path }}/agent_src/"
+        owner: "{{ app_user }}"
+        group: "{{ app_user }}"
+        mode: '0755'
+      tags:
+        - code
+    
+    - name: Copy docker-compose configuration
+      copy:
+        src: "{{ playbook_dir }}/../../docker-compose.prod.yml"
+        dest: "{{ app_path }}/docker-compose.yml"
+        owner: "{{ app_user }}"
+        group: "{{ app_user }}"
+        mode: '0644'
+      tags:
+        - config
+    
+    # ============ Setup Environment Variables ============
+    - name: Create environment file
+      template:
+        src: env.prod.j2
+        dest: "{{ app_path }}/.env"
+        owner: "{{ app_user }}"
+        group: "{{ app_user }}"
+        mode: '0600'
+      tags:
+        - config
+        - env
+    
+    - name: Display environment variables (masked)
+      debug:
+        msg:
+          - "Environment variables configured:"
+          - "  GEMINI_API_KEY: [CONFIGURED]"
+          - "  TELEGRAM_TOKEN: [CONFIGURED]"
+          - "  TELEGRAM_CHAT_ID: [CONFIGURED]"
+      tags:
+        - config
+        - env
+    
+    # ============ Build Docker Image ============
+    - name: Build Docker image
+      shell: |
+        cd {{ app_path }}
+        docker build -t aws-hybrid_ai-agent:latest ./agent_src
+      environment:
+        DOCKER_BUILDKIT: 1
+      tags:
+        - docker
+        - build
+    
+    - name: Wait for Docker image to be available
+      pause:
+        seconds: 5
+      tags:
+        - docker
+        - build
+    
+    # ============ Manage Docker Container ============
+    - name: Stop existing container
+      shell: "docker stop {{ app_name }} || true"
+      ignore_errors: yes
+      tags:
+        - deploy
+        - docker
+    
+    - name: Remove existing container
+      shell: "docker rm -f {{ app_name }} || true"
+      ignore_errors: yes
+      tags:
+        - deploy
+        - docker
+    
+    - name: Start AI Agent container with docker-compose
+      shell: |
+        cd {{ app_path }}
+        docker-compose -f docker-compose.yml up -d
+      become_user: "{{ app_user }}"
+      environment:
+        PATH: "/usr/local/bin:{{ ansible_env.PATH }}"
+      tags:
+        - deploy
+        - docker
+    
+    - name: Wait for container to start
+      pause:
+        seconds: 5
+      tags:
+        - deploy
+    
+    # ============ Health Checks ============
+    - name: Check container status
+      shell: docker ps | grep {{ app_name }}
+      register: container_status
+      ignore_errors: yes
+      tags:
+        - verify
+        - health
+    
+    - name: Display container status
+      debug:
+        msg: "{{ container_status.stdout }}"
+      tags:
+        - verify
+        - health
+    
+    - name: Wait for health check endpoint to be ready
+      wait_for:
+        host: localhost
+        port: 8000
+        state: started
+        delay: 2
+        timeout: 30
+      tags:
+        - verify
+        - health
+    
+    - name: Test health endpoint
+      uri:
+        url: "http://localhost:8000/health"
+        method: GET
+        status_code: 200
+      register: health_check
+      retries: 5
+      delay: 2
+      until: health_check.status == 200
+      tags:
+        - verify
+        - health
+    
+    - name: Display health check result
+      debug:
+        msg:
+          - "✅ Health check passed"
+          - "Response: {{ health_check.json }}"
+      tags:
+        - verify
+        - health
+    
+    - name: Test API status endpoint
+      uri:
+        url: "http://localhost:8000/api/status"
+        method: GET
+        status_code: 200
+      register: api_status
+      tags:
+        - verify
+    
+    - name: Display API status
+      debug:
+        msg:
+          - "✅ API Status:"
+          - "  Status: {{ api_status.json.status }}"
+          - "  Gemini Configured: {{ api_status.json.gemini_configured }}"
+          - "  Telegram Configured: {{ api_status.json.telegram_configured }}"
+      tags:
+        - verify
+    
+    # ============ Setup Systemd Service (Optional) ============
+    - name: Create systemd service file for AI Agent
+      template:
+        src: ai-agent.service.j2
+        dest: /etc/systemd/system/ai-agent.service
+        mode: '0644'
+      tags:
+        - systemd
+        - service
+    
+    - name: Reload systemd daemon
+      systemd:
+        daemon_reload: yes
+      tags:
+        - systemd
+        - service
+    
+    - name: Enable AI Agent service
+      systemd:
+        name: ai-agent
+        enabled: yes
+      tags:
+        - systemd
+        - service
+    
+    # ============ Configure Log Rotation ============
+    - name: Setup logrotate for AI Agent
+      template:
+        src: logrotate-ai-agent.j2
+        dest: /etc/logrotate.d/ai-agent
+        mode: '0644'
+      tags:
+        - logging
+        - logrotate
+  
+  post_tasks:
+    - name: Display deployment summary
+      debug:
+        msg:
+          - ""
+          - "╔════════════════════════════════════════╗"
+          - "║   ✅ AI Agent Deployment Complete!    ║"
+          - "╚════════════════════════════════════════╝"
+          - ""
+          - "Webhook URL: http://{{ inventory_hostname }}:8000/webhook"
+          - "Health Check: http://{{ inventory_hostname }}:8000/health"
+          - "API Status: http://{{ inventory_hostname }}:8000/api/status"
+          - "Dashboard: http://{{ inventory_hostname }}:8000"
+          - ""
+          - "View logs:"
+          - "  docker-compose -f {{ app_path }}/docker-compose.yml logs -f ai-agent"
+          - ""
+          - "Restart service:"
+          - "  systemctl restart ai-agent"
+          - ""
+      tags:
+        - always

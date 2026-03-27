@@ -1,0 +1,14 @@
+# Logrotate configuration for AI Agent Docker container logs
+{{ app_path }}/logs/*.log {
+    daily
+    missingok
+    rotate 7
+    compress
+    delaycompress
+    notifempty
+    create 0640 {{ app_user }} {{ app_user }}
+    sharedscripts
+    postrotate
+        /usr/bin/docker-compose -f {{ app_path }}/docker-compose.yml restart ai-agent > /dev/null 2>&1 || true
+    endscript
+}

@@ -1,0 +1,513 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>Báo Cáo Triển Khai Cloud</title>
+<style>
+body { font-family: 'Calibri', sans-serif; line-height: 1.5; margin: 40px; }
+h1 { color: #1f4788; font-size: 28pt; margin-bottom: 20px; text-align: center; }
+h2 { color: #2d5aa8; font-size: 18pt; margin-top: 20px; border-bottom: 2px solid #2d5aa8; }
+h3 { color: #4472c4; font-size: 14pt; }
+table { border-collapse: collapse; width: 100%; margin: 15px 0; }
+td, th { border: 1px solid #ccc; padding: 10px; text-align: left; }
+th { background-color: #4472c4; color: white; }
+tr:nth-child(even) { background-color: #f2f2f2; }
+code { background-color: #f0f0f0; padding: 2px 4px; font-family: 'Courier New'; }
+pre { background-color: #f0f0f0; padding: 10px; overflow-x: auto; }
+.emoji { font-size: 1.2em; }
+ul { margin-left: 20px; }
+li { margin: 5px 0; }
+</style>
+</head>
+<body>
+
+<h1>TRIỂN KHAI MONITORING & AI ALERT HỆ THỐNG TRÊN PUBLIC CLOUD AWS</h1>
+<p><strong>**Ngày báo cáo:** 28/03/2026  </strong></p>
+<p><strong>**Dự án:** AIOps Banking Monitoring System  </strong></p>
+<p><strong>**Trạng thái:** ✅ Hoàn thành triển khai giai đoạn 1</strong></p>
+<p>---</p>
+<h2>1. KHÁI NIỆM & MỤC ĐÍCH</h2>
+<h3>1.1 Khái Niệm</h3>
+<p>Hệ thống này là một giải pháp **Monitoring & Alerting tập hợp (Unified Monitoring & Alerting Platform)** sử dụng công nghệ Open Source và Cloud-Native. Hệ thống:</p>
+<li>**Thu thập metrics** từ các hệ thống trong thời gian thực</li>
+<li>**Phát hiện sự cố** dựa trên các rule được định nghĩa sẵn</li>
+<li>**Phân tích tự động** bằng AI (Gemini 2.5 Flash)</li>
+<li>**Thông báo ngay lập tức** qua multiple channels (Telegram)</li>
+<li>**Visualize trạng thái** thông qua Grafana Dashboard</li>
+<h3>1.2 Mục Đích</h3>
+<table>
+<tr><td>#</td><td>Mục Đích</td><td>Mô Tả</td></tr>
+<tr><td>---</td><td>----------</td><td>-------</td></tr>
+<tr><td>1</td><td>**Giám sát liên tục**</td><td>Theo dõi metrics hệ thống 24/7 (CPU, Memory, Disk, Network)</td></tr>
+<tr><td>2</td><td>**Phát hiện sớm**</td><td>Cảnh báo khi có sự cố trước khi ảnh hưởng user</td></tr>
+<tr><td>3</td><td>**AI Analysis**</td><td>Tự động phân tích nguyên nhân và đề xuất giải pháp</td></tr>
+<tr><td>4</td><td>**Real-time Notification**</td><td>Thông báo team ngay khi có sự cố qua Telegram</td></tr>
+<tr><td>5</td><td>**Centralized Dashboard**</td><td>Duy nhất một nơi để quản lý tất cả alert và metrics</td></tr>
+<tr><td>6</td><td>**Reduce Alert Fatigue**</td><td>Nhóm (group) alert để tránh spam thông báo</td></tr>
+</table>
+<p>---</p>
+<h2>2. KIẾN TRÚC HỆ THỐNG</h2>
+<h3>2.1 Sơ Đồ Kiến Trúc Tổng Quát</h3>
+<pre>
+┌─────────────────────────────────────────────────────────────────┐
+│                         AWS PUBLIC CLOUD                        │
+│                                                                 │
+│  ┌────────────────────┐  ┌────────────────────┐ ┌───────────┐  │
+│  │  bank-web-01      │  │  bank-core-01      │ │ monitor- │  │
+│  │  (18.139.198.122) │  │  (52.77.15.93)     │ │ ai-01    │  │
+│  │                   │  │                    │ │ (18.142..│  │
+│  │ Web App (3000)    │  │ API (8000)         │ │ 210.110) │  │
+│  └────────────────────┘  └────────────────────┘ └───────────┘  │
+│         │                        │                    │         │
+│         └────────────────────────┼────────────────────┘         │
+│                                  │                              │
+│                                  ▼                              │
+│         ┌───────────────────────────────────────┐              │
+│         │    AWS VPC (10.10.0.0/16)            │              │
+│         │  + Security Groups                   │              │
+│         │  + Elastic IPs                       │              │
+│         │  + Route Tables                      │              │
+│         └───────────────────────────────────────┘              │
+└─────────────────────────────────────────────────────────────────┘
+</pre>
+<h3>2.2 Thành Phần Hệ Thống</h3>
+<h4>A. **Infrastructure Layer** (AWS)</h4>
+<li>**VPC**: 10.10.0.0/16 với 2 public subnets</li>
+<li>**EC2 Instances**: 3 x t3.small</li>
+<li>**Security Groups**: Firewall rules cho phép traffic</li>
+<li>**Elastic IPs**: Static public IPs cho các instances</li>
+<li>**IAM Roles**: Quyền truy cập AWS resources</li>
+<h4>B. **Monitoring Layer** (monitor-ai-01)</h4>
+<pre>
+┌──────────────────────────────────────────────┐
+│          monitor-ai-01 (18.142.210.110)     │
+├──────────────────────────────────────────────┤
+│                     Docker                   │
+│  ┌────────────────┐  ┌────────────────┐    │
+│  │  Prometheus    │  │  AlertManager  │    │
+│  │  (port 9090)   │  │  (port 9093)   │    │
+│  └────────────────┘  └────────────────┘    │
+│  ┌────────────────┐  ┌────────────────┐    │
+│  │  Grafana       │  │  Node Exporter │    │
+│  │  (port 3001)   │  │  (port 9100)   │    │
+│  └────────────────┘  └────────────────┘    │
+│  ┌────────────────────────────────────┐    │
+│  │  AI Agent (FastAPI)                │    │
+│  │  • Webhook Receiver                │    │
+│  │  • Gemini AI Integration           │    │
+│  │  • Telegram Bot Sender             │    │
+│  │  (port 8000)                       │    │
+│  └────────────────────────────────────┘    │
+└──────────────────────────────────────────────┘
+</pre>
+<h4>C. **Data Collection** (mı instances)</h4>
+<li>**Node Exporter**: Chạy trên tất cả EC2 instances</li>
+<li>**Metrics collected**:</li>
+<p>  - CPU usage (user, system, idle)</p>
+<p>  - Memory (used, free, available)</p>
+<p>  - Disk I/O (read, write)</p>
+<p>  - Network traffic</p>
+<p>  - Process info</p>
+<p>  - System load</p>
+<h4>D. **AI & Notification Layer**</h4>
+<li>**Gemini 2.5 Flash API**: Phân tích chi tiết alert</li>
+<li>**Telegram Bot**: Gửi thông báo formatted</li>
+<h3>2.3 Quy Trình Xử Lý Alert (Alert Flow)</h3>
+<pre>
+1. COLLECTION
+   └─► Node Exporter (port 9100)
+       Scrapes system metrics every 15s
+
+2. STORAGE & EVALUATION
+   └─► Prometheus (port 9090)
+       • Time-series database
+       • Evaluates alert rules every 30s
+       • Stores metrics for 15 days
+
+3. ALERT GENERATION
+   └─► Alert Rules (5 defined)
+       • HighCPUUsage (CPU > 80% for 5 min)
+       • HighMemoryUsage (MEM > 80% for 5 min)
+       • PrometheusDown (service down 1 min)
+       • AIAgentDown (service down 2 min)
+       • AlertManagerDown (service down 1 min)
+
+4. ALERT ROUTING
+   └─► AlertManager (port 9093)
+       • Groups similar alerts
+       • Deduplicates notifications
+       • Routes to configured receivers
+
+5. WEBHOOK DELIVERY
+   └─► AI Agent Webhook (port 8000/webhook)
+       Receives alert JSON payload
+
+6. AI ANALYSIS
+   └─► Gemini API
+       • Analyzes alert content
+       • Generates detailed explanation
+       • Suggests remediation steps
+
+7. NOTIFICATION
+   └─► Telegram Bot
+       • Formats message (max 1500 chars)
+       • Sends to Telegram Chat
+       • Includes alert details + AI analysis
+
+8. VISUALIZATION
+   └─► Grafana Dashboard (port 3001)
+       • Real-time metrics display
+       • Alert history
+       • System health overview
+</pre>
+<h3>2.4 Component Breakdown</h3>
+<table>
+<tr><td>Component</td><td>Internal Port</td><td>External Port</td><td>Version</td><td>Purpose</td></tr>
+<tr><td>-----------</td><td>---------------</td><td>---------------</td><td>---------</td><td>---------</td></tr>
+<tr><td>**Prometheus**</td><td>9090</td><td>9090</td><td>v2.48.1</td><td>Metrics collection & rules evaluation</td></tr>
+<tr><td>**AlertManager**</td><td>9093</td><td>9093</td><td>latest</td><td>Alert routing & grouping</td></tr>
+<tr><td>**Grafana**</td><td>3000</td><td>3001</td><td>latest</td><td>Metrics visualization</td></tr>
+<tr><td>**Node Exporter**</td><td>9100</td><td>9100</td><td>v1.7.0</td><td>System metrics collection</td></tr>
+<tr><td>**AI Agent**</td><td>8000</td><td>8000</td><td>custom</td><td>Webhook + AI integration</td></tr>
+</table>
+<p>---</p>
+<h2>3. CÔNG NGHỆ TRIỂN KHAI</h2>
+<h3>3.1 Cloud Infrastructure</h3>
+<table>
+<tr><td>Công Nghệ</td><td>Công Dụng</td><td>Chi Tiết</td></tr>
+<tr><td>----------</td><td>----------</td><td>---------</td></tr>
+<tr><td>**AWS EC2**</td><td>Compute instances</td><td>t3.small (2 vCPU, 2GB RAM)</td></tr>
+<tr><td>**AWS VPC**</td><td>Network isolation</td><td>10.10.0.0/16 with security groups</td></tr>
+<tr><td>**AWS Elastic IP**</td><td>Static public IPs</td><td>Non-changing IPs for all instances</td></tr>
+<tr><td>**AWS Security Groups**</td><td>Firewall rules</td><td>Allow SSH(22), Prometheus(9090), etc.</td></tr>
+</table>
+<h3>3.2 Infrastructure as Code</h3>
+<table>
+<tr><td>Công Nghệ</td><td>Công Dụng</td><td>Chi Tiết</td></tr>
+<tr><td>----------</td><td>----------</td><td>---------</td></tr>
+<tr><td>**Terraform**</td><td>IaC for AWS</td><td>Provider AWS, EC2, VPC, Security Groups</td></tr>
+<tr><td>**Ansible**</td><td>Configuration Management</td><td>Playbooks for deployment automation</td></tr>
+<tr><td>**Bash Scripts**</td><td>Scripting</td><td>Pre-deployment setup & validation</td></tr>
+</table>
+<h3>3.3 Monitoring & Observability</h3>
+<table>
+<tr><td>Công Nghệ</td><td>Công Dụng</td><td>Chi Tiết</td></tr>
+<tr><td>----------</td><td>----------</td><td>---------</td></tr>
+<tr><td>**Prometheus**</td><td>Time-series metrics DB</td><td>15-day retention, 15s scrape interval</td></tr>
+<tr><td>**AlertManager**</td><td>Alert management</td><td>Groups, deduplicates, routes alerts</td></tr>
+<tr><td>**Grafana**</td><td>Visualization</td><td>Dashboards, alert history, metrics</td></tr>
+<tr><td>**Node Exporter**</td><td>Metrics collection</td><td>System metrics from all instances</td></tr>
+</table>
+<h3>3.4 AI & Automation</h3>
+<table>
+<tr><td>Công Nghệ</td><td>Công Dụng</td><td>Chi Tiết</td></tr>
+<tr><td>----------</td><td>----------</td><td>---------</td></tr>
+<tr><td>**Gemini 2.5 Flash**</td><td>AI Analysis</td><td>Google's generative AI for alert analysis</td></tr>
+<tr><td>**FastAPI**</td><td>API Framework</td><td>Python web framework for AI Agent</td></tr>
+<tr><td>**Python**</td><td>Programming</td><td>Core language for AI Agent logic</td></tr>
+</table>
+<h3>3.5 Notification & Communication</h3>
+<table>
+<tr><td>Công Nghệ</td><td>Công Dụng</td><td>Chi Tiết</td></tr>
+<tr><td>----------</td><td>----------</td><td>---------</td></tr>
+<tr><td>**Telegram Bot API**</td><td>Messaging</td><td>Send formatted alerts to Telegram Chat</td></tr>
+<tr><td>**Webhooks**</td><td>Integration</td><td>AlertManager → AI Agent communication</td></tr>
+</table>
+<h3>3.6 Containerization</h3>
+<table>
+<tr><td>Công Nghệ</td><td>Công Dụng</td><td>Chi Tiết</td></tr>
+<tr><td>----------</td><td>----------</td><td>---------</td></tr>
+<tr><td>**Docker**</td><td>Container Runtime</td><td>Isolated environments for services</td></tr>
+<tr><td>**Docker Compose**</td><td>Orchestration</td><td>Multi-container deployments</td></tr>
+</table>
+<p>---</p>
+<h2>4. ALERT RULES & THRESHOLDS</h2>
+<h3>4.1 Alert Rules Defined</h3>
+<pre>
+📊 Alert: HighCPUUsage
+   Condition: CPU utilization > 80% for 5 minutes
+   Severity: WARNING
+   Description: High CPU usage detected on the system
+
+📊 Alert: HighMemoryUsage
+   Condition: Memory utilization > 80% for 5 minutes
+   Severity: WARNING
+   Description: High memory usage detected
+
+⚠️ Alert: PrometheusDown
+   Condition: Prometheus service unresponsive for 1 minute
+   Severity: CRITICAL
+   Description: Prometheus monitoring service is down
+
+⚠️ Alert: AIAgentDown
+   Condition: AI Agent webhook receiver unresponsive for 2 minutes
+   Severity: CRITICAL
+   Description: AI alert analysis service is down
+
+⚠️ Alert: AlertManagerDown
+   Condition: AlertManager service unresponsive for 1 minute
+   Severity: CRITICAL
+   Description: Alert routing service is down
+</pre>
+<h3>4.2 Alert Routing Rules</h3>
+<table>
+<tr><td>Alert</td><td>Condition</td><td>Route</td><td>Action</td></tr>
+<tr><td>-------</td><td>-----------</td><td>-------</td><td>--------</td></tr>
+<tr><td>CPU/Memory</td><td>Any time</td><td>AlertManager</td><td>Immediately</td></tr>
+<tr><td>Service Down (Critical)</td><td>Anytime</td><td>AlertManager → AI Agent</td><td>Immediate + Analysis</td></tr>
+<tr><td>Resolved Alert</td><td>Any</td><td>AlertManager</td><td>Send "resolved" status</td></tr>
+</table>
+<p>---</p>
+<h2>5. CÁC TỆPCẤU HÌNH</h2>
+<h3>5.1 Prometheus Configuration (`prometheus.yml`)</h3>
+<pre>
+global:
+  scrape_interval: 15s        # Collect metrics every 15s
+  evaluation_interval: 30s    # Evaluate alert rules every 30s
+
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets: ['alertmanager:9093']  # Route to AlertManager
+
+rule_files:
+  - "alert_rules.yml"  # Load alert definitions
+
+scrape_configs:
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090']
+  
+  - job_name: 'node_exporter'
+    static_configs:
+      - targets: ['node_exporter:9100']
+  
+  - job_name: 'ai_agent'
+    static_configs:
+      - targets: ['ai-agent:8000']
+</pre>
+<h3>5.2 AlertManager Configuration (`alertmanager.yml`)</h3>
+<pre>
+global:
+  resolve_timeout: 5m  # Auto-resolve alert after 5 min if no activity
+
+route:
+  receiver: 'ai-agent'  # Default receiver
+  group_by: ['alertname', 'cluster', 'service']
+  group_wait: 10s       # Wait 10s before sending grouped alerts
+  group_interval: 10s   # Wait 10s between successive notifications
+  repeat_interval: 12h  # Repeat same alert every 12 hours
+
+receivers:
+  - name: 'ai-agent'
+    webhook_configs:
+      - url: 'http://ai-agent:8000/webhook'  # AI Agent webhook endpoint
+        send_resolved: true  # Send when alert resolves
+</pre>
+<h3>5.3 Alert Rules (`alert_rules.yml`)</h3>
+<pre>
+groups:
+  - name: aiops_alerts
+    interval: 30s
+    rules:
+      - alert: HighCPUUsage
+        expr: 'rate(node_cpu_seconds_total{mode!="idle"}[5m]) > 0.8'
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: 'High CPU usage'
+          description: 'CPU above 80%'
+      
+      # ... more rules ...
+</pre>
+<h3>5.4 Docker Compose (`docker-compose.yml`)</h3>
+<pre>
+services:
+  prometheus:
+    image: prom/prometheus:latest
+    ports: ["9090:9090"]
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./alert_rules.yml:/etc/prometheus/alert_rules.yml:ro
+    restart: unless-stopped
+  
+  alertmanager:
+    image: prom/alertmanager:latest
+    ports: ["9093:9093"]
+    volumes:
+      - ./alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+    restart: unless-stopped
+  
+  grafana:
+    image: grafana/grafana:latest
+    ports: ["3001:3000"]
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: admin123
+    restart: unless-stopped
+  
+  node_exporter:
+    image: prom/node-exporter:latest
+    ports: ["9100:9100"]
+    restart: unless-stopped
+</pre>
+<p>---</p>
+<h2>6. TRIỂN KHAI & DEPLOYMENT</h2>
+<h3>6.1 Phương Pháp Triển Khai</h3>
+<table>
+<tr><td>Phương Pháp</td><td>Công Cụ</td><td>Trạng Thái</td></tr>
+<tr><td>----------</td><td>--------</td><td>----------</td></tr>
+<tr><td>**Infrastructure**</td><td>Terraform</td><td>✅ Triển khai thành công</td></tr>
+<tr><td>**Configuration**</td><td>Ansible</td><td>✅ Playbook hoàn chỉnh</td></tr>
+<tr><td>**Containerization**</td><td>Docker Compose</td><td>✅ All services running</td></tr>
+<tr><td>**Deployment**</td><td>SSH + Manual Scripts</td><td>✅ Complete</td></tr>
+</table>
+<h3>6.2 Triển Khai Quy Trình</h3>
+<pre>
+1. Git clone repository
+   git clone https://github.com/aiops-bank/aws-hybrid.git
+
+2. Terraform - Tạo infrastructure
+   cd terraform
+   terraform init
+   terraform plan
+   terraform apply
+
+3. Ansible - Cấu hình hệ thống
+   cd ansible
+   ansible-playbook playbooks/bootstrap.yml
+   ansible-playbook playbooks/ai_agent_deploy.yml
+   ansible-playbook playbooks/monitoring.yml
+
+4. Verify - Kiểm tra triển khai
+   curl http://18.142.210.110:8000/health
+   curl http://18.142.210.110:9090/-/healthy
+   curl http://18.142.210.110:9093/-/healthy
+</pre>
+<h3>6.3 Infrastructure Outputs</h3>
+<table>
+<tr><td>Resource</td><td>Value</td><td>Purpose</td></tr>
+<tr><td>----------</td><td>-------</td><td>---------</td></tr>
+<tr><td>Monitor Elastic IP</td><td>18.142.210.110</td><td>Prometheus + AlertManager + AI Agent</td></tr>
+<tr><td>Web Elastic IP</td><td>18.139.198.122</td><td>React Web Application</td></tr>
+<tr><td>Core Elastic IP</td><td>52.77.15.93</td><td>FastAPI Backend</td></tr>
+<tr><td>VPC CIDR</td><td>10.10.0.0/16</td><td>Private network</td></tr>
+</table>
+<p>---</p>
+<h2>7. DASHBOARDS & MONITORING</h2>
+<h3>7.1 Grafana Access</h3>
+<li>**URL**: http://18.142.210.110:3001</li>
+<li>**Username**: admin</li>
+<li>**Password**: admin123</li>
+<li>**Default Dashboard**: System Overview + Alert Status</li>
+<h3>7.2 Prometheus Metrics Exploration</h3>
+<li>**URL**: http://18.142.210.110:9090</li>
+<li>**Query Examples**:</li>
+<p>  - `node_cpu_seconds_total` - CPU time</p>
+<p>  - `node_memory_MemAvailable_bytes` - Available memory</p>
+<p>  - `node_filesystem_avail_bytes` - Free disk space</p>
+<p>  - `up` - Service availability</p>
+<h3>7.3 AlertManager Console</h3>
+<li>**URL**: http://18.142.210.110:9093</li>
+<li>**Features**: View active alerts, alert routing, silencing</li>
+<p>---</p>
+<h2>8. API ENDPOINTS</h2>
+<h3>8.1 AI Agent API (http://18.142.210.110:8000)</h3>
+<table>
+<tr><td>Endpoint</td><td>Method</td><td>Purpose</td><td>Status</td></tr>
+<tr><td>----------</td><td>--------</td><td>---------</td><td>--------</td></tr>
+<tr><td>`/health`</td><td>GET</td><td>Health check</td><td>✅ Working</td></tr>
+<tr><td>`/api/status`</td><td>GET</td><td>System status</td><td>✅ Working</td></tr>
+<tr><td>`/api/alerts`</td><td>GET</td><td>List alerts</td><td>✅ Working</td></tr>
+<tr><td>`/webhook`</td><td>POST</td><td>AlertManager webhook</td><td>✅ Configured</td></tr>
+<tr><td>`/metrics`</td><td>GET</td><td>Prometheus metrics</td><td>✅ Available</td></tr>
+</table>
+<h3>8.2 Webhook Request Format</h3>
+<pre>
+{
+  "status": "firing",
+  "alerts": [
+    {
+      "status": "firing",
+      "labels": {
+        "alertname": "HighCPUUsage",
+        "severity": "warning",
+        "instance": "18.142.210.110:9100"
+      },
+      "annotations": {
+        "summary": "High CPU usage",
+        "description": "CPU above 80%"
+      },
+      "startsAt": "2026-03-27T16:00:00.000Z",
+      "endsAt": "0001-01-01T00:00:00Z"
+    }
+  ],
+  "groupLabels": {},
+  "commonLabels": {},
+  "commonAnnotations": {},
+  "externalURL": "http://alertmanager:9093",
+  "version": "4",
+  "groupKey": "{}"
+}
+</pre>
+<p>---</p>
+<h2>9. SECURITY & BEST PRACTICES</h2>
+<h3>9.1 Security Measures</h3>
+<li>✅ Security Groups allow specific ports only</li>
+<li>✅ Private subnets for internal traffic</li>
+<li>✅ Elastic IPs for consistent access</li>
+<li>✅ IAM roles for AWS access control</li>
+<li>✅ API authentication via webhook signature (future)</li>
+<h3>9.2 High Availability Considerations</h3>
+<li>🔄 Multi-region deployment (future)</li>
+<li>🔄 Database replication (future)</li>
+<li>🔄 Load balancer for redundancy (future)</li>
+<li>🔄 Alert deduplication to prevent spam</li>
+<h3>9.3 Scalability</h3>
+<li>📈 Horizontal scaling: Add more EC2 instances</li>
+<li>📈 Vertical scaling: Upgrade instance types</li>
+<li>📈 Prometheus retention: Configurable (currently 15 days)</li>
+<li>📈 Alert rules: Easy to add/modify</li>
+<p>---</p>
+<h2>10. TROUBLESHOOTING & MAINTENANCE</h2>
+<h3>10.1 Common Issues & Solutions</h3>
+<table>
+<tr><td>Issue</td><td>Cause</td><td>Solution</td></tr>
+<tr><td>-------</td><td>-------</td><td>----------</td></tr>
+<tr><td>High CPU alert spam</td><td>Rules too sensitive</td><td>Lower threshold or increase `for` duration</td></tr>
+<tr><td>Prometheus data loss</td><td>Storage full</td><td>Check disk space, increase retention</td></tr>
+<tr><td>Webhook timeout</td><td>Network issue</td><td>Verify security group allows port 8000</td></tr>
+</table>
+<h3>10.2 Monitoring Health</h3>
+<pre>
+<h1>Check all services running</h1>
+ssh ec2-user@18.142.210.110 "docker ps | grep -E 'prometheus|alertmanager|grafana|node_exporter|ai-agent'"
+
+<h1>View Prometheus targets</h1>
+curl http://18.142.210.110:9090/api/v1/targets
+
+<h1>View active alerts</h1>
+curl http://18.142.210.110:9090/api/v1/alerts
+
+<h1>Check AlertManager configuration</h1>
+curl http://18.142.210.110:9093/api/v1/status
+</pre>
+<p>---</p>
+<h2>11. KẾT LUẬN</h2>
+<p>Hệ thống monitoring & alerting AI-powered này cung cấp:</p>
+<p>✅ **Real-time Monitoring** - Giám sát 24/7 hiệu suất hệ thống  </p>
+<p>✅ **Intelligent Alerting** - AI phân tích tự động nguyên nhân sự cố  </p>
+<p>✅ **Centralized Management** - Tất cả alert và metrics ở một chỗ  </p>
+<p>✅ **Scalable Architecture** - Dễ dàng mở rộng cho thêm services  </p>
+<p>✅ **Production Ready** - Triển khai thành công trên AWS Public Cloud  </p>
+<p>Hệ thống sẵn sàng để:</p>
+<li>🚀 Phát hiện sự cố sớm</li>
+<li>🤖 Phân tích chi tiết bằng AI</li>
+<li>📱 Thông báo team ngay lập tức</li>
+<li>📊 Visualize trạng thái hệ thống</li>
+<p>---</p>
+<p><strong>**Ngày cập nhật**: 28/03/2026  </strong></p>
+<p><strong>**Trạng thái**: ✅ Production Ready</strong></p>
+
+</body>
+</html>

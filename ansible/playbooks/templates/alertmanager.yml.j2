@@ -1,0 +1,38 @@
+global:
+  resolve_timeout: 5m
+  slack_api_url: ""  # Leave empty if not using Slack
+
+route:
+  # Default receiver
+  receiver: 'ai-agent'
+  group_by: ['alertname', 'cluster', 'service']
+  group_wait: 10s
+  group_interval: 10s
+  repeat_interval: 12h
+
+  # Sub-routes for specific alerts
+  routes:
+    - match:
+        severity: critical
+      receiver: 'ai-agent'
+      group_wait: 0s
+      repeat_interval: 1h
+
+    - match:
+        severity: warning
+      receiver: 'ai-agent'
+      group_wait: 10s
+      repeat_interval: 3h
+
+inhibit_rules:
+  - source_match:
+      severity: 'critical'
+    target_match:
+      severity: 'warning'
+    equal: ['alertname', 'dev', 'instance']
+
+receivers:
+  - name: 'ai-agent'
+    webhook_configs:
+      - url: 'http://ai-agent:8000/webhook'
+        send_resolved: true

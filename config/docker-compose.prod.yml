@@ -1,0 +1,41 @@
+version: '3.8'
+
+services:
+  ai-agent:
+    image: aws-hybrid_ai-agent:latest
+    container_name: ai-agent
+    restart: always
+    ports:
+      - "8000:8000"
+    environment:
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
+      - TELEGRAM_TOKEN=${TELEGRAM_TOKEN}
+      - TELEGRAM_CHAT_ID=${TELEGRAM_CHAT_ID}
+      - PYTHONUNBUFFERED=1
+    networks:
+      - aiops-network
+    volumes:
+      - ai-agent-logs:/app/logs
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "100m"
+        max-file: "10"
+    labels:
+      - "com.aws-hybrid.service=ai-agent"
+      - "com.aws-hybrid.version=1.0"
+
+networks:
+  aiops-network:
+    name: aws-hybrid_aiops-network
+    driver: bridge
+
+volumes:
+  ai-agent-logs:
+    driver: local

@@ -1,0 +1,42 @@
+# Monitor-specific variables
+---
+# AI Agent configuration
+ai_agent:
+  enabled: yes
+  service_name: ai-agent
+  port: 8000
+  docker_image: "aws-hybrid_ai-agent:latest"
+
+# Default values (can be overridden by environment variables)
+# These MUST be set before deployment:
+# export GEMINI_API_KEY="..."
+# export TELEGRAM_TOKEN="..."  
+# export TELEGRAM_CHAT_ID="..."
+ai_agent_env:
+  GEMINI_API_KEY: "{{ lookup('env', 'GEMINI_API_KEY') | default('NOT_SET') }}"
+  TELEGRAM_TOKEN: "{{ lookup('env', 'TELEGRAM_TOKEN') | default('NOT_SET') }}"
+  TELEGRAM_CHAT_ID: "{{ lookup('env', 'TELEGRAM_CHAT_ID') | default('NOT_SET') }}"
+  LOG_LEVEL: "INFO"
+  DEBUG: "false"
+
+# Docker configuration for monitor
+docker:
+  enabled: yes
+  compose_version: "1.29.2"
+  networks:
+    - name: aws-hybrid_aiops-network
+      driver: bridge
+
+# Prometheus configuration
+prometheus:
+  enabled: yes
+  port: 9090
+  scrape_interval: 15s
+  retention: 30d
+
+# AlertManager configuration
+alertmanager:
+  enabled: yes
+  port: 9093
+  webhook_receiver: "aiops-webhook"
+  webhook_url: "http://localhost:8000/webhook"
