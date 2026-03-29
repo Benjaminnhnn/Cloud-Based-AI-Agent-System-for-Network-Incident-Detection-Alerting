@@ -62,7 +62,7 @@ ansible-playbook -i ansible/inventory.ini \
 echo ""
 echo -e "${YELLOW}[STEP 3/3] Deploying application stack...${NC}"
 ansible-playbook -i ansible/inventory.ini \
-    ansible/playbooks/deploy-app.yml \
+    ansible/playbooks/deploy-webser.yml \
     -vvv
 
 echo ""
