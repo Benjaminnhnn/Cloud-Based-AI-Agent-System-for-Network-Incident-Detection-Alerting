@@ -8,7 +8,7 @@ global:
 alerting:
   alertmanagers:
     - static_configs:
-        - targets: ['alertmanager:9093']
+        - targets: ['localhost:9093']
 
 rule_files:
   - "/etc/prometheus/alert_rules.yml"
@@ -19,20 +19,51 @@ scrape_configs:
     static_configs:
       - targets: ['localhost:9090']
 
-  # Node Exporter - System metrics (Docker)
-  - job_name: 'node_exporter'
+  # Node Exporter on monitor server (running on host)
+  - job_name: 'node_exporter_monitor'
     static_configs:
-      - targets: ['node_exporter:9100']
+      - targets: ['localhost:9100']
         labels:
-          instance: 'localhost'
+          instance: 'monitor-ai-01'
           service: 'system'
+    scrape_interval: 15s
+    scrape_timeout: 10s
 
-  # FastAPI Backend - Application metrics
-  - job_name: 'aiops_api'
+  # Node Exporter on web server
+  - job_name: 'node_exporter_web'
     static_configs:
-      - targets: ['api:8000']
+      - targets: ['10.10.1.68:9100']
         labels:
-          service: 'api'
-          component: 'backend'
-    metrics_path: '/api/metrics'
-    scrape_interval: 10s
+          instance: 'bank-web-01'
+          service: 'system'
+    scrape_interval: 15s
+    scrape_timeout: 10s
+
+  # Node Exporter on core server
+  - job_name: 'node_exporter_core'
+    static_configs:
+      - targets: ['10.10.1.78:9100']
+        labels:
+          instance: 'bank-core-01'
+          service: 'system'
+    scrape_interval: 15s
+    scrape_timeout: 10s
+
+  # Blackbox HTTP probe for web endpoint
+  - job_name: 'blackbox_http_web'
+    metrics_path: /probe
+    params:
+      module: [http_2xx]
+    static_configs:
+      - targets: ['http://18.136.112.28/health']
+        labels:
+          instance: 'bank-web-01'
+          service: 'web-endpoint'
+          endpoint: '/health'
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: __param_target
+      - target_label: __address__
+        replacement: localhost:9115
+      - source_labels: [__param_target]
+        target_label: target

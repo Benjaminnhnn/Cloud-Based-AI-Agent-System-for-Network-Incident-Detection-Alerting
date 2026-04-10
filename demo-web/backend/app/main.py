@@ -1,10 +1,16 @@
 from fastapi import FastAPI
+from fastapi import HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import PlainTextResponse
 from prometheus_client import Counter, Histogram, generate_latest, CollectorRegistry
+import os
 import time
+import urllib.error
+import urllib.request
 from app.routes import users
 from app.config import settings
+
+NODE_EXPORTER_URL = os.getenv("NODE_EXPORTER_URL", "http://127.0.0.1:9100/metrics")
 
 # Prometheus metrics
 REGISTRY = CollectorRegistry()
@@ -79,6 +85,15 @@ async def health_check():
 async def metrics():
     """Prometheus metrics endpoint"""
     return generate_latest(REGISTRY)
+
+@app.get("/api/node-metrics", response_class=PlainTextResponse)
+async def node_metrics():
+    """Proxy node_exporter metrics when Prometheus cannot reach port 9100 directly"""
+    try:
+        with urllib.request.urlopen(NODE_EXPORTER_URL, timeout=5) as response:
+            return response.read().decode("utf-8")
+    except (urllib.error.URLError, TimeoutError) as exc:
+        raise HTTPException(status_code=502, detail=f"node_exporter unavailable: {exc}") from exc
 
 @app.get("/")
 async def root():

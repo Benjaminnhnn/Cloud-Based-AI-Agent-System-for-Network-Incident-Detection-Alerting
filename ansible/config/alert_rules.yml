@@ -96,3 +96,13 @@ groups:
         annotations:
           summary: "Service {{ $labels.service }} is unreachable"
           description: "{{ $labels.service }} on {{ $labels.instance }} failed health check"
+
+      - alert: WebEndpointDown
+        expr: probe_success{job="blackbox_http_web",instance="bank-web-01"} == 0
+        for: 30s
+        labels:
+          severity: critical
+          service: availability
+        annotations:
+          summary: "Web endpoint is DOWN on {{ $labels.instance }}"
+          description: "Blackbox probe failed for {{ $labels.target }}"

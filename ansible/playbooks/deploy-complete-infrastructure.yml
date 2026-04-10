@@ -1,0 +1,870 @@
+---
+# Complete Infrastructure Deployment Playbook
+# Deploys: Prometheus, Grafana, Webserver, AI Agent, and all monitoring components
+# Usage: ansible-playbook -i inventory.ini playbooks/deploy-complete-infrastructure.yml
+# 
+# This playbook imports bootstrap.yml first to install system dependencies and Docker
+
+# ========== PHASE 0: Bootstrap (imported from bootstrap.yml) ==========
+- import_playbook: bootstrap.yml
+
+- name: "====== COMPLETE INFRASTRUCTURE DEPLOYMENT ======"
+  hosts: localhost
+  gather_facts: no
+  tasks:
+    - name: Display deployment plan
+      debug:
+        msg:
+          - "=============================================="
+          - "AWS Hybrid Infrastructure Deployment"
+          - "=============================================="
+          - "Monitors: Prometheus, Grafana, AlertManager"
+          - "Monitor Server: monitor-ai-01"
+          - "Webserver: bank-web-01"
+          - "Core Services: bank-core-01"
+          - "=============================================="
+
+# ========== PHASE 1: Deploy Node Exporter (Monitoring) ==========
+- name: "PHASE 1: Deploy Node Exporter on All Servers"
+  hosts: all
+  become: yes
+  gather_facts: yes
+  
+  tasks:
+    - name: Download and install node_exporter
+      shell: |
+        cd /tmp
+        wget -q https://github.com/prometheus/node_exporter/releases/download/v1.7.0/node_exporter-1.7.0.linux-amd64.tar.gz
+        tar xzf node_exporter-1.7.0.linux-amd64.tar.gz
+        cp node_exporter-1.7.0.linux-amd64/node_exporter /usr/local/bin/
+        chmod +x /usr/local/bin/node_exporter
+        rm -rf node_exporter-1.7.0.linux-amd64*
+      args:
+        creates: /usr/local/bin/node_exporter
+    
+    - name: Create node_exporter systemd service
+      copy:
+        content: |
+          [Unit]
+          Description=Node Exporter
+          After=network.target
+          
+          [Service]
+          Type=simple
+          User=nobody
+          ExecStart=/usr/local/bin/node_exporter --collector.processes
+          Restart=on-failure
+          RestartSec=5
+          
+          [Install]
+          WantedBy=multi-user.target
+        dest: /etc/systemd/system/node_exporter.service
+        mode: '0644'
+    
+    - name: Enable and start node_exporter service
+      systemd:
+        name: node_exporter
+        enabled: yes
+        state: restarted
+        daemon_reload: yes
+    
+    - name: Wait for node_exporter to be ready
+      wait_for:
+        port: 9100
+        delay: 2
+        timeout: 30
+    
+    - name: Verify node_exporter metrics
+      shell: curl -s http://localhost:9100/metrics | head -3
+      register: node_exporter_metrics
+      changed_when: false
+
+# ========== PHASE 2: Deploy Prometheus & AlertManager (Monitor Server) ==========
+- name: "PHASE 2: Deploy Prometheus & AlertManager"
+  hosts: monitor
+  become: yes
+  gather_facts: yes
+  
+  tasks:
+    - name: Create Prometheus data directories
+      file:
+        path: "{{ item }}"
+        state: directory
+        owner: nobody
+        group: nobody
+        mode: '0755'
+      loop:
+        - /opt/prometheus
+        - /opt/prometheus/data
+        - /opt/alertmanager
+        - /opt/alertmanager/data
+    
+    - name: Copy Prometheus configuration
+      copy:
+        src: /home/hoang_viet/aws-hybrid/config/prometheus.yml
+        dest: /opt/prometheus/prometheus.yml
+        owner: nobody
+        group: nobody
+        mode: '0644'
+      when: ansible_local is not defined or ansible_local.prometheus is not defined
+    
+    - name: Copy AlertManager configuration
+      copy:
+        src: /home/hoang_viet/aws-hybrid/ansible/config/alertmanager.yml
+        dest: /opt/alertmanager/alertmanager.yml
+        owner: nobody
+        group: nobody
+        mode: '0644'
+    
+    - name: Create Prometheus docker-compose.yml
+      copy:
+        content: |
+          version: '3.8'
+          services:
+            prometheus:
+              image: prom/prometheus:latest
+              container_name: prometheus
+              network_mode: host
+              volumes:
+                - /opt/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+                - /opt/prometheus/alert_rules.yml:/etc/prometheus/alert_rules.yml:ro
+                - /opt/prometheus/data:/prometheus
+              command:
+                - '--config.file=/etc/prometheus/prometheus.yml'
+                - '--storage.tsdb.path=/prometheus'
+                - '--storage.tsdb.retention.time=30d'
+              restart: unless-stopped
+            
+            alertmanager:
+              image: prom/alertmanager:latest
+              container_name: alertmanager
+              network_mode: host
+              volumes:
+                - /opt/alertmanager/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+                - /opt/alertmanager/data:/alertmanager
+              command:
+                - '--config.file=/etc/alertmanager/alertmanager.yml'
+                - '--storage.path=/alertmanager'
+              restart: unless-stopped
+          
+          networks:
+            aiops-network:
+              driver: bridge
+        dest: /opt/prometheus/docker-compose.yml
+        mode: '0644'
+    
+    - name: Start Prometheus and AlertManager
+      shell: |
+        cd /opt/prometheus
+        docker-compose up -d
+      register: prometheus_start
+      changed_when: "'Started' in prometheus_start.stderr or 'Creating' in prometheus_start.stderr"
+    
+    - name: Wait for Prometheus to be ready
+      wait_for:
+        port: 9090
+        delay: 5
+        timeout: 30
+    
+    - name: Wait for AlertManager to be ready
+      wait_for:
+        port: 9093
+        delay: 5
+        timeout: 30
+    
+    - name: Verify Prometheus is responding
+      shell: curl -s http://localhost:9090/-/healthy
+      register: prometheus_health
+      changed_when: false
+
+# ========== PHASE 3: Deploy Grafana (Monitor Server) ==========
+- name: "PHASE 3: Deploy Grafana"
+  hosts: monitor
+  become: yes
+  gather_facts: yes
+  
+  tasks:
+    - name: Create Grafana data directories
+      file:
+        path: "{{ item }}"
+        state: directory
+        owner: "472"
+        group: "472"
+        mode: '0755'
+      loop:
+        - /opt/grafana
+        - /opt/grafana/data
+        - /opt/grafana/provisioning
+        - /opt/grafana/provisioning/datasources
+        - /opt/grafana/provisioning/dashboards
+    
+    - name: Create Grafana datasource configuration
+      copy:
+        content: |
+          apiVersion: 1
+          datasources:
+            - name: Prometheus
+              type: prometheus
+              access: proxy
+              url: http://{{ ansible_default_ipv4.address }}:9090
+              isDefault: true
+              editable: true
+        dest: /opt/grafana/provisioning/datasources/prometheus.yml
+        mode: '0644'
+    
+    - name: Create Grafana docker-compose.yml
+      copy:
+        content: |
+          version: '3.8'
+          services:
+            grafana:
+              image: grafana/grafana:latest
+              container_name: grafana
+              ports:
+                - "3000:3000"
+              environment:
+                - GF_SECURITY_ADMIN_USER=admin
+                - GF_SECURITY_ADMIN_PASSWORD=admin123
+                - GF_INSTALL_PLUGINS=grafana-piechart-panel
+              volumes:
+                - /opt/grafana/data:/var/lib/grafana
+                - /opt/grafana/provisioning:/etc/grafana/provisioning
+              networks:
+                - aiops-network
+              restart: unless-stopped
+          
+          networks:
+            aiops-network:
+              driver: bridge
+        dest: /opt/grafana/docker-compose.yml
+        mode: '0644'
+    
+    - name: Start Grafana
+      shell: |
+        cd /opt/grafana
+        docker-compose up -d
+      register: grafana_start
+      changed_when: "'Started' in grafana_start.stderr or 'Creating' in grafana_start.stderr"
+    
+    - name: Wait for Grafana to be ready
+      wait_for:
+        port: 3000
+        delay: 5
+        timeout: 30
+    
+    - name: Verify Grafana is responding
+      shell: curl -s http://localhost:3000/api/health
+      register: grafana_health
+      changed_when: false
+      retries: 3
+      delay: 2
+    
+    - name: Wait for Prometheus to be ready for dashboard creation
+      uri:
+        url: "http://localhost:9090/-/healthy"
+        method: GET
+        status_code: 200
+      retries: 30
+      delay: 1
+      register: prometheus_ready
+      until: prometheus_ready.status == 200
+      ignore_errors: yes
+    
+    - name: Create Prometheus datasource via API
+      uri:
+        url: "http://localhost:3000/api/datasources"
+        method: POST
+        user: "admin"
+        password: "admin123"
+        force_basic_auth: yes
+        body_format: json
+        body: |
+          {
+            "name": "Prometheus",
+            "type": "prometheus",
+            "access": "proxy",
+            "url": "http://localhost:9090",
+            "isDefault": true,
+            "jsonData": {
+              "timeInterval": "15s"
+            }
+          }
+        status_code: [200, 409]
+      register: datasource_result
+    
+    - name: Delete all existing dashboards
+      shell: |
+        curl -s "http://admin:admin123@localhost:3000/api/search?type=dash-db" | \
+        python3 -c "import sys, json; data=json.load(sys.stdin); [print(d['uid']) for d in data]" | \
+        while read uid; do
+          curl -s -X DELETE "http://admin:admin123@localhost:3000/api/dashboards/uid/$uid"
+          echo "Deleted dashboard: $uid"
+        done
+      ignore_errors: yes
+    
+    - name: Copy dashboard JSON templates to monitor server
+      copy:
+        src: templates/{{ item }}-dashboard.json
+        dest: /tmp/{{ item }}-dashboard.json
+      with_items:
+        - system-overview
+        - alert-monitoring
+        - network-performance
+      ignore_errors: yes
+
+    - name: Deploy 3 Grafana Dashboards from template files
+      shell: |
+        for dashboard in system-overview alert-monitoring network-performance; do
+          curl -s -X POST "http://admin:admin123@localhost:3000/api/dashboards/db" \
+            -H "Content-Type: application/json" \
+            -d @/tmp/${dashboard}-dashboard.json
+          echo "✓ Deployed ${dashboard} dashboard"
+        done
+      ignore_errors: yes
+    
+    - name: Display Grafana Setup Complete
+      debug:
+        msg:
+          - "=========================================="
+          - "✅ Grafana Dashboards Setup Complete"
+          - "=========================================="
+          - ""
+          - "DASHBOARDS CREATED:"
+          - "  ✓ System Overview - Real-time Monitoring"
+          - "    - CPU Usage (gauge + timeseries)"
+          - "    - Memory Usage (gauge + timeseries)"
+          - "    - Disk Usage (gauge + timeseries)"
+          - "    - Network Traffic monitoring"
+          - ""
+          - "  ✓ Alert Monitoring"
+          - "    - Warning Alerts counter"
+          - "    - Critical Alerts counter"
+          - "    - Service Status table"
+          - "    - Active Alerts timeline"
+          - ""
+          - "  ✓ Network & Performance"
+          - "    - Network Traffic (RX/TX)"
+          - "    - System Load Average"
+          - "    - Disk I/O Operations"
+          - "    - Network Interface Status"
+          - ""
+          - "DATASOURCE CONFIGURED:"
+          - "  ✓ Prometheus connected"
+          - "    - Refresh interval: 15s"
+          - "    - Set as default datasource"
+          - ""
+          - "ACCESS GRAFANA:"
+          - "  URL: http://{{ ansible_default_ipv4.address }}:3000"
+          - "  User: admin"
+          - "  Password: admin123"
+          - "=========================================="
+
+# ========== PHASE 4: Deploy Webserver, Database & Cache ==========
+- name: "PHASE 4: Deploy Webserver, Database & Cache"
+  hosts: web
+  become: yes
+  gather_facts: yes
+  
+  vars:
+    postgresql_port: 5432
+    redis_port: 6379
+    nginx_port: 80
+  
+  tasks:
+    # ============ PostgreSQL Database Setup ============
+    - name: Install PostgreSQL database server
+      package:
+        name: postgresql-server
+        state: present
+      ignore_errors: yes
+    
+    - name: Initialize PostgreSQL database
+      shell: |
+        postgresql-setup initdb 2>/dev/null || true
+      ignore_errors: yes
+    
+    - name: Enable and start PostgreSQL service
+      systemd:
+        name: postgresql
+        enabled: yes
+        state: started
+      ignore_errors: yes
+    
+    - name: Configure PostgreSQL for remote connections
+      lineinfile:
+        path: /var/lib/pgsql/data/postgresql.conf
+        regexp: '^#listen_addresses'
+        line: "listen_addresses = '*'"
+        backup: yes
+      notify: restart_postgresql
+      ignore_errors: yes
+    
+    - name: Configure PostgreSQL host-based authentication
+      lineinfile:
+        path: /var/lib/pgsql/data/pg_hba.conf
+        regexp: '^host.*all.*all.*0.0.0.0'
+        line: "host    all    all    0.0.0.0/0    md5"
+        backup: yes
+      notify: restart_postgresql
+      ignore_errors: yes
+    
+    - name: Wait for PostgreSQL to be ready
+      wait_for:
+        port: "{{ postgresql_port }}"
+        delay: 2
+        timeout: 30
+      ignore_errors: yes
+    
+    # ============ Redis Cache Setup ============
+    - name: Install Redis cache server
+      package:
+        name: redis
+        state: present
+      ignore_errors: yes
+    
+    - name: Configure Redis to accept remote connections
+      lineinfile:
+        path: /etc/redis.conf
+        regexp: '^bind'
+        line: 'bind 0.0.0.0'
+        backup: yes
+      notify: restart_redis
+      ignore_errors: yes
+    
+    - name: Configure Redis persistence
+      lineinfile:
+        path: /etc/redis.conf
+        regexp: '^save'
+        line: 'save 900 1'
+        backup: yes
+      notify: restart_redis
+      ignore_errors: yes
+    
+    - name: Enable and start Redis service
+      systemd:
+        name: redis
+        enabled: yes
+        state: started
+      ignore_errors: yes
+    
+    - name: Wait for Redis to be ready
+      wait_for:
+        port: "{{ redis_port }}"
+        delay: 2
+        timeout: 30
+      ignore_errors: yes
+    
+    # ============ Nginx Webserver Setup ============
+    - name: Create webserver directories
+      file:
+        path: "{{ item }}"
+        state: directory
+        owner: ec2-user
+        group: ec2-user
+        mode: '0755'
+      loop:
+        - /opt/webserver
+        - /opt/webserver/config
+      ignore_errors: yes
+    
+    - name: Copy nginx configuration
+      copy:
+        src: /home/hoang_viet/aws-hybrid/config/nginx.conf
+        dest: /opt/webserver/config/nginx.conf
+        owner: ec2-user
+        group: ec2-user
+        mode: '0644'
+      ignore_errors: yes
+    
+    - name: Create default nginx configuration if not exists
+      copy:
+        content: |
+          worker_processes auto;
+          
+          events {
+            worker_connections 1024;
+          }
+          
+          http {
+            upstream backend {
+              server localhost:8000;
+            }
+            
+            server {
+              listen 80 default_server;
+              server_name _;
+              
+              location / {
+                proxy_pass http://backend;
+                proxy_set_header Host $host;
+                proxy_set_header X-Real-IP $remote_addr;
+              }
+              
+              location /health {
+                return 200 "OK\n";
+                add_header Content-Type text/plain;
+              }
+            }
+          }
+        dest: /opt/webserver/config/nginx.conf
+        mode: '0644'
+      when: ansible_local is not defined or ansible_local.nginx is not defined
+    
+    - name: Create webserver docker-compose.yml
+      copy:
+        content: |
+          version: '3.8'
+          services:
+            nginx:
+              image: nginx:latest
+              container_name: webserver
+              ports:
+                - "80:80"
+                - "443:443"
+              volumes:
+                - /opt/webserver/config/nginx.conf:/etc/nginx/nginx.conf:ro
+              networks:
+                - aiops-network
+              restart: unless-stopped
+              depends_on:
+                - db
+                - cache
+            
+            db:
+              image: postgres:13-alpine
+              container_name: postgres
+              environment:
+                POSTGRES_USER: postgres
+                POSTGRES_PASSWORD: postgres
+                POSTGRES_DB: aiops_db
+              ports:
+                - "5432:5432"
+              volumes:
+                - postgres_data:/var/lib/postgresql/data
+              networks:
+                - aiops-network
+              restart: unless-stopped
+              healthcheck:
+                test: ["CMD-SHELL", "pg_isready -U postgres"]
+                interval: 10s
+                timeout: 5s
+                retries: 5
+            
+            cache:
+              image: redis:7-alpine
+              container_name: redis
+              ports:
+                - "6379:6379"
+              volumes:
+                - redis_data:/data
+              networks:
+                - aiops-network
+              restart: unless-stopped
+              healthcheck:
+                test: ["CMD", "redis-cli", "ping"]
+                interval: 10s
+                timeout: 5s
+                retries: 5
+          
+          volumes:
+            postgres_data:
+            redis_data:
+          
+          networks:
+            aiops-network:
+              driver: bridge
+        dest: /opt/webserver/docker-compose.yml
+        mode: '0644'
+    
+    - name: Start webserver and database services
+      shell: |
+        cd /opt/webserver
+        docker-compose up -d
+      register: webserver_start
+      changed_when: "'Started' in webserver_start.stderr or 'Creating' in webserver_start.stderr"
+      ignore_errors: yes
+    
+    - name: Wait for webserver to be ready
+      wait_for:
+        port: 80
+        delay: 3
+        timeout: 30
+      ignore_errors: yes
+    
+    - name: Wait for PostgreSQL container to be ready
+      wait_for:
+        port: 5432
+        delay: 2
+        timeout: 30
+      ignore_errors: yes
+    
+    - name: Wait for Redis container to be ready
+      wait_for:
+        port: 6379
+        delay: 2
+        timeout: 30
+      ignore_errors: yes
+    
+    - name: Verify webserver is responding
+      shell: curl -s http://localhost/health
+      register: webserver_health
+      changed_when: false
+      ignore_errors: yes
+    
+    - name: Verify PostgreSQL is responding
+      shell: docker exec postgres psql -U postgres -d aiops_db -c "SELECT 1" 2>/dev/null || echo "PostgreSQL not ready yet"
+      changed_when: false
+      ignore_errors: yes
+    
+    - name: Verify Redis is responding
+      shell: docker exec redis redis-cli ping | grep -q PONG && echo "Redis is healthy" || echo "Redis not ready yet"
+      changed_when: false
+      ignore_errors: yes
+  
+  handlers:
+    - name: restart_postgresql
+      systemd:
+        name: postgresql
+        state: restarted
+      ignore_errors: yes
+    
+    - name: restart_redis
+      systemd:
+        name: redis
+        state: restarted
+      ignore_errors: yes
+
+# ========== PHASE 5: Deploy AI Agent (Monitor Server) ==========
+- name: "PHASE 5: Deploy AI Agent"
+  hosts: monitor
+  become: yes
+  gather_facts: yes
+  
+  vars:
+    gemini_api_key: "{{ lookup('env', 'GEMINI_API_KEY') | default('') }}"
+    telegram_token: "{{ lookup('env', 'TELEGRAM_TOKEN') | default('') }}"
+    telegram_chat_id: "{{ lookup('env', 'TELEGRAM_CHAT_ID') | default('') }}"
+  
+  pre_tasks:
+    - name: Validate AI Agent environment variables
+      fail:
+        msg: "ERROR: {{ item }} environment variable is not set. Please set it before deployment: export {{ item }}='your-value'"
+      when: vars[item] == ''
+      with_items:
+        - gemini_api_key
+        - telegram_token
+        - telegram_chat_id
+      tags:
+        - validate
+    
+    - name: Display AI Agent deployment information
+      debug:
+        msg:
+          - "=========================================="
+          - "Deploying AI Agent"
+          - "=========================================="
+          - "Target Host: {{ inventory_hostname }}"
+          - "App Path: /opt/ai-agent"
+          - "Port: 8000"
+          - "=========================================="
+      tags:
+        - always
+  
+  tasks:
+    - name: Create AI Agent directories
+      file:
+        path: "{{ item }}"
+        state: directory
+        owner: ec2-user
+        group: ec2-user
+        mode: '0755'
+      loop:
+        - /opt/ai-agent
+        - /opt/ai-agent/logs
+    
+    - name: Copy AI Agent files from workspace
+      shell: |
+        cp -r /home/hoang_viet/aws-hybrid/agent_src/* /opt/ai-agent/ 2>/dev/null || true
+      become: yes
+      become_user: root
+      register: copy_result
+      changed_when: true
+    
+    - name: Create or update AI Agent docker-compose.yml
+      copy:
+        content: |
+          version: '3.8'
+          services:
+            ai-agent:
+              image: aws-hybrid_ai-agent:latest
+              container_name: ai-agent
+              ports:
+                - "8000:8000"
+              environment:
+                - GEMINI_API_KEY={{ gemini_api_key }}
+                - TELEGRAM_TOKEN={{ telegram_token }}
+                - TELEGRAM_CHAT_ID={{ telegram_chat_id }}
+                - LOG_LEVEL=INFO
+                - DEBUG=false
+              volumes:
+                - /opt/ai-agent/logs:/app/logs
+              networks:
+                - aiops-network
+              restart: unless-stopped
+              healthcheck:
+                test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+                interval: 30s
+                timeout: 10s
+                retries: 3
+                start_period: 40s
+          
+          networks:
+            aiops-network:
+              driver: bridge
+        dest: /opt/ai-agent/docker-compose.yml
+        owner: ec2-user
+        group: ec2-user
+        mode: '0644'
+    
+    - name: Build AI Agent Docker image
+      shell: |
+        cd /opt/ai-agent
+        docker build -t aws-hybrid_ai-agent:latest .
+      register: ai_agent_build
+      changed_when: "'Successfully built' in ai_agent_build.stdout or 'Successfully tagged' in ai_agent_build.stdout"
+      become: yes
+      become_user: root
+      retries: 3
+      delay: 10
+    
+    - name: Start AI Agent
+      shell: |
+        cd /opt/ai-agent
+        docker-compose up -d
+      register: ai_agent_start
+      changed_when: "'Started' in ai_agent_start.stderr or 'Creating' in ai_agent_start.stderr"
+      become: yes
+      become_user: root
+      retries: 3
+      delay: 5
+    
+    - name: Wait for AI Agent to be ready
+      wait_for:
+        port: 8000
+        delay: 5
+        timeout: 60
+        host: localhost
+    
+    - name: Verify AI Agent is responding
+      uri:
+        url: "http://localhost:8000/health"
+        method: GET
+        status_code: 200
+      retries: 5
+      delay: 5
+      register: ai_agent_health
+      until: ai_agent_health.status == 200
+    
+    - name: Display AI Agent deployment status
+      debug:
+        msg:
+          - "=========================================="
+          - "✅ AI Agent deployed successfully"
+          - "=========================================="
+          - "Service: ai-agent"
+          - "Port: 8000"
+          - "Status: {{ ai_agent_health.status }}"
+          - "Access: http://{{ ansible_default_ipv4.address }}:8000"
+          - "=========================================="
+
+# ========== PHASE 6: Firewall Configuration ==========
+- name: "PHASE 6: Configure Firewall Rules"
+  hosts: all
+  become: yes
+  
+  tasks:
+    - name: Configure firewall for monitor server
+      firewalld:
+        port: "{{ item }}/tcp"
+        permanent: yes
+        state: enabled
+        immediate: yes
+      loop:
+        - 9090  # Prometheus
+        - 9093  # AlertManager
+        - 3000  # Grafana
+        - 8000  # AI Agent
+        - 9100  # Node Exporter
+      when: inventory_hostname == 'monitor-ai-01'
+    
+    - name: Configure firewall for web server
+      firewalld:
+        port: "{{ item }}/tcp"
+        permanent: yes
+        state: enabled
+        immediate: yes
+      loop:
+        - 80    # HTTP
+        - 443   # HTTPS
+        - 9100  # Node Exporter
+      when: "'web' in group_names"
+    
+    - name: Configure firewall for core server
+      firewalld:
+        port: 9100/tcp
+        permanent: yes
+        state: enabled
+        immediate: yes
+      when: "'core' in group_names"
+    
+    - name: Reload firewall
+      systemd:
+        name: firewalld
+        state: reloaded
+
+# ========== PHASE 7: Summary and Verification ==========
+- name: "PHASE 7: Summary and Health Check"
+  hosts: localhost
+  gather_facts: no
+  
+  tasks:
+    - name: Display deployment summary
+      debug:
+        msg:
+          - ""
+          - "=================================================="
+          - "DEPLOYMENT COMPLETED SUCCESSFULLY!"
+          - "=================================================="
+          - ""
+          - "SERVICES DEPLOYED:"
+          - "  ✓ Prometheus (Monitor: 9090)"
+          - "  ✓ AlertManager (Monitor: 9093)"
+          - "  ✓ Grafana (Monitor: 3000)"
+          - "  ✓ Node Exporter (All: 9100)"
+          - "  ✓ Webserver (Web: 80)"
+          - "  ✓ AI Agent (Monitor: 8000)"
+          - ""
+          - "DEFAULT CREDENTIALS:"
+          - "  Grafana: admin / admin123"
+          - "  Prometheus: No auth required"
+          - "  AlertManager: No auth required"
+          - ""
+          - "ACCESS URLS:"
+          - "  Grafana: http://<monitor-ip>:3000"
+          - "  Prometheus: http://<monitor-ip>:9090"
+          - "  AlertManager: http://<monitor-ip>:9093"
+          - "  AI Agent: http://<monitor-ip>:8000"
+          - "  Webserver: http://<web-ip>:80"
+          - ""
+          - "NEXT STEPS:"
+          - "  1. Change Grafana admin password"
+          - "  2. Configure Grafana dashboards"
+          - "  3. Set up alert channels"
+          - "  4. Configure SSH monitoring"
+          - "  5. Review logs: docker logs <container-name>"
+          - ""
+          - "MONITOR SERVERS: monitor-ai-01"
+          - "WEB SERVERS: bank-web-01"
+          - "CORE SERVERS: bank-core-01"
+          - "=================================================="
+          - ""

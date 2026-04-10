@@ -1,10 +1,14 @@
-# Terraform
+# Terraform (NEVER commit state files)
 *.tfstate
 *.tfstate.*
 *.tfstate.backup
+*.tfstate.backup.old
 terraform/.terraform/
 terraform/.terraform.lock.hcl
 terraform/apply_output.txt
+terraform/tfplan
+terraform/aws/
+terraform/awscliv2.zip
 .terraform/
 
 # Ansible

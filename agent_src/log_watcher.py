@@ -11,11 +11,12 @@ LOG_FILES = [
     "/var/log/syslog",
     "/var/log/nginx/error.log",
     "/var/log/apache2/error.log",
-    "/var/log/mysql/error.log"
+    "/var/log/mysql/error.log",
+    "/tmp/test_syslog.log"  # For testing
 ]
 
 # URL của AI Agent Webhook (FastAPI server bạn đã chạy)
-WEBHOOK_URL = "http://localhost:8080/webhook"
+WEBHOOK_URL = "http://localhost:8000/webhook"
 
 # Từ khóa để nhận diện lỗi
 ERROR_KEYWORDS = ["ERROR", "CRITICAL", "FATAL", "EXCEPTION", "FAILED", "PANIC"]
