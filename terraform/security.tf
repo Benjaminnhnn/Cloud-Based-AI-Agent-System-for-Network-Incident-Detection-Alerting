@@ -12,19 +12,35 @@ resource "aws_security_group" "monitor_sg" {
   }
 
   ingress {
-    description = "Grafana from internet"
-    from_port   = 3001
-    to_port     = 3001
+    description = "Grafana from my IP only"
+    from_port   = 3000
+    to_port     = 3000
     protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]
+    cidr_blocks = [var.my_ip_cidr]
   }
 
   ingress {
-    description = "Prometheus from internet"
+    description = "Prometheus from my IP only"
     from_port   = 9090
     to_port     = 9090
     protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]
+    cidr_blocks = [var.my_ip_cidr]
+  }
+
+  ingress {
+    description = "AlertManager from my IP only"
+    from_port   = 9093
+    to_port     = 9093
+    protocol    = "tcp"
+    cidr_blocks = [var.my_ip_cidr]
+  }
+
+  ingress {
+    description = "AI Agent API from my IP only"
+    from_port   = 8000
+    to_port     = 8000
+    protocol    = "tcp"
+    cidr_blocks = [var.my_ip_cidr]
   }
 
   ingress {
@@ -62,11 +78,27 @@ resource "aws_security_group" "web_sg" {
   }
 
   ingress {
-    description = "Web app from internet"
-    from_port   = 3000
-    to_port     = 3000
+    description = "HTTP from internet"
+    from_port   = 80
+    to_port     = 80
     protocol    = "tcp"
     cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  ingress {
+    description = "HTTPS from internet"
+    from_port   = 443
+    to_port     = 443
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  ingress {
+    description     = "Nginx metrics proxy from monitor node"
+    from_port       = 80
+    to_port         = 80
+    protocol        = "tcp"
+    security_groups = [aws_security_group.monitor_sg.id]
   }
 
   ingress {
@@ -120,11 +152,11 @@ resource "aws_security_group" "core_sg" {
   }
 
   ingress {
-    description = "API from internet"
-    from_port   = 8000
-    to_port     = 8000
-    protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]
+    description     = "API from web and monitor nodes only"
+    from_port       = 8000
+    to_port         = 8000
+    protocol        = "tcp"
+    security_groups = [aws_security_group.web_sg.id, aws_security_group.monitor_sg.id]
   }
 
   ingress {

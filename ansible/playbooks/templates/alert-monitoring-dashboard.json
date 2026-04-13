@@ -1,0 +1,46 @@
+{
+  "dashboard": {
+    "title": "Alert Monitoring",
+    "description": "Service status and uptime monitoring",
+    "tags": ["alerts", "monitoring"],
+    "timezone": "browser",
+    "refresh": "10s",
+    "time": {"from": "now-6h", "to": "now"},
+    "panels": [
+      {
+        "id": 1,
+        "title": "Services Online",
+        "type": "stat",
+        "gridPos": {"x": 0, "y": 0, "w": 6, "h": 8},
+        "fieldConfig": {"defaults": {"unit": "short", "color": {"mode": "thresholds"}, "thresholds": {"mode": "absolute", "steps": [{"color": "red", "value": null}, {"color": "yellow", "value": 1}, {"color": "green", "value": 3}]}}},
+        "targets": [{"refId": "A", "datasource": {"type": "prometheus", "uid": "bfijh14lltg5ce"}, "expr": "count(up == 1)"}]
+      },
+      {
+        "id": 2,
+        "title": "Services Offline",
+        "type": "stat",
+        "gridPos": {"x": 6, "y": 0, "w": 6, "h": 8},
+        "fieldConfig": {"defaults": {"unit": "short", "color": {"mode": "thresholds"}, "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "red", "value": 1}]}}},
+        "targets": [{"refId": "A", "datasource": {"type": "prometheus", "uid": "bfijh14lltg5ce"}, "expr": "count(up == 0)"}]
+      },
+      {
+        "id": 3,
+        "title": "Service Status (Up Services)",
+        "type": "table",
+        "gridPos": {"x": 0, "y": 8, "w": 24, "h": 10},
+        "targets": [{"refId": "A", "datasource": {"type": "prometheus", "uid": "bfijh14lltg5ce"}, "expr": "up{job!=\"\"}"}]
+      },
+      {
+        "id": 4,
+        "title": "Service Uptime Timeline",
+        "type": "timeseries",
+        "gridPos": {"x": 0, "y": 18, "w": 24, "h": 8},
+        "targets": [{"refId": "A", "datasource": {"type": "prometheus", "uid": "bfijh14lltg5ce"}, "expr": "up{job!=\"\"}"}]
+      }
+    ],
+    "refresh": "10s",
+    "schemaVersion": 37,
+    "version": 0,
+    "overwrite": true
+  }
+}

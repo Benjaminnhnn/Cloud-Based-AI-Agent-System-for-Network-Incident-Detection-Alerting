@@ -1,0 +1,66 @@
+[Unit]
+Description=Module 2 Log Watcher + Unified Service Monitor
+Documentation=file:///{{ app_home }}/aws-hybrid/DEPLOYMENT_GUIDE.md
+After=network.target docker.service
+
+[Service]
+Type=simple
+User={{ app_user }}
+Group={{ app_user }}
+WorkingDirectory={{ agent_src }}
+Environment="PYTHONUNBUFFERED=1"
+Environment="PYTHONPATH={{ agent_src }}"
+
+# Pre-flight checks
+ExecStartPre=/bin/bash -c "echo '[Service] Starting Module 2 monitoring system at $(date)' >> {{ log_dir }}/module2-monitor.log"
+ExecStartPre=/usr/bin/python3 -c "import event_queue; import service_monitor"
+
+# Main service: Start both log_watcher and service_monitor
+ExecStart=/usr/bin/python3 -c "
+import subprocess
+import threading
+import time
+
+# Start log_watcher in background thread
+def start_log_watcher():
+    subprocess.Popen([
+        '/usr/bin/python3',
+        '{{ agent_src }}/log_watcher.py'
+    ], stdout=open('{{ log_dir }}/log-watcher.log', 'a'), stderr=subprocess.STDOUT)
+
+# Start service_monitor in main thread
+log_watcher_thread = threading.Thread(target=start_log_watcher, daemon=True)
+log_watcher_thread.start()
+time.sleep(1)
+
+subprocess.Popen([
+    '/usr/bin/python3',
+    '{{ agent_src }}/service_monitor.py'
+], stdout=open('{{ log_dir }}/service-monitor.log', 'a'), stderr=subprocess.STDOUT).wait()
+"
+
+# Standard output to journal
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=module2-monitor
+
+# Resource limits
+CPUQuota=50%
+MemoryLimit=500M
+
+# Restart policy
+Restart=always
+RestartSec=5
+StartLimitInterval=60
+StartLimitBurst=5
+
+# Keep running
+PrivateTmp=no
+NoNewPrivileges=true
+
+# Timeout
+TimeoutStartSec=30
+TimeoutStopSec=10
+
+[Install]
+WantedBy=multi-user.target

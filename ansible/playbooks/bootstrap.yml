@@ -39,6 +39,7 @@
           - ansible
         state: present
         executable: pip3
+      ignore_errors: yes
     
     - name: Enable and start SSH service
       systemd:

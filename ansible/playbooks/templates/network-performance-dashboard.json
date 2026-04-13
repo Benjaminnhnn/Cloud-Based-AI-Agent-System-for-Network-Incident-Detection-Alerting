@@ -1,0 +1,52 @@
+{
+  "dashboard": {
+    "title": "Network & Performance",
+    "description": "Network traffic and system performance metrics",
+    "tags": ["network", "performance"],
+    "timezone": "browser",
+    "refresh": "5s",
+    "time": {"from": "now-6h", "to": "now"},
+    "panels": [
+      {
+        "id": 1,
+        "title": "Network RX Bytes",
+        "type": "timeseries",
+        "gridPos": {"x": 0, "y": 0, "w": 12, "h": 8},
+        "fieldConfig": {"defaults": {"unit": "Bps", "color": {"mode": "palette-classic"}}},
+        "targets": [{"refId": "A", "datasource": {"type": "prometheus", "uid": "bfijh14lltg5ce"}, "expr": "rate(node_network_receive_bytes_total{device!=\"lo\"}[5m])"}]
+      },
+      {
+        "id": 2,
+        "title": "Network TX Bytes",
+        "type": "timeseries",
+        "gridPos": {"x": 12, "y": 0, "w": 12, "h": 8},
+        "fieldConfig": {"defaults": {"unit": "Bps", "color": {"mode": "palette-classic"}}},
+        "targets": [{"refId": "A", "datasource": {"type": "prometheus", "uid": "bfijh14lltg5ce"}, "expr": "rate(node_network_transmit_bytes_total{device!=\"lo\"}[5m])"}]
+      },
+      {
+        "id": 3,
+        "title": "System Load Average",
+        "type": "timeseries",
+        "gridPos": {"x": 0, "y": 8, "w": 12, "h": 8},
+        "fieldConfig": {"defaults": {"unit": "short", "color": {"mode": "palette-classic"}}},
+        "targets": [
+          {"refId": "A", "datasource": {"type": "prometheus", "uid": "bfijh14lltg5ce"}, "expr": "node_load1"},
+          {"refId": "B", "datasource": {"type": "prometheus", "uid": "bfijh14lltg5ce"}, "expr": "node_load5"},
+          {"refId": "C", "datasource": {"type": "prometheus", "uid": "bfijh14lltg5ce"}, "expr": "node_load15"}
+        ]
+      },
+      {
+        "id": 4,
+        "title": "Disk I/O Operations",
+        "type": "timeseries",
+        "gridPos": {"x": 12, "y": 8, "w": 12, "h": 8},
+        "fieldConfig": {"defaults": {"unit": "ops", "color": {"mode": "palette-classic"}}},
+        "targets": [{"refId": "A", "datasource": {"type": "prometheus", "uid": "bfijh14lltg5ce"}, "expr": "rate(node_disk_reads_completed_total[5m])"}]
+      }
+    ],
+    "refresh": "5s",
+    "schemaVersion": 37,
+    "version": 0,
+    "overwrite": true
+  }
+}

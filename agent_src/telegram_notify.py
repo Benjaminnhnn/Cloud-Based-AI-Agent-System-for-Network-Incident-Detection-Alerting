@@ -1,6 +1,7 @@
 import requests
 import os
 from dotenv import load_dotenv
+from datetime import datetime
 
 # Load credentials from .env file
 load_dotenv()
@@ -11,12 +12,12 @@ TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
 def get_chat_id():
     """
-    Lấy Chat ID thực tế từ getUpdates.
-    Dùng khi bị lỗi 403 hoặc không chắc TELEGRAM_CHAT_ID trong .env có đúng không.
-    Yêu cầu: Phải nhắn ít nhất 1 tin cho bot trước khi chạy hàm này.
+    Fetch actual Chat ID from Telegram API getUpdates.
+    Use when Chat ID in .env is incorrect or 403 error occurs.
+    Note: Must send at least one message to the bot first.
     """
     if not TELEGRAM_TOKEN:
-        print("Error: TELEGRAM_TOKEN không tìm thấy trong file .env")
+        print("Error: TELEGRAM_TOKEN not found in .env")
         return None
 
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/getUpdates"
@@ -25,99 +26,150 @@ def get_chat_id():
         data = response.json()
 
         if not data.get("ok"):
-            print(f"Token không hợp lệ hoặc bot lỗi: {data.get('description')}")
+            print(f"Invalid token or bot error: {data.get('description')}")
             return None
 
         results = data.get("result", [])
         if not results:
-            print("Không tìm thấy tin nhắn nào.")
-            print("Hãy mở Telegram, tìm bot của bạn và nhấn /start hoặc gửi bất kỳ tin nhắn nào, rồi chạy lại.")
+            print("No messages found.")
+            print("Open Telegram, find your bot, send /start or any message, then retry.")
             return None
 
-        # Lấy chat_id từ tin nhắn mới nhất
+        # Get chat_id from latest message
         latest = results[-1]
         chat = latest.get("message", {}).get("chat", {})
         chat_id = chat.get("id")
         chat_name = chat.get("username") or chat.get("first_name") or "Unknown"
 
-        print(f"Tìm thấy Chat ID: {chat_id}  (từ user: {chat_name})")
-        print(f"Hãy cập nhật TELEGRAM_CHAT_ID={chat_id} vào file .env của bạn")
+        print(f"Found Chat ID: {chat_id}  (from user: {chat_name})")
+        print(f"Update TELEGRAM_CHAT_ID={chat_id} in your .env file")
         return chat_id
 
     except requests.exceptions.RequestException as e:
-        print(f"❌ Lỗi kết nối khi gọi getUpdates: {e}")
+        print(f"❌ Connection error calling getUpdates: {e}")
         return None
+
+
+def split_message(text, max_length=4000):
+    """Split message into chunks for Telegram (max 4096 chars per message)."""
+    if len(text) <= max_length:
+        return [text]
+    
+    # Split on newlines if possible
+    lines = text.split('\n')
+    chunks = []
+    current_chunk = []
+    current_length = 0
+    
+    for line in lines:
+        line_len = len(line) + 1  # +1 for newline
+        if current_length + line_len > max_length and current_chunk:
+            chunks.append('\n'.join(current_chunk))
+            current_chunk = [line]
+            current_length = line_len
+        else:
+            current_chunk.append(line)
+            current_length += line_len
+    
+    if current_chunk:
+        chunks.append('\n'.join(current_chunk))
+    
+    return chunks
 
 
 def send_telegram_message(message=None, chat_id=None):
     """Sends a message to the configured Telegram chat with error handling."""
 
-    # 1. Dùng chat_id truyền vào hoặc fallback về biến môi trường
     effective_chat_id = chat_id or TELEGRAM_CHAT_ID
 
-    # 2. Đảm bảo tin nhắn luôn có nội dung mặc định
     if message is None or str(message).strip() == "":
-        print(" Warning: Tin nhắn trống. Đang sử dụng nội dung mặc định...")
-        message = " *Hệ thống AI Ops Thông báo*:\nĐã phát hiện một sự cố nhưng không có nội dung chi tiết kèm theo."
+        print(" Warning: Empty message. Using default content...")
+        message = " *AI Ops Alert*: Issue detected but no details provided."
 
     if not TELEGRAM_TOKEN or not effective_chat_id:
-        print("❌ Error: TELEGRAM_TOKEN hoặc TELEGRAM_CHAT_ID không tìm thấy trong file .env")
+        print("❌ Error: TELEGRAM_TOKEN or TELEGRAM_CHAT_ID not found in .env")
         return False
+
+    # Split long messages (Telegram limit: 4096 chars)
+    chunks = split_message(str(message))
+    if len(chunks) > 1:
+        print(f"📝 Message too long ({len(message)} chars), splitting into {len(chunks)} parts...")
 
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-    payload = {
-        "chat_id": effective_chat_id,
-        "text": message,
-        "parse_mode": "Markdown",
-    }
-
+    
     try:
-        response = requests.post(url, json=payload, timeout=10)
+        all_sent = True
+        for i, chunk in enumerate(chunks):
+            payload = {
+                "chat_id": effective_chat_id,
+                "text": chunk,
+                "parse_mode": "Markdown",
+            }
+            
+            if len(chunks) > 1:
+                print(f"   📤 Sending part {i+1}/{len(chunks)}...")
 
-        # 3. FIX 403: Tự động gợi ý lấy đúng chat_id
-        if response.status_code == 403:
-            print(" Error 403: Bot bị chặn hoặc chat_id không đúng.")
-            print(" Đang thử tìm Chat ID thực tế từ getUpdates...\n")
-            fetched_id = get_chat_id()
-            if fetched_id and str(fetched_id) != str(effective_chat_id):
-                print(f"\n Phát hiện Chat ID không khớp!")
-                print(f"   .env hiện tại : {effective_chat_id}")
-                print(f"   Chat ID đúng  : {fetched_id}")
-                print(f" Cập nhật TELEGRAM_CHAT_ID={fetched_id} vào .env rồi chạy lại.")
-            return False
+            response = requests.post(url, json=payload, timeout=10)
 
-        # 4. Bắt lỗi 400 (sai định dạng Markdown)
-        elif response.status_code == 400:
-            error_detail = response.json().get("description", response.text)
-            print(f" Error 400: Bad Request — {error_detail}")
-            print(" Thử gửi lại không dùng Markdown...")
-            # Retry không có parse_mode
-            payload.pop("parse_mode")
-            retry = requests.post(url, json=payload, timeout=10)
-            if retry.ok:
-                print(" Message sent (plain text) successfully!")
-                return True
-            print(f" Retry cũng thất bại: {retry.text}")
-            return False
+            # Handle 403: Bot blocked or wrong chat_id
+            if response.status_code == 403:
+                print(" Error 403: Bot blocked or wrong chat_id.")
+                print(" Trying to fetch correct Chat ID from getUpdates...\n")
+                fetched_id = get_chat_id()
+                if fetched_id and str(fetched_id) != str(effective_chat_id):
+                    print(f"\n Chat ID mismatch detected!")
+                    print(f"   .env value     : {effective_chat_id}")
+                    print(f"   Correct ID     : {fetched_id}")
+                    print(f" Update TELEGRAM_CHAT_ID={fetched_id} in .env and retry.")
+                return False
 
-        response.raise_for_status()
-        print(" Message sent to Telegram successfully!")
-        return True
+            # Handle 400: Bad request (invalid Markdown or too long)
+            elif response.status_code == 400:
+                error_detail = response.json().get("description", response.text)
+                print(f"❌ Error 400: Bad Request — {error_detail}")
+                
+                # If entity parsing error, retry without Markdown
+                if "entities" in error_detail or "parse" in error_detail:
+                    print("💡 Markdown parsing error - retrying without Markdown...")
+                    payload.pop("parse_mode")
+                    retry = requests.post(url, json=payload, timeout=10)
+                    if retry.ok:
+                        print("✅ Message sent (plain text, no Markdown)")
+                    else:
+                        print(f"❌ Still failed: {retry.json().get('description', 'Unknown error')}")
+                        all_sent = False
+                # If too long, truncate
+                elif "too long" in error_detail.lower():
+                    print(f"💡 Message still too long, truncating...")
+                    truncated = chunk[:3500] + "\n\n[... message truncated ...]"
+                    payload["text"] = truncated
+                    payload.pop("parse_mode", None)
+                    retry = requests.post(url, json=payload, timeout=10)
+                    if retry.ok:
+                        print("✅ Message sent (truncated)")
+                    else:
+                        all_sent = False
+                else:
+                    all_sent = False
+
+            elif response.status_code != 200:
+                print(f"❌ Unexpected error {response.status_code}: {response.text}")
+                all_sent = False
+            else:
+                print("✅ Message part sent successfully")
+
+        if all_sent and len(chunks) > 0:
+            print(f"✅ All {len(chunks)} message parts sent to Telegram!")
+        return all_sent
 
     except requests.exceptions.RequestException as e:
-        print(f" Lỗi kết nối khi gửi tin nhắn: {e}")
+        print(f"❌ Connection error: {e}")
         return False
+
 
 
 if __name__ == "__main__":
-    # Test message
-    test_msg = "*AI Ops Alert Test*\nSystem is now connected to Telegram!"
+    # Simple test: Send a working test message
+    print("📝 Testing Telegram integration...")
+    test_msg = "*🧪 AI Ops System Test*\n\nIf you see this, Telegram integration is working!"
     send_telegram_message(test_msg)
-
-    # Test empty message case
-    print("\n--- Testing empty message case ---")
-    send_telegram_message("")
-
-    # Uncomment dòng dưới nếu muốn kiểm tra / lấy lại Chat ID đúng
-    # print("\n--- Lấy Chat ID từ getUpdates ---")
-    # get_chat_id()

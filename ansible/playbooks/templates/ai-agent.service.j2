@@ -1,0 +1,27 @@
+[Unit]
+Description=AI Agent Service (FastAPI Webhook Receiver)
+After=docker.service
+Requires=docker.service
+Documentation=https://github.com/hoang_viet/aws-hybrid
+
+[Service]
+Type=simple
+User={{ app_user }}
+WorkingDirectory={{ app_path }}
+
+# Start service
+ExecStart=/usr/local/bin/docker-compose -f {{ app_path }}/docker-compose.yml up
+
+# Stop service
+ExecStop=/usr/local/bin/docker-compose -f {{ app_path }}/docker-compose.yml down
+
+# Restart policy
+Restart=on-failure
+RestartSec=10
+
+# Security
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
