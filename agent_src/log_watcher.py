@@ -6,7 +6,7 @@ import socket
 from datetime import datetime
 
 # --- CẤU HÌNH ---
-# Danh sách các file log cần giám sát (Bạn có thể thêm bớt tùy hệ thống)
+# Danh sách các file log cần giám sát (CÓ thể giám sát thêm/bớt tùy vào việc muốn mở rộng/thu hẹp hệ thống)
 LOG_FILES = [
     "/var/log/syslog",
     "/var/log/nginx/error.log",
@@ -14,7 +14,7 @@ LOG_FILES = [
     "/var/log/mysql/error.log"
 ]
 
-# URL của AI Agent Webhook (FastAPI server bạn đã chạy)
+# URL của AI Agent Webhook (FastAPI server)
 WEBHOOK_URL = "http://localhost:8080/webhook"
 
 # Từ khóa để nhận diện lỗi
@@ -42,7 +42,7 @@ def send_alert_to_ai_agent(log_line, file_path):
                     "source_file": file_path
                 },
                 "annotations": {
-                    "summary": f"🚨 Phát hiện lỗi trong file log: {file_path}",
+                    "summary": f"Phát hiện lỗi trong file log: {file_path}",
                     "description": log_line.strip()
                 },
                 "startsAt": timestamp,
@@ -60,14 +60,14 @@ def send_alert_to_ai_agent(log_line, file_path):
     try:
         response = requests.post(WEBHOOK_URL, json=payload, timeout=5)
         if response.status_code == 200:
-            print(f"✅ [{datetime.now()}] Đã gửi báo cáo lỗi sang AI Agent.")
+            print(f"[{datetime.now()}] Đã gửi báo cáo lỗi sang AI Agent.")
     except Exception as e:
         print(f"❌ [{datetime.now()}] Lỗi khi kết nối tới AI Agent Webhook: {e}")
 
 def watch_logs():
     """Vòng lặp giám sát log thời gian thực"""
-    print(f"🚀 AI Ops Log Watcher đang khởi động trên {HOSTNAME}...")
-    print(f"🔍 Đang giám sát: {', '.join(LOG_FILES)}")
+    print(f"Log Watcher đang hoạt động trên {HOSTNAME}...")
+    print(f"Đang giám sát: {', '.join(LOG_FILES)}...")
 
     # Mở và di chuyển tới cuối file log hiện tại
     file_handles = {}
@@ -77,14 +77,14 @@ def watch_logs():
                 f = open(path, "r")
                 f.seek(0, os.SEEK_END)
                 file_handles[path] = f
-                print(f"✅ Đã kết nối tới: {path}")
+                print(f"Đã kết nối tới: {path}")
             else:
-                print(f"⚠️ Cảnh báo: File không tồn tại: {path}")
+                print(f"Cảnh báo: File không tồn tại: {path}")
         except Exception as e:
-            print(f"❌ Không thể truy cập {path}: {e}")
+            print(f"Không thể truy cập {path}: {e}")
 
     if not file_handles:
-        print("🛑 Lỗi: Không có file log nào hợp lệ để giám sát. Vui lòng kiểm tra quyền sudo/root.")
+        print("Lỗi: Không có file log nào hợp lệ để giám sát. Vui lòng kiểm tra quyền sudo/root.")
         return
 
     try:
@@ -96,14 +96,14 @@ def watch_logs():
                 
                 # Kiểm tra từ khóa lỗi
                 if any(keyword.upper() in line.upper() for keyword in ERROR_KEYWORDS):
-                    print(f"🚨 Phát hiện lỗi mới: {line.strip()[:100]}...")
+                    print(f"Phát hiện lỗi mới: {line.strip()[:100]}...")
                     send_alert_to_ai_agent(line, path)
             
             # Nghỉ 1 giây để tiết kiệm CPU
             time.sleep(1)
             
     except KeyboardInterrupt:
-        print("\n🛑 Đang dừng Log Watcher...")
+        print("\nĐang dừng Log Watcher...")
         for f in file_handles.values():
             f.close()
 
