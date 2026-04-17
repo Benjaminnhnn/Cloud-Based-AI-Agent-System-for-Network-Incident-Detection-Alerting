@@ -101,7 +101,7 @@
     
     - name: Copy Prometheus configuration
       copy:
-        src: /home/hoang_viet/aws-hybrid/config/prometheus.yml
+        src: /home/hoang_viet/aws-hybrid/platform-config/prometheus.yml
         dest: /opt/prometheus/prometheus.yml
         owner: nobody
         group: nobody
@@ -469,7 +469,7 @@
     
     - name: Copy nginx configuration
       copy:
-        src: /home/hoang_viet/aws-hybrid/config/nginx.conf
+        src: /home/hoang_viet/aws-hybrid/platform-config/nginx.conf
         dest: /opt/webserver/config/nginx.conf
         owner: ec2-user
         group: ec2-user

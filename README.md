@@ -27,13 +27,21 @@ This repository provides:
 aws-hybrid/
 |- terraform/              # AWS infrastructure as code
 |- ansible/                # Playbooks, inventory, templates
-|- config/                 # Docker Compose and monitoring configs
+|- platform-config/        # Docker Compose and monitoring configs
+|- release/                # Production deployment manifests & configs
 |- agent_src/              # AI agent source (FastAPI webhook)
 |- demo-web/               # Full-stack demo application
-|- scripts/                # Deployment automation scripts
-|- diagram/                # Architecture and module diagrams
+|- automation/             # Deployment automation & orchestration scripts
+|- diagram/                # Architecture, CI/CD, and deployment diagrams
 `- README.md
 ```
+
+### Key Automation Scripts
+
+- `automation/deploy.sh` - Main deployment script (handles image pull, health checks, rollback)
+- `automation/deploy-infrastructure.sh` - AWS infrastructure initialization
+- `automation/ansible-deploy.sh` - Ansible wrapper for configuration management
+- `automation/update-infrastructure.sh` - Infrastructure updates with IP sync
 
 ## Prerequisites
 
@@ -69,7 +77,7 @@ EOF
 ### Option 1: One-command deployment (recommended)
 
 ```bash
-bash scripts/deploy-infrastructure.sh
+bash automation/deploy-infrastructure.sh
 ```
 
 This script validates connectivity, checks Terraform state presence, and runs the full Ansible deployment playbook.
@@ -77,7 +85,7 @@ This script validates connectivity, checks Terraform state presence, and runs th
 ### Option 2: Ansible wrapper deployment
 
 ```bash
-bash scripts/ansible-deploy.sh
+bash automation/ansible-deploy.sh
 ```
 
 This wrapper loads credentials from `agent_src/.env`, runs bootstrap, then executes full deployment phases.
@@ -99,14 +107,14 @@ ansible-playbook -i inventory.ini playbooks/deploy-complete-infrastructure.yml -
 Start all local services:
 
 ```bash
-docker-compose -f config/docker-compose.dev.yml up -d
-docker-compose -f config/docker-compose.dev.yml ps
+docker-compose -f platform-config/docker-compose.dev.yml up -d
+docker-compose -f platform-config/docker-compose.dev.yml ps
 ```
 
 Stop all local services:
 
 ```bash
-docker-compose -f config/docker-compose.dev.yml down
+docker-compose -f platform-config/docker-compose.dev.yml down
 ```
 
 ## Production AI Agent Stack
@@ -114,8 +122,8 @@ docker-compose -f config/docker-compose.dev.yml down
 Run only AI Agent in production mode:
 
 ```bash
-docker-compose -f config/docker-compose.prod.yml up -d
-docker-compose -f config/docker-compose.prod.yml ps
+docker-compose -f platform-config/docker-compose.prod.yml up -d
+docker-compose -f platform-config/docker-compose.prod.yml ps
 ```
 
 ## Service Endpoints
@@ -163,7 +171,7 @@ The stack includes alert rules for:
 Rule files are managed in:
 
 - `ansible/config/alert_rules.yml`
-- `config/prometheus.yml`
+- `platform-config/prometheus.yml`
 
 ## Troubleshooting
 
@@ -182,7 +190,7 @@ Rule files are managed in:
 - Follow service logs:
 
 	```bash
-	docker-compose -f config/docker-compose.dev.yml logs -f
+	docker-compose -f platform-config/docker-compose.dev.yml logs -f
 	```
 
 For extended runbooks, see:
@@ -191,13 +199,26 @@ For extended runbooks, see:
 - `SERVICE_STARTUP_GUIDE.md`
 - `HOW_TO_CHECK_LOGS.md`
 
+## CI/CD Pipeline
+
+The project uses GitHub Actions for automated building, testing, and deployment:
+
+- **CI Workflow**: Lint, test, and build Docker images on all pushes to feature/develop/main branches
+- **CD Staging**: Automatic deployment to staging EC2 when code is pushed to `develop` branch
+- **CD Production**: Manual deployment to production with approval gate when tags are created on `main` branch
+- **Health Checks**: Automatic validation of deployments with rollback capability
+
+See `diagram/CI_CD_DEPLOYMENT_DIAGRAM.md` for complete CI/CD flow visualization.
+
 ## Documentation
 
-- `diagram/ARCHITECTURE_DIAGRAMS.md`
-- `diagram/D1_TEST_SCENARIO_REPORT.md`
-- `diagram/MODULE_OVERVIEW_DIAGRAM.md`
-- `ANSIBLE_DEPLOYMENT_GUIDE.md`
-- `PRODUCTION_ARCHITECTURE_SUMMARY.md`
+- `diagram/ARCHITECTURE_DIAGRAMS.md` - AWS infrastructure and component diagrams
+- `diagram/CI_CD_DEPLOYMENT_DIAGRAM.md` - GitHub Actions CI/CD pipeline and deployment model
+- `diagram/D1_TEST_SCENARIO_REPORT.md` - Test scenario reports
+- `diagram/MODULE_OVERVIEW_DIAGRAM.md` - Module structure overview
+- `diagram/PRODUCTION_ARCHITECTURE_DIAGRAMS.md` - Detailed production environment diagrams
+- `ANSIBLE_DEPLOYMENT_GUIDE.md` - Ansible playbook documentation
+- `PRODUCTION_ARCHITECTURE_SUMMARY.md` - Production architecture details
 
 ## Contributing
 
