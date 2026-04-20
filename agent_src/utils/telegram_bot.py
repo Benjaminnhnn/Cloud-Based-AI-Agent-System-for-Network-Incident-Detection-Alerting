@@ -1,3 +1,6 @@
+# Gửi tin nhắn thông báo tới qtv về sự cố, đính kèm các nút thao tác để 
+# quản trị viên phê duyêt hoặc từ chối hành động sửa lỗi do AI đề xuất.
+# Sử dụng Telegram Bot API để gửi tin nhắn và nhận phản hồi từ quản trị
 import requests
 import os
 from dotenv import load_dotenv
@@ -50,6 +53,31 @@ def get_chat_id():
         return None
 
 
+def set_telegram_webhook(webhook_url):
+    """Registers the FastAPI endpoint as a Telegram Webhook."""
+    if not TELEGRAM_TOKEN:
+        print("❌ Error: TELEGRAM_TOKEN not found")
+        return False
+    
+    # We want to point Telegram to our /telegram/webhook endpoint
+    full_url = f"{webhook_url.rstrip('/')}/telegram/webhook"
+    api_url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/setWebhook"
+    
+    print(f"🌐 Registering Telegram Webhook: {full_url}")
+    try:
+        response = requests.post(api_url, json={"url": full_url}, timeout=10)
+        data = response.json()
+        if data.get("ok"):
+            print("✅ Telegram Webhook registered successfully!")
+            return True
+        else:
+            print(f"❌ Failed to register Webhook: {data.get('description')}")
+            return False
+    except Exception as e:
+        print(f"❌ Error setting webhook: {e}")
+        return False
+
+
 def split_message(text, max_length=4000):
     """Split message into chunks for Telegram (max 4096 chars per message)."""
     if len(text) <= max_length:
@@ -77,7 +105,7 @@ def split_message(text, max_length=4000):
     return chunks
 
 
-def send_telegram_message(message=None, chat_id=None):
+def send_telegram_message(message=None, chat_id=None, reply_markup=None):
     """Sends a message to the configured Telegram chat with error handling."""
 
     effective_chat_id = chat_id or TELEGRAM_CHAT_ID
@@ -105,6 +133,10 @@ def send_telegram_message(message=None, chat_id=None):
                 "text": chunk,
                 "parse_mode": "Markdown",
             }
+            
+            # Add buttons to the LAST chunk
+            if i == len(chunks) - 1 and reply_markup:
+                payload["reply_markup"] = reply_markup
             
             if len(chunks) > 1:
                 print(f"   📤 Sending part {i+1}/{len(chunks)}...")
