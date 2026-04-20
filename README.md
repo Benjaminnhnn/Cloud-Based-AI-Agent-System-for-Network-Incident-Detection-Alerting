@@ -25,17 +25,28 @@ Dự án được thiết kế theo mô hình Hybrid-Cloud, triển khai tự đ
 ## 📂 Cấu trúc dự án
 
 ```text
-├── terraform/                # Khởi tạo hạ tầng AWS (VPC, EC2, SG, v.v.)
-├── ansible/                  # Triển khai phần mềm & cấu hình dịch vụ
-│   ├── playbooks/            # Kịch bản triển khai (Prometheus, Grafana, AI Agent...)
-│   └── templates/            # Các mẫu Dashboard Grafana và cấu hình Alert
-├── agent_src/                # Mã nguồn AI Agent (Python/FastAPI)
-│   ├── core/                 # Logic chính (RAG Engine, Workflow)
-│   ├── monitoring/           # Các script giám sát bổ trợ (Log Watcher, Service Monitor)
-│   ├── tools/                # Công cụ chẩn đoán AI có thể gọi (Ping, Metrics, Logs)
-│   └── utils/                # Tiện ích (Telegram Bot)
-└── scripts/                  # Các script hỗ trợ triển khai nhanh
+aws-hybrid/
+|- terraform/              # AWS infrastructure as code (VPC, EC2, SG, v.v.)
+|- ansible/                # Triển khai phần mềm & cấu hình dịch vụ
+|- platform-config/        # Cấu hình Docker Compose và Monitoring
+|- release/                # Production deployment manifests & configs
+|- agent_src/              # Mã nguồn AI Agent (Python/FastAPI)
+│   ├── core/              # Logic chính (RAG Engine, Workflow)
+│   ├── monitoring/        # Script giám sát (Log Watcher, Service Monitor)
+│   ├── tools/             # Công cụ chẩn đoán (Ping, Metrics, Logs)
+│   └── utils/             # Tiện ích (Telegram Bot)
+|- demo-web/               # Ứng dụng web mẫu (Full-stack React + FastAPI)
+|- automation/             # Script tự động hóa triển khai & vận hành
+|- diagram/                # Sơ đồ kiến trúc, CI/CD và luồng hoạt động
+`- README.md
 ```
+
+### Key Automation Scripts
+
+- `automation/deploy.sh` - Script triển khai chính (xử lý pull image, check health, rollback)
+- `automation/deploy-infrastructure.sh` - Khởi tạo hạ tầng AWS và chạy Ansible
+- `automation/ansible-deploy.sh` - Wrapper cho Ansible (load credentials, bootstrap)
+- `automation/update-infrastructure.sh` - Cập nhật hạ tầng và đồng bộ IP
 
 ---
 
@@ -51,39 +62,53 @@ Dự án được thiết kế theo mô hình Hybrid-Cloud, triển khai tự đ
 
 ---
 
-## 🚀 Hướng dẫn triển khai (Deployment)
+## 🚀 Hướng dẫn triển khai nhanh (Quick Start)
 
-### Bước 1: Chuẩn bị hạ tầng (Terraform)
-Cần cài đặt AWS CLI và cấu hình Credentials.
+### Thiết lập biến môi trường
+Tạo file `.env` trong `agent_src/` hoặc export các biến:
 ```bash
-cd terraform
-terraform init
-terraform apply -auto-approve
+export GEMINI_API_KEY="your-gemini-api-key"
+export TELEGRAM_TOKEN="your-telegram-bot-token"
+export TELEGRAM_CHAT_ID="your-chat-id"
 ```
 
-### Bước 2: Cấu hình biến môi trường
-Tạo file `.env` hoặc export các biến sau để AI Agent hoạt động:
+### Cách 1: Triển khai tự động (Khuyên dùng)
 ```bash
-export GEMINI_API_KEY='your_gemini_key'
-export TELEGRAM_TOKEN='your_bot_token'
-export TELEGRAM_CHAT_ID='your_chat_id'
+bash automation/deploy-infrastructure.sh
 ```
+Script này sẽ tự động kiểm tra hạ tầng, cài đặt môi trường và triển khai toàn bộ stack.
 
-### Bước 3: Triển khai toàn bộ bằng Ansible
-Script này sẽ tự động hóa việc cài đặt tất cả thành phần (Prometheus, Grafana, Nginx, AI Agent, v.v.) lên các EC2 đã tạo.
+### Cách 2: Chạy local với Docker Compose
 ```bash
-chmod +x scripts/deploy-infrastructure.sh
-./scripts/deploy-infrastructure.sh
+docker-compose -f platform-config/docker-compose.dev.yml up -d
 ```
 
 ---
 
-## 📊 Truy cập các dịch vụ
-Sau khi triển khai thành công, bạn có thể truy cập các địa chỉ sau:
+## 📊 Truy cập các dịch vụ (Service Endpoints)
+
+### AWS Deployment (Ví dụ IP thực tế)
 *   **Grafana**: `http://<Monitor-IP>:3000` (admin/admin123)
 *   **Prometheus**: `http://<Monitor-IP>:9090`
 *   **AI Agent API**: `http://<Monitor-IP>:8000/health`
-*   **Web Server**: `http://<Web-IP>:80`
+*   **Web Server (Frontend)**: `http://<Web-IP>:3000`
+*   **API Backend Docs**: `http://<Core-IP>:8000/docs`
 
 ---
-*Dự án là giải pháp thực tế cho việc vận hành hệ thống thông minh, giảm thiểu thời gian gián đoạn dịch vụ (Downtime) bằng sức mạnh AI.*
+
+## ⚙️ CI/CD Pipeline
+Dự án sử dụng GitHub Actions để tự động hóa quy trình Build, Test và Deploy:
+- **CI Workflow**: Kiểm tra lỗi (Lint), chạy Tests và Build Docker images.
+- **CD Staging**: Tự động triển khai lên môi trường Staging khi push vào branch `develop`.
+- **CD Production**: Triển khai lên Production khi tạo tag trên branch `main`.
+
+---
+
+## 📚 Tài liệu tham khảo
+Xem thêm chi tiết tại thư mục `diagram/` và các file hướng dẫn:
+- `ANSIBLE_DEPLOYMENT_GUIDE.md`: Hướng dẫn chi tiết về Ansible.
+- `diagram/ARCHITECTURE_DIAGRAMS.md`: Sơ đồ hạ tầng AWS.
+- `diagram/CI_CD_DEPLOYMENT_DIAGRAM.md`: Sơ đồ luồng CI/CD.
+
+---
+*Dự án là giải pháp thực tế cho việc vận hành hệ thống thông minh bằng sức mạnh AI.*

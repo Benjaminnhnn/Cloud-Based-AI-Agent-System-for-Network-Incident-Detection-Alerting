@@ -1,0 +1,63 @@
+version: "3.9"
+
+services:
+  ai-agent:
+    image: ghcr.io/${GHCR_OWNER:-your-org}/aws-hybrid-ai-agent:${IMAGE_TAG:-staging-latest}
+    container_name: ai-agent-staging
+    restart: unless-stopped
+    env_file:
+      - .env.staging
+    environment:
+      AI_AGENT_PORT: "8000"
+      PYTHONUNBUFFERED: "1"
+    ports:
+      - "18000:8000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health').read()"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+    networks:
+      - aiops-network
+
+  log-watcher:
+    image: ghcr.io/${GHCR_OWNER:-your-org}/aws-hybrid-ai-agent:${IMAGE_TAG:-staging-latest}
+    container_name: log-watcher-staging
+    restart: unless-stopped
+    env_file:
+      - .env.staging
+    environment:
+      WEBHOOK_URL: http://ai-agent:8000/webhook
+      PYTHONUNBUFFERED: "1"
+    command: ["python", "log_watcher.py"]
+    volumes:
+      - /var/log:/var/log:ro
+    depends_on:
+      ai-agent:
+        condition: service_healthy
+    networks:
+      - aiops-network
+
+  payment-api:
+    image: ghcr.io/${GHCR_OWNER:-your-org}/aws-hybrid-payment-api:${IMAGE_TAG:-staging-latest}
+    container_name: payment-api-staging
+    restart: unless-stopped
+    env_file:
+      - .env.staging
+    environment:
+      ENVIRONMENT: staging
+    ports:
+      - "18080:8000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/health').read()"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+    networks:
+      - aiops-network
+
+networks:
+  aiops-network:
+    driver: bridge

@@ -10,8 +10,6 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
 
-# Make entrypoint executable
-RUN chmod +x docker-entrypoint.sh
-
-# Start all monitoring components
-ENTRYPOINT ["./docker-entrypoint.sh"]
+# Default runtime for AI webhook service.
+# Restructured main app is now in core/main.py
+CMD ["python", "-m", "uvicorn", "core.main:app", "--host", "0.0.0.0", "--port", "8000"]

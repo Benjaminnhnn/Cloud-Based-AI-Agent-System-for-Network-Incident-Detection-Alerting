@@ -29,6 +29,10 @@ id_rsa.pub
 docs/
 .env.local
 
+# Track only root README markdown on GitHub
+*.md
+!README.md
+
 # Python
 __pycache__/
 *.py[cod]
