@@ -1,3 +1,6 @@
+# Gửi tin nhắn thông báo tới qtv về sự cố, đính kèm các nút thao tác để 
+# quản trị viên phê duyêt hoặc từ chối hành động sửa lỗi do AI đề xuất.
+# Sử dụng Telegram Bot API để gửi tin nhắn và nhận phản hồi từ quản trị
 import requests
 import os
 from dotenv import load_dotenv
@@ -17,7 +20,7 @@ def get_chat_id():
     Note: Must send at least one message to the bot first.
     """
     if not TELEGRAM_TOKEN:
-        print("❌ Error: TELEGRAM_TOKEN not found in .env")
+        print("Error: TELEGRAM_TOKEN not found in .env")
         return None
 
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/getUpdates"
@@ -26,13 +29,13 @@ def get_chat_id():
         data = response.json()
 
         if not data.get("ok"):
-            print(f"❌ Invalid token or bot error: {data.get('description')}")
+            print(f"Invalid token or bot error: {data.get('description')}")
             return None
 
         results = data.get("result", [])
         if not results:
-            print("⚠️  No messages found.")
-            print("👉 Open Telegram, find your bot, send /start or any message, then retry.")
+            print("No messages found.")
+            print("Open Telegram, find your bot, send /start or any message, then retry.")
             return None
 
         # Get chat_id from latest message
@@ -41,13 +44,38 @@ def get_chat_id():
         chat_id = chat.get("id")
         chat_name = chat.get("username") or chat.get("first_name") or "Unknown"
 
-        print(f"✅ Found Chat ID: {chat_id}  (from user: {chat_name})")
-        print(f"👉 Update TELEGRAM_CHAT_ID={chat_id} in your .env file")
+        print(f"Found Chat ID: {chat_id}  (from user: {chat_name})")
+        print(f"Update TELEGRAM_CHAT_ID={chat_id} in your .env file")
         return chat_id
 
     except requests.exceptions.RequestException as e:
         print(f"❌ Connection error calling getUpdates: {e}")
         return None
+
+
+def set_telegram_webhook(webhook_url):
+    """Registers the FastAPI endpoint as a Telegram Webhook."""
+    if not TELEGRAM_TOKEN:
+        print("❌ Error: TELEGRAM_TOKEN not found")
+        return False
+    
+    # We want to point Telegram to our /telegram/webhook endpoint
+    full_url = f"{webhook_url.rstrip('/')}/telegram/webhook"
+    api_url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/setWebhook"
+    
+    print(f"🌐 Registering Telegram Webhook: {full_url}")
+    try:
+        response = requests.post(api_url, json={"url": full_url}, timeout=10)
+        data = response.json()
+        if data.get("ok"):
+            print("✅ Telegram Webhook registered successfully!")
+            return True
+        else:
+            print(f"❌ Failed to register Webhook: {data.get('description')}")
+            return False
+    except Exception as e:
+        print(f"❌ Error setting webhook: {e}")
+        return False
 
 
 def split_message(text, max_length=4000):
@@ -77,14 +105,14 @@ def split_message(text, max_length=4000):
     return chunks
 
 
-def send_telegram_message(message=None, chat_id=None):
+def send_telegram_message(message=None, chat_id=None, reply_markup=None):
     """Sends a message to the configured Telegram chat with error handling."""
 
     effective_chat_id = chat_id or TELEGRAM_CHAT_ID
 
     if message is None or str(message).strip() == "":
-        print("⚠️  Warning: Empty message. Using default content...")
-        message = "🚨 *AI Ops Alert*: Issue detected but no details provided."
+        print(" Warning: Empty message. Using default content...")
+        message = " *AI Ops Alert*: Issue detected but no details provided."
 
     if not TELEGRAM_TOKEN or not effective_chat_id:
         print("❌ Error: TELEGRAM_TOKEN or TELEGRAM_CHAT_ID not found in .env")
@@ -106,6 +134,10 @@ def send_telegram_message(message=None, chat_id=None):
                 "parse_mode": "Markdown",
             }
             
+            # Add buttons to the LAST chunk
+            if i == len(chunks) - 1 and reply_markup:
+                payload["reply_markup"] = reply_markup
+            
             if len(chunks) > 1:
                 print(f"   📤 Sending part {i+1}/{len(chunks)}...")
 
@@ -113,14 +145,14 @@ def send_telegram_message(message=None, chat_id=None):
 
             # Handle 403: Bot blocked or wrong chat_id
             if response.status_code == 403:
-                print("❌ Error 403: Bot blocked or wrong chat_id.")
-                print("🔍 Trying to fetch correct Chat ID from getUpdates...\n")
+                print(" Error 403: Bot blocked or wrong chat_id.")
+                print(" Trying to fetch correct Chat ID from getUpdates...\n")
                 fetched_id = get_chat_id()
                 if fetched_id and str(fetched_id) != str(effective_chat_id):
-                    print(f"\n💡 Chat ID mismatch detected!")
+                    print(f"\n Chat ID mismatch detected!")
                     print(f"   .env value     : {effective_chat_id}")
                     print(f"   Correct ID     : {fetched_id}")
-                    print(f"👉 Update TELEGRAM_CHAT_ID={fetched_id} in .env and retry.")
+                    print(f" Update TELEGRAM_CHAT_ID={fetched_id} in .env and retry.")
                 return False
 
             # Handle 400: Bad request (invalid Markdown or too long)

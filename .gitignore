@@ -21,7 +21,9 @@ terraform/awscliv2.zip
 *.pub
 id_rsa
 id_rsa.pub
+**/.env
 .env
+.env.*
 
 # Documentation (local only)
 docs/

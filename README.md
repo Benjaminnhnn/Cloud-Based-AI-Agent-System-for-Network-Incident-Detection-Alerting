@@ -1,231 +1,114 @@
-# AWS Hybrid Cloud Monitoring
+# 🤖 Cloud-Based AI Agent System for Network Incident Detection & Alerting
 
-Complete deployment of an AI-powered monitoring and alerting platform for hybrid web workloads on AWS.
+Hệ thống AIOps toàn diện kết hợp sức mạnh của hạ tầng Cloud, Monitoring hiện đại và Trí tuệ nhân tạo (Generative AI) để tự động hóa việc phát hiện, phân tích và hỗ trợ xử lý sự cố mạng/dịch vụ.
 
-The system combines Terraform (infrastructure provisioning), Ansible (configuration management), Docker Compose (service orchestration), Prometheus + Alertmanager + Grafana (observability), and an AI Agent (Gemini + Telegram) for intelligent alert analysis.
+---
 
-## Project Overview
+## 🏗️ Kiến trúc hệ thống (System Architecture)
 
-This repository provides:
+Dự án được thiết kế theo mô hình Hybrid-Cloud, triển khai tự động hóa hoàn toàn:
 
-- AWS infrastructure for monitor, web, and core nodes.
-- Automated multi-phase deployment via Ansible playbooks.
-- Local development stack with backend, frontend, database, and monitoring services.
-- AI Agent webhook for alert enrichment and Telegram notifications.
+1.  **Infrastructure Layer (Terraform)**: Triển khai trên AWS VPC, bao gồm các EC2 Instances cho các vai trò khác nhau (Monitor, Web, Core).
+2.  **Configuration Layer (Ansible)**: Tự động hóa việc cài đặt Docker, cấu hình Security, Firewall và triển khai các dịch vụ.
+3.  **Monitoring Layer (Prometheus & Grafana)**: 
+    *   **Prometheus**: Thu thập metrics từ Node Exporter và các dịch vụ.
+    *   **AlertManager**: Quản lý và gửi cảnh báo về AI Agent qua Webhook.
+    *   **Grafana**: Dashboard trực quan hóa hiệu suất hệ thống và mạng.
+4.  **AI Ops Layer (AI Agent)**: 
+    *   **FastAPI**: Tiếp nhận Webhook từ AlertManager.
+    *   **RAG (Retrieval-Augmented Generation)**: Sử dụng ChromaDB để truy xuất Runbook và lịch sử sự cố.
+    *   **Gemini AI**: Phân tích lỗi, thực hiện chẩn đoán (Function Calling) và đề xuất xử lý.
+    *   **Telegram Bot**: Giao tiếp với người vận hành (Human-in-the-Loop).
 
-## Architecture
+---
 
-- Monitor node: Prometheus, Alertmanager, Grafana.
-- Web node: React frontend.
-- Core node: FastAPI backend and app services.
-- Node Exporter on all nodes for host metrics.
-- Alert flow: Prometheus -> Alertmanager -> AI Agent -> Gemini -> Telegram.
-
-## Repository Structure
+## 📂 Cấu trúc dự án
 
 ```text
 aws-hybrid/
-|- terraform/              # AWS infrastructure as code
-|- ansible/                # Playbooks, inventory, templates
-|- platform-config/        # Docker Compose and monitoring configs
+|- terraform/              # AWS infrastructure as code (VPC, EC2, SG, v.v.)
+|- ansible/                # Triển khai phần mềm & cấu hình dịch vụ
+|- platform-config/        # Cấu hình Docker Compose và Monitoring
 |- release/                # Production deployment manifests & configs
-|- agent_src/              # AI agent source (FastAPI webhook)
-|- demo-web/               # Full-stack demo application
-|- automation/             # Deployment automation & orchestration scripts
-|- diagram/                # Architecture, CI/CD, and deployment diagrams
+|- agent_src/              # Mã nguồn AI Agent (Python/FastAPI)
+│   ├── core/              # Logic chính (RAG Engine, Workflow)
+│   ├── monitoring/        # Script giám sát (Log Watcher, Service Monitor)
+│   ├── tools/             # Công cụ chẩn đoán (Ping, Metrics, Logs)
+│   └── utils/             # Tiện ích (Telegram Bot)
+|- demo-web/               # Ứng dụng web mẫu (Full-stack React + FastAPI)
+|- automation/             # Script tự động hóa triển khai & vận hành
+|- diagram/                # Sơ đồ kiến trúc, CI/CD và luồng hoạt động
 `- README.md
 ```
 
 ### Key Automation Scripts
 
-- `automation/deploy.sh` - Main deployment script (handles image pull, health checks, rollback)
-- `automation/deploy-infrastructure.sh` - AWS infrastructure initialization
-- `automation/ansible-deploy.sh` - Ansible wrapper for configuration management
-- `automation/update-infrastructure.sh` - Infrastructure updates with IP sync
+- `automation/deploy.sh` - Script triển khai chính (xử lý pull image, check health, rollback)
+- `automation/deploy-infrastructure.sh` - Khởi tạo hạ tầng AWS và chạy Ansible
+- `automation/ansible-deploy.sh` - Wrapper cho Ansible (load credentials, bootstrap)
+- `automation/update-infrastructure.sh` - Cập nhật hạ tầng và đồng bộ IP
 
-## Prerequisites
+---
 
-- Linux/macOS shell environment
-- Docker and Docker Compose
-- Python 3
-- Terraform (for cloud provisioning)
-- Ansible (for remote configuration)
-- SSH private key configured at `~/.ssh/id_rsa`
+## 🔄 Luồng hoạt động (Incident Workflow)
 
-## Configuration
+1.  **Phát hiện (Detection)**: `service_monitor.py` hoặc Prometheus phát hiện Port chết, Network lỗi (Packet loss, High Latency).
+2.  **Cảnh báo (Alerting)**: AlertManager gửi Webhook chứa chi tiết sự cố đến AI Agent.
+3.  **Phân tích (AI Analysis)**: 
+    *   AI Agent truy vấn **ChromaDB** để tìm Runbook và các sự cố tương tự.
+    *   AI tự động gọi các **Diag Tools** (Ping, DNS Check, Log Read) để thu thập thêm bằng chứng.
+4.  **Tương tác (HITL)**: AI gửi báo cáo phân tích và nút bấm "Phê duyệt xử lý" lên **Telegram**.
+5.  **Hành động & Học tập**: Sau khi quản trị viên phê duyệt, AI thực hiện lệnh sửa lỗi và lưu toàn bộ diễn biến vào bộ nhớ để học tập cho lần sau.
 
-Set AI Agent credentials before deployment.
+---
 
+## 🚀 Hướng dẫn triển khai nhanh (Quick Start)
+
+### Thiết lập biến môi trường
+Tạo file `.env` trong `agent_src/` hoặc export các biến:
 ```bash
 export GEMINI_API_KEY="your-gemini-api-key"
 export TELEGRAM_TOKEN="your-telegram-bot-token"
 export TELEGRAM_CHAT_ID="your-chat-id"
 ```
 
-Or create and edit the environment file used by the Ansible wrapper and production AI Agent stack:
-
-```bash
-cat > agent_src/.env << 'EOF'
-GEMINI_API_KEY=your-gemini-api-key
-TELEGRAM_TOKEN=your-telegram-bot-token
-TELEGRAM_CHAT_ID=your-chat-id
-EOF
-```
-
-## Quick Start
-
-### Option 1: One-command deployment (recommended)
-
+### Cách 1: Triển khai tự động (Khuyên dùng)
 ```bash
 bash automation/deploy-infrastructure.sh
 ```
+Script này sẽ tự động kiểm tra hạ tầng, cài đặt môi trường và triển khai toàn bộ stack.
 
-This script validates connectivity, checks Terraform state presence, and runs the full Ansible deployment playbook.
-
-### Option 2: Ansible wrapper deployment
-
-```bash
-bash automation/ansible-deploy.sh
-```
-
-This wrapper loads credentials from `agent_src/.env`, runs bootstrap, then executes full deployment phases.
-
-### Option 3: Manual Terraform + Ansible
-
-```bash
-cd terraform
-terraform init
-terraform plan -out=tfplan
-terraform apply tfplan
-
-cd ../ansible
-ansible-playbook -i inventory.ini playbooks/deploy-complete-infrastructure.yml -v
-```
-
-## Local Development Stack
-
-Start all local services:
-
+### Cách 2: Chạy local với Docker Compose
 ```bash
 docker-compose -f platform-config/docker-compose.dev.yml up -d
-docker-compose -f platform-config/docker-compose.dev.yml ps
 ```
 
-Stop all local services:
+---
 
-```bash
-docker-compose -f platform-config/docker-compose.dev.yml down
-```
+## 📊 Truy cập các dịch vụ (Service Endpoints)
 
-## Production AI Agent Stack
+### AWS Deployment (Ví dụ IP thực tế)
+*   **Grafana**: `http://<Monitor-IP>:3000` (admin/admin123)
+*   **Prometheus**: `http://<Monitor-IP>:9090`
+*   **AI Agent API**: `http://<Monitor-IP>:8000/health`
+*   **Web Server (Frontend)**: `http://<Web-IP>:3000`
+*   **API Backend Docs**: `http://<Core-IP>:8000/docs`
 
-Run only AI Agent in production mode:
+---
 
-```bash
-docker-compose -f platform-config/docker-compose.prod.yml up -d
-docker-compose -f platform-config/docker-compose.prod.yml ps
-```
+## ⚙️ CI/CD Pipeline
+Dự án sử dụng GitHub Actions để tự động hóa quy trình Build, Test và Deploy:
+- **CI Workflow**: Kiểm tra lỗi (Lint), chạy Tests và Build Docker images.
+- **CD Staging**: Tự động triển khai lên môi trường Staging khi push vào branch `develop`.
+- **CD Production**: Triển khai lên Production khi tạo tag trên branch `main`.
 
-## Service Endpoints
+---
 
-### AWS deployment (from current inventory)
+## 📚 Tài liệu tham khảo
+Xem thêm chi tiết tại thư mục `diagram/` và các file hướng dẫn:
+- `ANSIBLE_DEPLOYMENT_GUIDE.md`: Hướng dẫn chi tiết về Ansible.
+- `diagram/ARCHITECTURE_DIAGRAMS.md`: Sơ đồ hạ tầng AWS.
+- `diagram/CI_CD_DEPLOYMENT_DIAGRAM.md`: Sơ đồ luồng CI/CD.
 
-- Monitor node: `52.74.118.8`
-- Web node: `18.136.112.28`
-- Core node: `54.255.94.179`
-
-Main URLs:
-
-- Grafana: `http://52.74.118.8:3000`
-- Prometheus: `http://52.74.118.8:9090`
-- Alertmanager: `http://52.74.118.8:9093`
-- Frontend: `http://18.136.112.28:3000`
-- Backend API docs: `http://54.255.94.179:8000/docs`
-
-### Local development
-
-- Frontend: `http://localhost:3000`
-- Backend API: `http://localhost:8000`
-- Prometheus: `http://localhost:9090`
-- Grafana: `http://localhost:3001`
-- Alertmanager: `http://localhost:9093`
-- Node Exporter: `http://localhost:9100/metrics`
-- AI Agent webhook: `http://localhost:5000`
-
-## Default Credentials
-
-- Grafana username: `admin`
-- Grafana password: `admin123`
-- Local PostgreSQL: `aiops_user / aiops_pass`
-
-## Monitoring Rules
-
-The stack includes alert rules for:
-
-- High CPU usage
-- High memory usage
-- Prometheus availability
-- Alertmanager availability
-- AI Agent availability
-
-Rule files are managed in:
-
-- `ansible/config/alert_rules.yml`
-- `platform-config/prometheus.yml`
-
-## Troubleshooting
-
-- Check container states:
-
-	```bash
-	docker ps --format 'table {{.Names}}\t{{.Status}}\t{{.Ports}}'
-	```
-
-- Check Ansible connectivity:
-
-	```bash
-	ansible all -i ansible/inventory.ini -m ping
-	```
-
-- Follow service logs:
-
-	```bash
-	docker-compose -f platform-config/docker-compose.dev.yml logs -f
-	```
-
-For extended runbooks, see:
-
-- `DEPLOYMENT_GUIDE.md`
-- `SERVICE_STARTUP_GUIDE.md`
-- `HOW_TO_CHECK_LOGS.md`
-
-## CI/CD Pipeline
-
-The project uses GitHub Actions for automated building, testing, and deployment:
-
-- **CI Workflow**: Lint, test, and build Docker images on all pushes to feature/develop/main branches
-- **CD Staging**: Automatic deployment to staging EC2 when code is pushed to `develop` branch
-- **CD Production**: Manual deployment to production with approval gate when tags are created on `main` branch
-- **Health Checks**: Automatic validation of deployments with rollback capability
-
-See `diagram/CI_CD_DEPLOYMENT_DIAGRAM.md` for complete CI/CD flow visualization.
-
-## Documentation
-
-- `diagram/ARCHITECTURE_DIAGRAMS.md` - AWS infrastructure and component diagrams
-- `diagram/CI_CD_DEPLOYMENT_DIAGRAM.md` - GitHub Actions CI/CD pipeline and deployment model
-- `diagram/D1_TEST_SCENARIO_REPORT.md` - Test scenario reports
-- `diagram/MODULE_OVERVIEW_DIAGRAM.md` - Module structure overview
-- `diagram/PRODUCTION_ARCHITECTURE_DIAGRAMS.md` - Detailed production environment diagrams
-- `ANSIBLE_DEPLOYMENT_GUIDE.md` - Ansible playbook documentation
-- `PRODUCTION_ARCHITECTURE_SUMMARY.md` - Production architecture details
-
-## Contributing
-
-1. Create a feature branch.
-2. Implement and validate changes.
-3. Open a pull request with deployment/test notes.
-
-## License
-
-This project is licensed under the MIT License.
+---
+*Dự án là giải pháp thực tế cho việc vận hành hệ thống thông minh bằng sức mạnh AI.*

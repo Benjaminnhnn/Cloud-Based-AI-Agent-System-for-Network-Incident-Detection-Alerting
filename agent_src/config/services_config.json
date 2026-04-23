@@ -6,7 +6,7 @@
   
   "services": {
     "nginx": {
-      "enabled": true,
+      "enabled": false,
       "type": "web-server",
       "port": 80,
       "severity": "CRITICAL",
@@ -23,7 +23,7 @@
     },
     
     "postgresql": {
-      "enabled": true,
+      "enabled": false,
       "type": "database",
       "port": 5432,
       "severity": "CRITICAL",
@@ -40,7 +40,7 @@
     },
     
     "redis": {
-      "enabled": true,
+      "enabled": false,
       "type": "cache",
       "port": 6379,
       "severity": "HIGH",
@@ -57,7 +57,7 @@
     },
     
     "docker": {
-      "enabled": true,
+      "enabled": false,
       "type": "container-engine",
       "port": null,
       "severity": "HIGH",
@@ -74,7 +74,7 @@
     },
     
     "system": {
-      "enabled": true,
+      "enabled": false,
       "type": "infrastructure",
       "port": null,
       "severity": "CRITICAL",
@@ -132,16 +132,16 @@
   
   "alert_channels": {
     "webhook": {
-      "enabled": true,
+      "enabled": false,
       "url": "http://localhost:8000/webhook",
       "method": "POST",
       "timeout": 5,
       "retry": 3
     },
     "telegram": {
-      "enabled": true,
-      "bot_token": "YOUR_TELEGRAM_BOT_TOKEN",
-      "chat_id": "YOUR_TELEGRAM_CHAT_ID"
+      "enabled": false,
+      "bot_token": "TELEGRAM_TOKEN",
+      "chat_id": "TELEGRAM_CHAT_ID"
     },
     "email": {
       "enabled": false,
@@ -153,21 +153,21 @@
   
   "recovery_actions": {
     "nginx_restart": {
-      "enabled": true,
+      "enabled": false,
       "condition": "service_down",
       "action": "systemctl restart nginx",
       "cooldown": 300,
       "max_attempts": 3
     },
     "postgresql_restart": {
-      "enabled": true,
+      "enabled": false,
       "condition": "service_down",
       "action": "systemctl restart postgresql",
       "cooldown": 600,
       "max_attempts": 1
     },
     "docker_restart": {
-      "enabled": true,
+      "enabled": false,
       "condition": "daemon_error",
       "action": "systemctl restart docker",
       "cooldown": 600,

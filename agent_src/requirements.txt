@@ -1,6 +1,13 @@
 fastapi
 uvicorn
-python-dotenv
+python-dotenv>=1.0.0
 requests
 google-genai
 pydantic
+psutil
+chromadb
+sentence-transformers
+redis>=5.0.0
+watchdog
+celery>=5.3.0
+prometheus_client
