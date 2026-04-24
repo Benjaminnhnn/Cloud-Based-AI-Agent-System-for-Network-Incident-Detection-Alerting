@@ -11,7 +11,7 @@ services:
       AI_AGENT_PORT: "8000"
       PYTHONUNBUFFERED: "1"
     ports:
-      - "127.0.0.1:8000:8000"
+      - "0.0.0.0:8000:8000"
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health').read()"]
       interval: 30s
@@ -48,7 +48,7 @@ services:
     environment:
       ENVIRONMENT: production
     ports:
-      - "127.0.0.1:8080:8000"
+      - "0.0.0.0:8080:8000"
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/health').read()"]
       interval: 30s

@@ -54,3 +54,19 @@ jobs:
           cp release/.env.example release/.env.production
           docker compose -f release/docker-compose.staging.yml config > /dev/null
           docker compose -f release/docker-compose.production.yml config > /dev/null
+
+      - name: Notify admins on failure
+        if: failure()
+        uses: actions/checkout@v4
+        with:
+          sparse-checkout: automation
+
+      - name: Send Telegram notification
+        if: failure()
+        env:
+          TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          chmod +x automation/notify.sh
+          FAILED_STEP=$(echo "${{ job.status }}" | tr '[:upper:]' '[:lower:]')
+          ./automation/notify.sh "CI Pipeline" "$FAILED_STEP" "Lint/Test/Build validation failed for ${{ github.ref_name }} by ${{ github.actor }}"

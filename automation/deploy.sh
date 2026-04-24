@@ -16,12 +16,14 @@ fi
 
 case "$ENVIRONMENT" in
   staging)
+    WORK_DIR="/opt/aws-hybrid/staging"
     COMPOSE_FILE="release/docker-compose.staging.yml"
     ENV_FILE="release/.env.staging"
     AI_HEALTH_URL="http://127.0.0.1:18000/health"
     API_HEALTH_URL="http://127.0.0.1:18080/api/health"
     ;;
   production)
+    WORK_DIR="/opt/aws-hybrid/production"
     COMPOSE_FILE="release/docker-compose.production.yml"
     ENV_FILE="release/.env.production"
     AI_HEALTH_URL="http://127.0.0.1:8000/health"
@@ -29,13 +31,19 @@ case "$ENVIRONMENT" in
     ;;
 esac
 
-if [[ ! -f "$COMPOSE_FILE" ]]; then
-  echo "Compose file not found: $COMPOSE_FILE"
+if [[ ! -d "$WORK_DIR" ]]; then
+  echo "Work directory not found: $WORK_DIR"
+  echo "Creating work directory..."
+  mkdir -p "$WORK_DIR"
+fi
+
+if [[ ! -f "$WORK_DIR/$COMPOSE_FILE" ]]; then
+  echo "Compose file not found: $WORK_DIR/$COMPOSE_FILE"
   exit 1
 fi
 
-if [[ ! -f "$ENV_FILE" ]]; then
-  echo "Environment file not found: $ENV_FILE"
+if [[ ! -f "$WORK_DIR/$ENV_FILE" ]]; then
+  echo "Environment file not found: $WORK_DIR/$ENV_FILE"
   exit 1
 fi
 
@@ -45,8 +53,8 @@ else
   echo "GHCR credentials not set in shell; assuming host already logged in"
 fi
 
-mkdir -p release/.state
-STATE_FILE="release/.state/${ENVIRONMENT}.tag"
+mkdir -p "$WORK_DIR/release/.state"
+STATE_FILE="$WORK_DIR/release/.state/${ENVIRONMENT}.tag"
 PREVIOUS_TAG=""
 
 if [[ -f "$STATE_FILE" ]]; then
@@ -57,7 +65,9 @@ export GHCR_OWNER="${GHCR_OWNER:-your-org}"
 export IMAGE_TAG="$NEW_TAG"
 
 compose_cmd() {
+  cd "$WORK_DIR"
   docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" "$@"
+  cd - > /dev/null
 }
 
 health_check() {

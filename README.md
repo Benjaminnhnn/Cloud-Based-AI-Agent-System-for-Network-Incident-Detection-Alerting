@@ -1,10 +1,10 @@
-# 🤖 Cloud-Based AI Agent System for Network Incident Detection & Alerting
+# Cloud-Based AI Agent System for Network Incident Detection & Alerting
 
 Hệ thống AIOps toàn diện kết hợp sức mạnh của hạ tầng Cloud, Monitoring hiện đại và Trí tuệ nhân tạo (Generative AI) để tự động hóa việc phát hiện, phân tích và hỗ trợ xử lý sự cố mạng/dịch vụ.
 
 ---
 
-## 🏗️ Kiến trúc hệ thống (System Architecture)
+## Kiến trúc hệ thống (System Architecture)
 
 Dự án được thiết kế theo mô hình Hybrid-Cloud, triển khai tự động hóa hoàn toàn:
 
@@ -22,7 +22,7 @@ Dự án được thiết kế theo mô hình Hybrid-Cloud, triển khai tự đ
 
 ---
 
-## 📂 Cấu trúc dự án
+## Cấu trúc dự án
 
 ```text
 aws-hybrid/
@@ -50,7 +50,7 @@ aws-hybrid/
 
 ---
 
-## 🔄 Luồng hoạt động (Incident Workflow)
+## Luồng hoạt động (Incident Workflow)
 
 1.  **Phát hiện (Detection)**: `service_monitor.py` hoặc Prometheus phát hiện Port chết, Network lỗi (Packet loss, High Latency).
 2.  **Cảnh báo (Alerting)**: AlertManager gửi Webhook chứa chi tiết sự cố đến AI Agent.
@@ -62,7 +62,7 @@ aws-hybrid/
 
 ---
 
-## 🚀 Hướng dẫn triển khai nhanh (Quick Start)
+## Hướng dẫn triển khai nhanh (Quick Start)
 
 ### Thiết lập biến môi trường
 Tạo file `.env` trong `agent_src/` hoặc export các biến:
@@ -85,7 +85,7 @@ docker-compose -f platform-config/docker-compose.dev.yml up -d
 
 ---
 
-## 📊 Truy cập các dịch vụ (Service Endpoints)
+## Truy cập các dịch vụ (Service Endpoints)
 
 ### AWS Deployment (Ví dụ IP thực tế)
 *   **Grafana**: `http://<Monitor-IP>:3000` (admin/admin123)
@@ -96,7 +96,7 @@ docker-compose -f platform-config/docker-compose.dev.yml up -d
 
 ---
 
-## ⚙️ CI/CD Pipeline
+## CI/CD Pipeline
 Dự án sử dụng GitHub Actions để tự động hóa quy trình Build, Test và Deploy:
 - **CI Workflow**: Kiểm tra lỗi (Lint), chạy Tests và Build Docker images.
 - **CD Staging**: Tự động triển khai lên môi trường Staging khi push vào branch `develop`.
@@ -104,11 +104,10 @@ Dự án sử dụng GitHub Actions để tự động hóa quy trình Build, Te
 
 ---
 
-## 📚 Tài liệu tham khảo
+## Tài liệu tham khảo
 Xem thêm chi tiết tại thư mục `diagram/` và các file hướng dẫn:
 - `ANSIBLE_DEPLOYMENT_GUIDE.md`: Hướng dẫn chi tiết về Ansible.
 - `diagram/ARCHITECTURE_DIAGRAMS.md`: Sơ đồ hạ tầng AWS.
 - `diagram/CI_CD_DEPLOYMENT_DIAGRAM.md`: Sơ đồ luồng CI/CD.
 
----
-*Dự án là giải pháp thực tế cho việc vận hành hệ thống thông minh bằng sức mạnh AI.*
+

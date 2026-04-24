@@ -68,7 +68,13 @@ jobs:
     needs: build-and-push
     environment: production
     steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          sparse-checkout: automation
+
       - name: Deploy to production EC2 via SSH
+        id: deploy
         uses: appleboy/ssh-action@v1.0.3
         with:
           host: ${{ secrets.SSH_HOST }}
@@ -83,3 +89,12 @@ jobs:
             export GHCR_TOKEN="${{ secrets.GHCR_TOKEN }}"
             export GHCR_OWNER="${{ needs.build-and-push.outputs.owner_lc }}"
             ./automation/deploy.sh production "${{ needs.build-and-push.outputs.image_tag }}"
+
+      - name: Send Telegram notification on failure
+        if: failure()
+        env:
+          TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          chmod +x automation/notify.sh
+          ./automation/notify.sh "CD Production Deploy" "failed" "CRITICAL: Production deployment failed! Tag: ${{ needs.build-and-push.outputs.image_tag }} triggered by ${{ github.actor }}"
