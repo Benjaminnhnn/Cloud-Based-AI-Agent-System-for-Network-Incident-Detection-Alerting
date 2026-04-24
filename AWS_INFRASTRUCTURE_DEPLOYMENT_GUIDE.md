@@ -714,24 +714,521 @@ echo "✅ All validations passed!"
 
 ## 📊 Monitoring & Logs
 
-### View Logs
+### View Logs - Basic Commands
 
 ```bash
-# 1. Real-time logs (follow)
+# 1. Real-time logs (follow - most common)
 docker compose logs -f ai-agent
 docker compose logs -f payment-api
-docker compose logs -f -n 50  # Last 50 lines
+docker compose logs -f -n 50  # Last 50 lines, follow new
 
 # 2. Specific time range
 docker compose logs --since 2026-04-24T10:00:00 ai-agent
+docker compose logs --until 2026-04-24T12:00:00 payment-api
 
-# 3. All container logs
+# 3. All container logs to file
 docker compose logs > /opt/aws-hybrid/logs/all-services.log
 
 # 4. Access container logs directly
 docker logs <container-id>
 docker logs --tail=100 <container-id>
+docker logs --follow <container-id>  # Real-time
+
+# 5. Logs from both services
+docker compose logs ai-agent payment-api --tail=50
+
+# 6. Save logs and search
+docker compose logs > deploy.log
+grep "ERROR\|WARNING" deploy.log
 ```
+
+---
+
+### Common Error Patterns & Solutions
+
+#### ❌ Error 1: Container Exit Code 1 (General Error)
+
+**Log Example:**
+```
+ai-agent exited with code 1
+```
+
+**Diagnosis:**
+```bash
+# 1. Check exit logs
+docker compose logs ai-agent --tail=50
+
+# 2. Look for:
+# - Python syntax error
+# - Module import error
+# - Missing environment variable
+# - Port already in use
+# - Database connection refused
+```
+
+**Common causes:**
+```
+- PYTHONUNBUFFERED not set → buffered output
+- Missing GEMINI_API_KEY → import error
+- Missing dependencies → ModuleNotFoundError
+- Port 8000 already bound → AddressInUse
+```
+
+**Fix:**
+```bash
+docker compose down
+docker compose pull
+docker compose up -d
+docker compose logs ai-agent
+```
+
+---
+
+#### ❌ Error 2: Connection Refused
+
+**Log Example:**
+```
+ERROR - Connection refused to localhost:5432
+ConnectionRefusedError: [Errno 111] Connection refused
+```
+
+**Diagnosis:**
+```bash
+# 1. Check if service running
+docker compose ps
+
+# 2. Check port binding
+netstat -tlnp | grep 5432
+
+# 3. Check service logs
+docker compose logs payment-api --tail=50
+
+# 4. Test connectivity
+docker exec ai-agent curl http://payment-api:8000/health
+```
+
+**Solutions:**
+```bash
+# If database not running
+docker compose restart postgres
+
+# If service not ready
+docker compose logs payment-api | grep "Uvicorn running"
+
+# Wait for service startup
+sleep 10
+curl http://localhost:18000/health
+```
+
+---
+
+#### ❌ Error 3: Out of Memory (OOM)
+
+**Log Example:**
+```
+killed (signal 9)
+Killed
+Exception in thread "Finalizer": java.lang.OutOfMemoryError
+```
+
+**Diagnosis:**
+```bash
+# Check memory usage
+docker stats ai-agent payment-api
+
+# Check container limits
+docker inspect ai-agent | grep -A5 "Memory"
+
+# Check system memory
+free -h
+df -h
+```
+
+**Solutions:**
+```bash
+# Increase memory limit in docker-compose
+# ai-agent:
+#   deploy:
+#     resources:
+#       limits:
+#         memory: 2G
+
+# Restart with new limits
+docker compose down
+docker compose up -d
+docker stats
+```
+
+---
+
+#### ❌ Error 4: Port Already in Use
+
+**Log Example:**
+```
+Error starting userland proxy: listen tcp 0.0.0.0:18000: bind: address already in use
+```
+
+**Diagnosis:**
+```bash
+# Find what's using the port
+lsof -i :18000
+netstat -tlnp | grep 18000
+ss -tlnp | grep 18000
+```
+
+**Solutions:**
+```bash
+# Kill the process
+kill -9 <PID>
+
+# Or stop the container
+docker ps -a | grep 18000
+docker kill <container-id>
+
+# Or change port in docker-compose
+# ports:
+#   - "18001:8000"  # Use different port
+```
+
+---
+
+#### ❌ Error 5: Health Check Timeout
+
+**Log Example:**
+```
+Health check failed: timeout reached
+Starting 2nd attempt
+```
+
+**Diagnosis:**
+```bash
+# Check if service responding
+curl -v http://localhost:18000/health
+
+# Check logs during health check
+docker compose logs ai-agent -f
+
+# Check port binding
+netstat -tlnp | grep 18000
+
+# Check resource constraints
+docker stats ai-agent
+```
+
+**Solutions:**
+```bash
+# Wait longer (service might be slow to start)
+sleep 15
+curl http://localhost:18000/health
+
+# Increase health check timeout
+# healthcheck:
+#   test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+#   interval: 30s
+#   timeout: 10s  # Increase this
+#   retries: 3
+#   start_period: 40s  # Wait before first check
+
+# Restart with new config
+docker compose down
+docker compose up -d
+```
+
+---
+
+### Detailed Log Analysis Guide
+
+#### Step 1: Capture Complete Error Context
+
+```bash
+# Capture error with surrounding lines
+docker compose logs ai-agent 2>&1 | tee debug.log
+
+# Find error
+grep -n "ERROR\|EXCEPTION\|Failed\|Traceback" debug.log
+
+# Show context (10 lines before/after error)
+grep -B10 -A10 "ERROR\|EXCEPTION" debug.log
+```
+
+#### Step 2: Identify Error Type
+
+**Python Errors:**
+```
+Traceback (most recent call last):       ← Start of stack trace
+  File "main.py", line 45, in <module>
+ModuleNotFoundError: No module named 'x'  ← Error type and message
+```
+
+**Docker Errors:**
+```
+ERROR: failed to solve with frontend dockerfile.v0
+```
+
+**Network Errors:**
+```
+ConnectionError: [Errno 110] Connection timed out
+requests.exceptions.ConnectionError: ('Connection aborted.', RemoteDisconnected(...))
+```
+
+**Configuration Errors:**
+```
+ValueError: invalid literal for int() with base 10: 'invalid'
+KeyError: 'GEMINI_API_KEY'
+```
+
+#### Step 3: Trace Root Cause
+
+**Example 1: ModuleNotFoundError**
+```
+ERROR: ModuleNotFoundError: No module named 'google'
+
+Action:
+1. Check requirements.txt has "google-generativeai"
+2. Verify pip install ran successfully
+3. Rebuild Docker image: docker compose build
+4. Verify: docker exec ai-agent pip list | grep google
+```
+
+**Example 2: Connection Refused**
+```
+ERROR: ConnectionRefusedError: [Errno 111] Connection refused
+
+Action:
+1. Check destination service running: docker compose ps
+2. Check port correct: grep "ports:" docker-compose.yml
+3. Check firewall: netstat -tlnp | grep 5432
+4. Restart service: docker compose restart postgres
+```
+
+**Example 3: Out of Memory**
+```
+ERROR: Killed
+
+Action:
+1. Check memory: docker stats ai-agent
+2. Check limits: docker inspect ai-agent | grep Memory
+3. Increase limit in docker-compose.yml
+4. Restart: docker compose down && docker compose up -d
+```
+
+#### Step 4: Extract Actionable Information
+
+```bash
+# Count errors by type
+grep "ERROR" debug.log | awk -F: '{print $NF}' | sort | uniq -c
+
+# Find first error
+grep -m1 "ERROR\|EXCEPTION" debug.log
+
+# Find last error
+grep "ERROR\|EXCEPTION" debug.log | tail -1
+
+# Timeline of errors
+grep "ERROR" debug.log | awk '{print $1}' | sort -u
+```
+
+---
+
+### GitHub Actions Log Checking
+
+#### Step 1: Access GitHub Actions Logs
+
+```
+GitHub Repo → Actions → [Workflow Name] → [Run #] → [Job] → Logs
+```
+
+#### Step 2: Search for Errors in Logs
+
+```
+Ctrl+F (or Cmd+F on Mac) → Search for:
+- "error"
+- "failed"
+- "exit code"
+- "FAILED"
+```
+
+#### Step 3: Common CI Errors
+
+**❌ Lint Failed:**
+```
+Lint (critical rules)
+E9: SyntaxError in agent_src/main.py:45: invalid syntax
+```
+
+**Fix:**
+```bash
+ruff check agent_src --show-fixes
+# Fix syntax error
+git add agent_src
+git commit -m "fix: syntax error"
+git push
+```
+
+**❌ Test Failed:**
+```
+Test AI Agent (pytest)
+FAILED agent_src/tests/test_health.py::test_endpoint
+AssertionError: assert 404 == 200
+```
+
+**Fix:**
+```bash
+pytest -v agent_src/tests/test_health.py
+# Fix test or code
+git add .
+git commit -m "fix: test assertion"
+git push
+```
+
+**❌ Docker Build Failed:**
+```
+Build & push AI Agent
+ERROR: failed to solve with frontend dockerfile.v0
+lstat /agent_src/missing_file: no such file or directory
+```
+
+**Fix:**
+```bash
+# Check Dockerfile COPY commands
+docker build -t test agent_src
+# Add missing files or fix paths
+git add .
+git commit -m "fix: docker build"
+git push
+```
+
+**❌ SSH Deploy Failed:**
+```
+Deploy to staging EC2 via SSH
+Permission denied (publickey)
+```
+
+**Fix:**
+```bash
+# Verify SSH credentials in GitHub Secrets
+# SSH_PRIVATE_KEY, SSH_HOST, SSH_USER, SSH_PORT all correct
+# Re-run workflow
+```
+
+#### Step 4: Download Full Logs
+
+```
+GitHub Actions → [Run] → Summary → Download logs (zip)
+```
+
+---
+
+### Container Log Debugging Techniques
+
+#### Technique 1: Realtime Monitoring (Two Terminals)
+
+**Terminal 1: Watch logs**
+```bash
+cd /opt/aws-hybrid/staging
+docker compose logs -f ai-agent --timestamps
+```
+
+**Terminal 2: Trigger action**
+```bash
+curl -X POST http://localhost:18000/detect \
+  -H "Content-Type: application/json" \
+  -d '{"event": "test"}'
+```
+
+**Terminal 1 Output:**
+```
+ai-agent  | 2026-04-24T10:30:45.123Z INFO - Received request
+ai-agent  | 2026-04-24T10:30:45.456Z DEBUG - Processing event
+ai-agent  | 2026-04-24T10:30:45.789Z INFO - Response sent
+```
+
+#### Technique 2: Interactive Shell
+
+```bash
+# Access container shell
+docker exec -it ai-agent bash
+
+# Inside container
+python -c "import google; print(google.__version__)"
+curl http://payment-api:8000/health
+env | grep GEMINI
+ls -la /app/
+```
+
+#### Technique 3: Log File Analysis
+
+```bash
+# Save all logs to file
+docker compose logs > /tmp/all-logs.log
+
+# Analyze with grep
+grep -E "ERROR|WARN|INFO" /tmp/all-logs.log | cut -d'|' -f2 | sort | uniq -c
+
+# Show errors with timestamps
+grep "ERROR" /tmp/all-logs.log | awk '{print $1, $NF}'
+
+# Find performance issues
+grep "took.*ms" /tmp/all-logs.log | awk '{print $NF}' | sort -rn | head -10
+```
+
+#### Technique 4: Resource Monitoring
+
+```bash
+# Monitor resources while running
+watch -n 1 'docker stats --no-stream ai-agent payment-api'
+
+# Check file descriptors
+docker exec ai-agent lsof | wc -l
+
+# Check connections
+docker exec ai-agent netstat -an | grep ESTABLISHED | wc -l
+
+# Memory usage
+docker exec ai-agent ps aux | grep python
+```
+
+---
+
+### Log File Interpretation
+
+#### Docker Compose Log Format
+
+```
+service-name | timestamp | level | message
+
+Example:
+ai-agent | 2026-04-24T10:30:45.123456789Z INFO - Uvicorn running on 0.0.0.0:8000
+payment-api | 2026-04-24T10:30:46.987654321Z INFO - Server started
+```
+
+#### Log Levels
+
+| Level | Meaning | Example |
+|-------|---------|---------|
+| DEBUG | Detailed diagnostic info | Variable values, function calls |
+| INFO | General information | Server started, request received |
+| WARNING | Warning message | Deprecated function, low memory |
+| ERROR | Error occurred but continues | Failed to connect, invalid input |
+| CRITICAL | Critical error, might exit | Out of memory, file system full |
+
+#### Health Check Log Example
+
+```bash
+# Good
+ai-agent | health check passed (response time: 45ms)
+
+# Warning
+ai-agent | health check slow (response time: 2456ms)
+
+# Failed
+ai-agent | health check failed (attempt 1/3): connection refused
+ai-agent | health check failed (attempt 2/3): timeout
+ai-agent | health check failed (attempt 3/3): timeout
+ai-agent | health check failed: service will be restarted
+```
+
+---
 
 ### Setup Log Rotation
 
@@ -739,40 +1236,103 @@ docker logs --tail=100 <container-id>
 # File: /etc/logrotate.d/aws-hybrid
 
 /opt/aws-hybrid/logs/*.log {
-  daily
-  rotate 7
-  compress
-  delaycompress
-  notifempty
-  create 0640 ubuntu ubuntu
+  daily                    # Rotate daily
+  rotate 7                 # Keep 7 days
+  compress                 # Compress old logs (gzip)
+  delaycompress            # Don't compress latest
+  notifempty               # Don't rotate if empty
+  missingok                # Don't error if missing
+  create 0640 ubuntu ubuntu # New files: 640 permission
   sharedscripts
   postrotate
+    # Signal services to reopen log files
     docker compose -f /opt/aws-hybrid/staging/docker-compose.staging.yml kill -s HUP
     docker compose -f /opt/aws-hybrid/production/docker-compose.production.yml kill -s HUP
   endscript
 }
+
+# Test logrotate
+sudo logrotate -f /etc/logrotate.d/aws-hybrid
+
+# Verify
+ls -la /opt/aws-hybrid/logs/
+# Should see: all-services.log, all-services.log.1.gz, all-services.log.2.gz, etc.
 ```
+
+---
 
 ### Setup Monitoring (Prometheus + Grafana)
 
 ```bash
-# 1. Start Prometheus
+# 1. Create prometheus config
+cat > /opt/aws-hybrid/prometheus.yml << 'EOF'
+global:
+  scrape_interval: 15s
+
+scrape_configs:
+  - job_name: 'docker'
+    static_configs:
+      - targets: ['localhost:9090']
+  
+  - job_name: 'ai-agent'
+    static_configs:
+      - targets: ['localhost:18000']
+  
+  - job_name: 'payment-api'
+    static_configs:
+      - targets: ['localhost:18080']
+EOF
+
+# 2. Start Prometheus
 docker run -d \
   --name prometheus \
   -p 9090:9090 \
   -v /opt/aws-hybrid/prometheus.yml:/etc/prometheus/prometheus.yml \
   prom/prometheus
 
-# 2. Start Grafana
+# 3. Start Grafana
 docker run -d \
   --name grafana \
   -p 3000:3000 \
+  -e GF_SECURITY_ADMIN_PASSWORD=admin \
   grafana/grafana
 
-# 3. Access dashboards
+# 4. Access dashboards
 # Prometheus: http://localhost:9090
+#   - Targets → Check health
+#   - Graph → Query metrics
+#
 # Grafana: http://localhost:3000 (admin/admin)
+#   - Add Prometheus datasource
+#   - Create dashboards
+#   - Set alerts
+
+# 5. Useful Prometheus queries
+# Container CPU: container_cpu_usage_seconds_total
+# Container Memory: container_memory_usage_bytes
+# HTTP Requests: http_requests_total
+# Error Rate: rate(errors_total[5m])
 ```
+
+---
+
+### Log Viewing Quick Reference
+
+| Command | Purpose |
+|---------|---------|
+| `docker compose logs ai-agent` | Show all logs for ai-agent |
+| `docker compose logs -f` | Follow logs (real-time) |
+| `docker compose logs --tail=50` | Last 50 lines |
+| `docker compose logs --since 10m` | Last 10 minutes |
+| `docker logs <container-id>` | Direct container logs |
+| `docker inspect <container-id>` | Container details & config |
+| `docker exec <container> bash` | Access container shell |
+| `docker stats <container>` | CPU/Memory usage |
+| `netstat -tlnp` | Show open ports |
+| `grep ERROR <logfile>` | Find errors in file |
+| `tail -f <logfile>` | Follow file updates |
+| `journalctl -u docker` | Docker service logs |
+| `dmesg` | Kernel logs (OOM kills, etc) |
 
 ---
 
