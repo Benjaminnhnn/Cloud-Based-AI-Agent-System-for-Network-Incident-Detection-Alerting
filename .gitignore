@@ -1,3 +1,8 @@
+# Documentation (only keep README and AIops_CICD)
+*.md
+!README.md
+!AIops_CICD.md
+
 # Terraform (NEVER commit state files)
 *.tfstate
 *.tfstate.*
