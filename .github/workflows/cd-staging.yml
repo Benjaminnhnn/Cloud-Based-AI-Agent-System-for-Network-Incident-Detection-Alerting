@@ -62,6 +62,8 @@ jobs:
         run: |
           cp release/.env.example release/.env.staging
           cp release/.env.example release/.env.production
+          sed -i "s/^GHCR_OWNER=.*/GHCR_OWNER=${{ needs.build-and-push.outputs.owner_lc }}/" release/.env.staging
+          sed -i "s/^GHCR_OWNER=.*/GHCR_OWNER=${{ needs.build-and-push.outputs.owner_lc }}/" release/.env.production
 
       - name: Preflight SSH authentication
         env:
