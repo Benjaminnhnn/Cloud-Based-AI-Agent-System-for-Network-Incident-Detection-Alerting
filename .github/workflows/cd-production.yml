@@ -114,17 +114,31 @@ jobs:
           timeout: 180s
           command_timeout: 180s
           script: |
-            if ! command -v docker &> /dev/null; then
-              echo "Installing Docker..."
-              sudo yum update -y
-              sudo yum install docker -y
-              sudo systemctl start docker
-              sudo systemctl enable docker
-              sudo usermod -aG docker ec2-user
-              echo "Docker installed and started"
-            else
-              echo "Docker already installed"
+            set -euo pipefail
+            if command -v docker >/dev/null 2>&1; then
+              echo "Docker already installed: $(docker --version)"
+              exit 0
             fi
+
+            echo "Installing Docker..."
+            if command -v dnf >/dev/null 2>&1; then
+              sudo dnf -y install docker
+            elif command -v yum >/dev/null 2>&1; then
+              sudo yum -y install docker
+            elif command -v apt-get >/dev/null 2>&1; then
+              sudo apt-get update -y
+              sudo apt-get install -y docker.io
+            else
+              echo "Unsupported package manager. Cannot install Docker."
+              exit 1
+            fi
+
+            sudo systemctl enable --now docker
+            sudo groupadd -f docker || true
+            if id -u ec2-user >/dev/null 2>&1; then
+              sudo usermod -aG docker ec2-user || true
+            fi
+            echo "Docker installed: $(docker --version)"
 
       - name: Install Docker Compose 
         uses: appleboy/ssh-action@v1.0.3
