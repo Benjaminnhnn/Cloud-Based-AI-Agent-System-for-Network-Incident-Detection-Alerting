@@ -1,9 +1,4 @@
-# 📚 Hướng dẫn Tạo Hạ tầng AWS & Deploy CI/CD System
-
-**Phiên bản:** 1.0  
-**Ngày viết:** 24/04/2026  
-**Tác giả:** Hoàng Việt  
-**Mục đích:** Hướng dẫn chi tiết setup AWS infrastructure & deploy CI/CD system  
+# 📚 Hướng dẫn Tạo Hạ tầng AWS & Deploy CI/CD System 
 
 ---
 
@@ -146,6 +141,69 @@
 # 
 # Save to GitHub Secrets:
 # SSH_PRIVATE_KEY = content của aws-hybrid-key.pem
+```
+
+### Step 4: Kiểm tra GitHub Secrets trước khi chạy CI/CD
+
+Trước khi trigger workflow `CD Staging` hoặc `CD Production`, kiểm tra repository đã có đủ secrets cần thiết.
+
+**Secrets bắt buộc:**
+
+| Secret | Mục đích | Ghi chú |
+|--------|----------|---------|
+| `AWS_ACCESS_KEY_ID` | Terraform/AWS automation | Access key của IAM user `github-actions` |
+| `AWS_SECRET_ACCESS_KEY` | Terraform/AWS automation | Secret key tương ứng |
+| `SSH_HOST` | EC2 target để deploy | Dùng public IP của EC2 nhận deploy, ví dụ monitor/staging host |
+| `SSH_PORT` | SSH port | Thường là `22` |
+| `SSH_PRIVATE_KEY` | SSH key để GitHub Actions vào EC2 | Nội dung private key, giữ nguyên header/footer |
+| `GHCR_USERNAME` | Login GitHub Container Registry | GitHub username hoặc bot account |
+| `GHCR_TOKEN` | Pull/push image trên GHCR | PAT có quyền `read:packages`, `write:packages`; nếu repo private cần thêm `repo` |
+
+**Kiểm tra bằng GitHub UI:**
+
+```text
+Repository → Settings → Secrets and variables → Actions → Repository secrets
+
+Verify:
+- Tất cả secrets ở bảng trên đã tồn tại
+- Không có secret bị đặt sai tên, ví dụ GHCR_OWNER thay cho GHCR_USERNAME
+- SSH_HOST trùng với public IP hiện tại sau khi Terraform apply
+- SSH_PRIVATE_KEY là private key đầy đủ, không phải public key .pub
+```
+
+**Kiểm tra bằng GitHub CLI (nếu đã cài `gh`):**
+
+```bash
+gh secret list
+
+# Expected names:
+# AWS_ACCESS_KEY_ID
+# AWS_SECRET_ACCESS_KEY
+# SSH_HOST
+# SSH_PORT
+# SSH_PRIVATE_KEY
+# GHCR_USERNAME
+# GHCR_TOKEN
+```
+
+**Cập nhật `SSH_HOST` sau khi Terraform tạo hoặc thay EC2:**
+
+```bash
+cd terraform
+terraform output
+
+# Chọn public IP của EC2 dùng để deploy CD staging/production,
+# sau đó cập nhật lại GitHub Secret SSH_HOST trong repo.
+```
+
+**Preflight local trước khi chạy workflow:**
+
+```bash
+# Test SSH bằng cùng user/key mà workflow dùng
+ssh -i aws-hybrid-key.pem -p 22 ec2-user@<SSH_HOST> 'echo auth-ok'
+
+# Test Docker/GHCR trên EC2 nếu đã cài Docker
+ssh -i aws-hybrid-key.pem ec2-user@<SSH_HOST> 'docker --version && docker compose version'
 ```
 
 ---
@@ -1548,6 +1606,4 @@ docker system prune -a --volumes
 
 ---
 
-**Version:** 1.0  
-**Last Updated:** 24/04/2026  
-**Status:** ✅ Ready for Team Implementation
+
