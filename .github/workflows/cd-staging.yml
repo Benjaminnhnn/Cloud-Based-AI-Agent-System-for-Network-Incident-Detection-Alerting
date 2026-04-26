@@ -55,6 +55,14 @@ jobs:
     needs: build-and-push
     environment: staging
     steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Prepare environment files
+        run: |
+          cp release/.env.example release/.env.staging
+          cp release/.env.example release/.env.production
+
       - name: Deploy to staging EC2 via SSH
         uses: appleboy/ssh-action@v1.0.3
         with:
