@@ -63,6 +63,27 @@ jobs:
           cp release/.env.example release/.env.staging
           cp release/.env.example release/.env.production
 
+      - name: Preflight SSH connectivity
+        env:
+          SSH_HOST: ${{ secrets.SSH_HOST }}
+          SSH_PORT: ${{ secrets.SSH_PORT }}
+        run: |
+          set -euo pipefail
+          echo "Checking SSH target ${SSH_HOST}:${SSH_PORT}"
+
+          if [[ "$SSH_HOST" =~ ^10\.|^127\.|^192\.168\.|^172\.(1[6-9]|2[0-9]|3[0-1])\. ]]; then
+            echo "::error::SSH_HOST appears to be a private IP. Use EC2 Public IPv4 for GitHub-hosted runners."
+            exit 1
+          fi
+
+          if ! timeout 10 bash -c "</dev/tcp/${SSH_HOST}/${SSH_PORT}"; then
+            echo "::error::Cannot reach ${SSH_HOST}:${SSH_PORT} from GitHub runner (network timeout)."
+            echo "::error::Check EC2 Security Group inbound rule for SSH (port 22) and NACL/route settings."
+            exit 1
+          fi
+
+          echo "SSH target is reachable from runner."
+
       - name: Setup EC2 directory and install Docker
         uses: appleboy/ssh-action@v1.0.3
         with:
