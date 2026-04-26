@@ -56,8 +56,28 @@ fi
 export GHCR_OWNER="${GHCR_OWNER:-your-org}"
 export IMAGE_TAG="$NEW_TAG"
 
+load_env_file() {
+  # Export key=value pairs from env file for docker-compose fallback.
+  set -a
+  # shellcheck disable=SC1090
+  . "$ENV_FILE"
+  set +a
+}
+
 compose_cmd() {
-  docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" "$@"
+  if docker compose version >/dev/null 2>&1; then
+    docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" "$@"
+    return
+  fi
+
+  if command -v docker-compose >/dev/null 2>&1; then
+    load_env_file
+    docker-compose -f "$COMPOSE_FILE" "$@"
+    return
+  fi
+
+  echo "No compose runtime found. Install Docker Compose plugin or docker-compose binary."
+  exit 1
 }
 
 health_check() {
