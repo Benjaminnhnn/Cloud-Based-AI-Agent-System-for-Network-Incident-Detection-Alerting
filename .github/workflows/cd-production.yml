@@ -100,7 +100,7 @@ jobs:
           timeout: 120s
           command_timeout: 120s
           script: |
-            mkdir -p /opt/aws-hybrid/{release,automation}
+            mkdir -p /home/ec2-user/aws-hybrid/{release,automation}
             echo "Directories created"
 
       - name: Install Docker
@@ -151,8 +151,8 @@ jobs:
           mkdir -p ~/.ssh
           echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/deploy_key
           chmod 600 ~/.ssh/deploy_key
-          scp -o StrictHostKeyChecking=no -o ConnectTimeout=10 -i ~/.ssh/deploy_key -r release/ ec2-user@${{ secrets.SSH_HOST }}:/opt/aws-hybrid/
-          scp -o StrictHostKeyChecking=no -o ConnectTimeout=10 -i ~/.ssh/deploy_key -r automation/ ec2-user@${{ secrets.SSH_HOST }}:/opt/aws-hybrid/
+          scp -o StrictHostKeyChecking=no -o ConnectTimeout=10 -i ~/.ssh/deploy_key -r release/ ec2-user@${{ secrets.SSH_HOST }}:/home/ec2-user/aws-hybrid/
+          scp -o StrictHostKeyChecking=no -o ConnectTimeout=10 -i ~/.ssh/deploy_key -r automation/ ec2-user@${{ secrets.SSH_HOST }}:/home/ec2-user/aws-hybrid/
           rm ~/.ssh/deploy_key
 
       - name: Run deploy script on EC2
@@ -166,7 +166,7 @@ jobs:
           timeout: 300s
           command_timeout: 300s
           script: |
-            cd /opt/aws-hybrid
+            cd /home/ec2-user/aws-hybrid
             chmod +x automation/deploy.sh
             export GHCR_USERNAME="${{ secrets.GHCR_USERNAME }}"
             export GHCR_TOKEN="${{ secrets.GHCR_TOKEN }}"
