@@ -72,6 +72,35 @@ TELEGRAM_CHAT_ID=your-chat-id
 EOF
 ```
 
+### GitHub Actions Secrets
+
+Before running `CD Staging` or `CD Production`, verify these repository secrets in GitHub:
+
+```text
+Repository -> Settings -> Secrets and variables -> Actions -> Repository secrets
+```
+
+Required secrets:
+
+| Secret | Purpose |
+|--------|---------|
+| `AWS_ACCESS_KEY_ID` | AWS automation credentials |
+| `AWS_SECRET_ACCESS_KEY` | AWS automation credentials |
+| `SSH_HOST` | EC2 public IP used by the deployment workflow |
+| `SSH_PORT` | SSH port, usually `22` |
+| `SSH_PRIVATE_KEY` | Private key used by GitHub Actions to connect to EC2 |
+| `GHCR_USERNAME` | GitHub Container Registry username |
+| `GHCR_TOKEN` | GitHub token with package read/write access |
+
+When Terraform recreates EC2 instances, update `SSH_HOST` with the new public IP before rerunning CD.
+
+Local preflight:
+
+```bash
+ssh -i ~/.ssh/id_rsa -p 22 ec2-user@<SSH_HOST> 'echo auth-ok'
+ssh -i ~/.ssh/id_rsa ec2-user@<SSH_HOST> 'docker --version && docker compose version'
+```
+
 ## Quick Start
 
 ### Option 1: One-command deployment (recommended)
@@ -193,12 +222,6 @@ Rule files are managed in:
 	docker-compose -f platform-config/docker-compose.dev.yml logs -f
 	```
 
-For extended runbooks, see:
-
-- `DEPLOYMENT_GUIDE.md`
-- `SERVICE_STARTUP_GUIDE.md`
-- `HOW_TO_CHECK_LOGS.md`
-
 ## CI/CD Pipeline
 
 The project uses GitHub Actions for automated building, testing, and deployment:
@@ -207,6 +230,13 @@ The project uses GitHub Actions for automated building, testing, and deployment:
 - **CD Staging**: Automatic deployment to staging EC2 when code is pushed to `develop` branch
 - **CD Production**: Manual deployment to production with approval gate when tags are created on `main` branch
 - **Health Checks**: Automatic validation of deployments with rollback capability
+
+Check the deployed staging tag on EC2:
+
+```bash
+ssh -i ~/.ssh/id_rsa ec2-user@<SSH_HOST> \
+  'cd /home/ec2-user/aws-hybrid && cat release/.state/staging.tag'
+```
 
 See `diagram/CI_CD_DEPLOYMENT_DIAGRAM.md` for complete CI/CD flow visualization.
 
