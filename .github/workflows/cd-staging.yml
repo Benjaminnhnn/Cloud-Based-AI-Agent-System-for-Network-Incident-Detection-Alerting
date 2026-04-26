@@ -63,7 +63,7 @@ jobs:
           cp release/.env.example release/.env.staging
           cp release/.env.example release/.env.production
 
-      - name: Deploy to staging EC2 via SSH
+      - name: Setup EC2 directory and install Docker
         uses: appleboy/ssh-action@v1.0.3
         with:
           host: ${{ secrets.SSH_HOST }}
@@ -71,26 +71,53 @@ jobs:
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           port: ${{ secrets.SSH_PORT }}
           script_stop: true
+          timeout: 120s
+          command_timeout: 120s
           script: |
-            # Prepare target directory
             mkdir -p /opt/aws-hybrid/{release,automation}
+            echo "Directories created"
 
-            # Install Docker if not present
+      - name: Install Docker
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          port: ${{ secrets.SSH_PORT }}
+          script_stop: true
+          timeout: 180s
+          command_timeout: 180s
+          script: |
             if ! command -v docker &> /dev/null; then
               echo "Installing Docker..."
               sudo yum update -y
               sudo yum install docker -y
               sudo systemctl start docker
               sudo systemctl enable docker
-              sudo usermod -aG docker $USER
-              newgrp docker
+              sudo usermod -aG docker ec2-user
+              echo "Docker installed and started"
+            else
+              echo "Docker already installed"
             fi
 
-            # Install Docker Compose if not present
+      - name: Install Docker Compose (if needed)
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          port: ${{ secrets.SSH_PORT }}
+          script_stop: true
+          timeout: 120s
+          command_timeout: 120s
+          script: |
             if ! command -v docker-compose &> /dev/null; then
               echo "Installing Docker Compose..."
               sudo curl -L "https://github.com/docker/compose/releases/latest/download/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
               sudo chmod +x /usr/local/bin/docker-compose
+              echo "Docker Compose installed"
+            else
+              echo "Docker Compose already installed"
             fi
 
       - name: Copy files to EC2 using SCP
@@ -98,8 +125,8 @@ jobs:
           mkdir -p ~/.ssh
           echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/deploy_key
           chmod 600 ~/.ssh/deploy_key
-          scp -o StrictHostKeyChecking=no -i ~/.ssh/deploy_key -r release/ ${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}:/opt/aws-hybrid/
-          scp -o StrictHostKeyChecking=no -i ~/.ssh/deploy_key -r automation/ ${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}:/opt/aws-hybrid/
+          scp -o StrictHostKeyChecking=no -o ConnectTimeout=10 -i ~/.ssh/deploy_key -r release/ ${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}:/opt/aws-hybrid/
+          scp -o StrictHostKeyChecking=no -o ConnectTimeout=10 -i ~/.ssh/deploy_key -r automation/ ${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}:/opt/aws-hybrid/
           rm ~/.ssh/deploy_key
 
       - name: Run deploy script on EC2
@@ -110,6 +137,8 @@ jobs:
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           port: ${{ secrets.SSH_PORT }}
           script_stop: true
+          timeout: 300s
+          command_timeout: 300s
           script: |
             cd /opt/aws-hybrid
             chmod +x automation/deploy.sh
