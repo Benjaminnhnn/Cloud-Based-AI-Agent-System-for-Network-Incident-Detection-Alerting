@@ -18,6 +18,12 @@ variable "my_ip_cidr" {
   description = "IP public CIDR"
 }
 
+variable "ci_cd_ssh_cidr_blocks" {
+  type        = list(string)
+  description = "Additional CIDR blocks allowed to SSH from CI/CD runners"
+  default     = []
+}
+
 variable "public_key_path" {
   type        = string
   description = "The path direct to file public key"

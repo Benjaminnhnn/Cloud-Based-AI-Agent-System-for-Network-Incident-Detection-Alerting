@@ -8,7 +8,7 @@ resource "aws_security_group" "monitor_sg" {
     from_port   = 22
     to_port     = 22
     protocol    = "tcp"
-    cidr_blocks = [var.my_ip_cidr]
+    cidr_blocks = distinct(concat([var.my_ip_cidr], var.ci_cd_ssh_cidr_blocks))
   }
 
   ingress {
