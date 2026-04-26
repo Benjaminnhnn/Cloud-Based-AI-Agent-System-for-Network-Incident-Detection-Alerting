@@ -127,7 +127,7 @@ jobs:
             fi
             echo "Docker installed: $(docker --version)"
 
-      - name: Install Docker Compose (if needed)
+      - name: Install Docker Compose 
         uses: appleboy/ssh-action@v1.0.3
         with:
           host: ${{ secrets.SSH_HOST }}
@@ -138,13 +138,37 @@ jobs:
           timeout: 120s
           command_timeout: 120s
           script: |
-            if ! command -v docker-compose &> /dev/null; then
-              echo "Installing Docker Compose..."
-              sudo curl -L "https://github.com/docker/compose/releases/latest/download/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
-              sudo chmod +x /usr/local/bin/docker-compose
-              echo "Docker Compose installed"
+            set -euo pipefail
+            if docker compose version >/dev/null 2>&1 || command -v docker-compose >/dev/null 2>&1; then
+              echo "Docker Compose already available"
+              exit 0
+            fi
+
+            echo "Installing Docker Compose..."
+            if command -v dnf >/dev/null 2>&1; then
+              sudo dnf -y install docker-compose-plugin || true
+            elif command -v yum >/dev/null 2>&1; then
+              sudo yum -y install docker-compose-plugin || sudo yum -y install docker-compose || true
+            elif command -v apt-get >/dev/null 2>&1; then
+              sudo apt-get update -y
+              sudo apt-get install -y docker-compose-plugin || sudo apt-get install -y docker-compose || true
+            fi
+
+            if ! docker compose version >/dev/null 2>&1 && ! command -v docker-compose >/dev/null 2>&1; then
+              if command -v curl >/dev/null 2>&1; then
+                sudo curl -fsSL "https://github.com/docker/compose/releases/latest/download/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
+                sudo chmod +x /usr/local/bin/docker-compose
+              fi
+            fi
+
+            if docker compose version >/dev/null 2>&1 || command -v docker-compose >/dev/null 2>&1; then
+              echo "Docker Compose installed successfully"
             else
-              echo "Docker Compose already installed"
+              echo "Docker Compose installation failed"
+              docker --version || true
+              command -v docker-compose || true
+              docker compose version || true
+              exit 1
             fi
 
       - name: Copy files to EC2 using SCP
