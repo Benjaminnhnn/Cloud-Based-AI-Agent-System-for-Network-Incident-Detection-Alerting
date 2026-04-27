@@ -75,15 +75,18 @@ jobs:
           import os
           from pathlib import Path
 
-          values = {
-              "GEMINI_API_KEY": os.environ.get("GEMINI_API_KEY", ""),
-              "TELEGRAM_TOKEN": os.environ.get("TELEGRAM_TOKEN", ""),
-              "TELEGRAM_CHAT_ID": os.environ.get("TELEGRAM_CHAT_ID", ""),
-              "AI_AGENT_PUBLIC_URL": os.environ.get("AI_AGENT_PUBLIC_URL", ""),
-              "DATABASE_URL": os.environ.get("DATABASE_URL", ""),
-              "SECRET_KEY": os.environ.get("SECRET_KEY", ""),
-              "ENVIRONMENT": "staging",
-          }
+          values = {"ENVIRONMENT": "staging"}
+          for key in (
+              "GEMINI_API_KEY",
+              "TELEGRAM_TOKEN",
+              "TELEGRAM_CHAT_ID",
+              "AI_AGENT_PUBLIC_URL",
+              "DATABASE_URL",
+              "SECRET_KEY",
+          ):
+              value = os.environ.get(key, "")
+              if value:
+                  values[key] = value
 
           for env_file in (Path("release/.env.staging"), Path("release/.env.production")):
               lines = env_file.read_text().splitlines()
@@ -224,7 +227,7 @@ jobs:
           port: ${{ secrets.SSH_PORT }}
           script_stop: true
           timeout: 300s
-          command_timeout: 300s
+          command_timeout: 600s
           script: |
             cd /home/ec2-user/aws-hybrid
             chmod +x automation/deploy.sh
