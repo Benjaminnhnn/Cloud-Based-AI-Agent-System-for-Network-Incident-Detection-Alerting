@@ -259,26 +259,26 @@ aws-hybrid/
 └─────────────────────────────────────┘
                   ↓
 ┌─────────────────────────────────────┐
-│  GITHUB REPOSITORY                  │
+│  GitHub Repository                  │
 ├─────────────────────────────────────┤
-│ Step 4: Setup GitHub Secrets        │
-│   - SSH_HOST (from terraform)       │
+│ Bước 4: Thiết lập GitHub Secrets    │
+│   - SSH_HOST (từ terraform)         │
 │   - SSH_PORT (22)                   │
 │   - SSH_PRIVATE_KEY ⭐              │
 │   - GHCR_USERNAME                   │
 │   - GHCR_TOKEN                      │
 │                                     │
-│ Step 5: Trigger CI/CD Workflow      │
-│   - Push to develop → Staging       │
+│ Bước 5: Kích hoạt CI/CD Workflow    │
+│   - Push tới develop → Staging      │
 │   - Tag v1.0.0 → Production         │
 │                                     │
-│ Result: Auto deploy via SSH         │
+│ Kết quả: Tự động triển khai via SSH │
 └─────────────────────────────────────┘
 ```
 
 **🔑 Chỉ cần AWS credentials (Access Key) khi:**
 - Chạy `terraform init/apply` trên local machine
-- KH\u00d4NG cần trong GitHub Actions (SSH deployment đủ)
+- KHÔNG cần trong GitHub Actions (SSH deployment đủ)
 
 ### Step 1: Create AWS Account
 
@@ -369,9 +369,9 @@ Verify (BẮT BUỘC cho CI/CD):
 ✅ GHCR_USERNAME = GitHub username
 ✅ GHCR_TOKEN = GitHub token với quyền packages
 
-KH\u00d4NG C\u1ea6N cho CI/CD deployment (ch\u1ec1 d\u00f9ng local):
-❌ AWS_ACCESS_KEY_ID (ch\u1ec9 d\u00f9ng khi ch\u1ea1y Terraform tr\u00ean local)
-❌ AWS_SECRET_ACCESS_KEY (ch\u1ec9 d\u00f9ng khi ch\u1ea1y Terraform tr\u00ean local)
+KHÔNG CẦN cho CI/CD deployment (chỉ dùng local):
+❌ AWS_ACCESS_KEY_ID (chỉ dùng khi chạy Terraform trên local)
+❌ AWS_SECRET_ACCESS_KEY (chỉ dùng khi chạy Terraform trên local)
 ```
 
 **Kiểm tra bằng GitHub CLI (nếu đã cài `gh`):**
