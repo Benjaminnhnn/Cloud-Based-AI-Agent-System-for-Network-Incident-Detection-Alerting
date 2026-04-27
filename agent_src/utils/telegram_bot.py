@@ -9,8 +9,20 @@ from datetime import datetime
 # Load credentials from .env file
 load_dotenv()
 
-TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
-TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
+def valid_env_value(value):
+    if not value:
+        return None
+
+    value = value.strip()
+    placeholders = ("your_", "change_me", "_here")
+    if not value or any(marker in value for marker in placeholders):
+        return None
+
+    return value
+
+
+TELEGRAM_TOKEN = valid_env_value(os.getenv("TELEGRAM_TOKEN"))
+TELEGRAM_CHAT_ID = valid_env_value(os.getenv("TELEGRAM_CHAT_ID"))
 
 
 def get_chat_id():
@@ -57,6 +69,9 @@ def set_telegram_webhook(webhook_url):
     """Registers the FastAPI endpoint as a Telegram Webhook."""
     if not TELEGRAM_TOKEN:
         print("❌ Error: TELEGRAM_TOKEN not found")
+        return False
+    if not webhook_url or webhook_url.startswith("http://localhost") or webhook_url.startswith("http://127.0.0.1"):
+        print("⚠️ Skipping Telegram Webhook: AI_AGENT_PUBLIC_URL must be a public HTTPS URL")
         return False
     
     # We want to point Telegram to our /telegram/webhook endpoint

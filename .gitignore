@@ -27,10 +27,12 @@ terraform/awscliv2.zip
 id_rsa
 id_rsa.pub
 .env
+.env.staging
+.env.production
+.env.local
 
 # Documentation (local only)
 docs/
-.env.local
 
 # Python
 __pycache__/

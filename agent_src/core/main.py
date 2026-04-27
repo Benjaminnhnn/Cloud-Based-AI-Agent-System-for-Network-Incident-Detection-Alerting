@@ -19,8 +19,20 @@ logger = logging.getLogger(__name__)
 
 load_dotenv()
 
+def valid_env_value(value: str | None) -> str | None:
+    if not value:
+        return None
+
+    value = value.strip()
+    placeholders = ("your_", "change_me", "_here")
+    if not value or any(marker in value for marker in placeholders):
+        return None
+
+    return value
+
+
 AI_AGENT_PORT       = int(os.getenv("AI_AGENT_PORT", "8000"))
-AI_AGENT_PUBLIC_URL = os.getenv("AI_AGENT_PUBLIC_URL", f"http://localhost:{AI_AGENT_PORT}")
+AI_AGENT_PUBLIC_URL = valid_env_value(os.getenv("AI_AGENT_PUBLIC_URL"))
 
 REDIS_HOST = os.getenv("REDIS_HOST", "localhost")
 REDIS_PORT = int(os.getenv("REDIS_PORT", "6379"))

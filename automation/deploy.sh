@@ -36,7 +36,20 @@ fi
 
 if [[ ! -f "$ENV_FILE" ]]; then
   echo "Environment file not found: $ENV_FILE"
-  exit 1
+  echo "Creating from template..."
+
+  if [[ ! -f "release/.env.example" ]]; then
+    echo "Template file not found: release/.env.example"
+    exit 1
+  fi
+
+  cp release/.env.example "$ENV_FILE"
+  echo "Created $ENV_FILE from template. Please configure it with actual values."
+  echo "Critical variables needed:"
+  echo "  - GHCR_OWNER (GitHub org/username)"
+  echo "  - GEMINI_API_KEY (Google Gemini API key)"
+  echo "  - TELEGRAM_TOKEN (optional)"
+  echo "  - TELEGRAM_CHAT_ID (optional)"
 fi
 
 if [[ -n "${GHCR_USERNAME:-}" && -n "${GHCR_TOKEN:-}" ]]; then
@@ -91,6 +104,34 @@ compose_cmd() {
   exit 1
 }
 
+available_disk_mb() {
+  df -Pm / | awk 'NR == 2 {print $4}'
+}
+
+ensure_docker_disk_space() {
+  local min_free_mb="${MIN_DOCKER_FREE_MB:-6144}"
+  local free_mb
+
+  free_mb="$(available_disk_mb)"
+  if [[ "$free_mb" -ge "$min_free_mb" ]]; then
+    echo "Disk preflight OK: ${free_mb}MB free on /"
+    return
+  fi
+
+  echo "Disk preflight warning: only ${free_mb}MB free on /; need at least ${min_free_mb}MB"
+  echo "Pruning unused Docker images before pulling new release..."
+  docker image prune -af
+
+  free_mb="$(available_disk_mb)"
+  if [[ "$free_mb" -lt "$min_free_mb" ]]; then
+    echo "Still only ${free_mb}MB free after Docker image prune."
+    echo "Increase the EC2 root volume or remove unused Docker data before deploying."
+    exit 1
+  fi
+
+  echo "Disk preflight recovered: ${free_mb}MB free on /"
+}
+
 health_check() {
   local retries=18
   local wait_seconds=10
@@ -119,11 +160,13 @@ health_check() {
 }
 
 echo "Deploying $ENVIRONMENT with tag $NEW_TAG"
+ensure_docker_disk_space
 compose_cmd pull
 compose_cmd up -d --remove-orphans
 
 if health_check; then
   echo "$NEW_TAG" > "$STATE_FILE"
+  docker image prune -f >/dev/null || true
   echo "Deploy successful. Current tag: $NEW_TAG"
   exit 0
 fi

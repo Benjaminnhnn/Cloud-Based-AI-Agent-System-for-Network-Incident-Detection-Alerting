@@ -1,6 +1,21 @@
 version: "3.9"
 
 services:
+  redis:
+    image: redis:7-alpine
+    container_name: redis-staging
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis-data-staging:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    networks:
+      - aiops-network
+
   ai-agent:
     image: ghcr.io/${GHCR_OWNER:-your-org}/aws-hybrid-ai-agent:${IMAGE_TAG:-staging-latest}
     container_name: ai-agent-staging
@@ -9,6 +24,9 @@ services:
       - .env.staging
     environment:
       AI_AGENT_PORT: "8000"
+      REDIS_HOST: redis
+      REDIS_PORT: "6379"
+      REDIS_DB: "0"
       PYTHONUNBUFFERED: "1"
     ports:
       - "18000:8000"
@@ -20,6 +38,27 @@ services:
       start_period: 15s
     networks:
       - aiops-network
+    depends_on:
+      redis:
+        condition: service_healthy
+
+  celery-worker:
+    image: ghcr.io/${GHCR_OWNER:-your-org}/aws-hybrid-ai-agent:${IMAGE_TAG:-staging-latest}
+    container_name: celery-worker-staging
+    restart: unless-stopped
+    env_file:
+      - .env.staging
+    environment:
+      REDIS_HOST: redis
+      REDIS_PORT: "6379"
+      REDIS_DB: "0"
+      PYTHONUNBUFFERED: "1"
+    command: ["celery", "-A", "core.celery_app.celery_app", "worker", "--loglevel=INFO"]
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks:
+      - aiops-network
 
   log-watcher:
     image: ghcr.io/${GHCR_OWNER:-your-org}/aws-hybrid-ai-agent:${IMAGE_TAG:-staging-latest}
@@ -29,10 +68,12 @@ services:
       - .env.staging
     environment:
       WEBHOOK_URL: http://ai-agent:8000/webhook
+      LOG_FILES: /var/log/syslog,/var/log/cloud-init.log,/var/log/dnf.log,/tmp/test_syslog.log
       PYTHONUNBUFFERED: "1"
-    command: ["python", "log_watcher.py"]
+    command: ["sh", "-c", "sed -i 's|WEBHOOK_URL = \"http://localhost:8000/webhook\"|WEBHOOK_URL = \"http://ai-agent:8000/webhook\"|' log_watcher.py && python log_watcher.py"]
     volumes:
       - /var/log:/var/log:ro
+      - /tmp/aiops-test-syslog.log:/tmp/test_syslog.log:ro
     depends_on:
       ai-agent:
         condition: service_healthy
@@ -61,3 +102,6 @@ services:
 networks:
   aiops-network:
     driver: bridge
+
+volumes:
+  redis-data-staging:

@@ -6,17 +6,26 @@ import socket
 from datetime import datetime
 
 # --- CẤU HÌNH ---
-# Danh sách các file log cần giám sát (Bạn có thể thêm bớt tùy hệ thống)
-LOG_FILES = [
+# Danh sách các file log cần giám sát.
+# Có thể override bằng LOG_FILES="/path/a,/path/b" trong Docker Compose.
+DEFAULT_LOG_FILES = [
     "/var/log/syslog",
+    "/var/log/messages",
+    "/var/log/cloud-init.log",
+    "/var/log/dnf.log",
     "/var/log/nginx/error.log",
     "/var/log/apache2/error.log",
     "/var/log/mysql/error.log",
     "/tmp/test_syslog.log"  # For testing
 ]
+LOG_FILES = [
+    path.strip()
+    for path in os.getenv("LOG_FILES", ",".join(DEFAULT_LOG_FILES)).split(",")
+    if path.strip()
+]
 
 # URL của AI Agent Webhook (FastAPI server bạn đã chạy)
-WEBHOOK_URL = "http://localhost:8000/webhook"
+WEBHOOK_URL = os.getenv("WEBHOOK_URL", "http://localhost:8000/webhook")
 
 # Từ khóa để nhận diện lỗi
 ERROR_KEYWORDS = ["ERROR", "CRITICAL", "FATAL", "EXCEPTION", "FAILED", "PANIC"]

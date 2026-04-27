@@ -269,15 +269,15 @@ jobs:
 
 **Step 1 - Prepare Variables:**
 ```bash
-owner_lc=${GITHUB_REPOSITORY_OWNER,,}  # hoang_viet
+owner_lc=${GITHUB_REPOSITORY_OWNER,,}  # <github-owner>
 image_tag=staging-${GITHUB_SHA}         # staging-abc123def456
 ```
 
 **Step 2 - Login GHCR:**
 ```bash
-docker login ghcr.io \
-  -u ${{ secrets.GHCR_USERNAME }} \
-  -p ${{ secrets.GHCR_TOKEN }}
+echo "${{ secrets.GHCR_TOKEN }}" | docker login ghcr.io \
+  -u "${{ secrets.GHCR_USERNAME }}" \
+  --password-stdin
 ```
 - Đăng nhập GitHub Container Registry
 - Credentials từ GitHub Secrets
@@ -285,16 +285,16 @@ docker login ghcr.io \
 **Step 3 - Build & Push AI Agent:**
 ```bash
 docker buildx build --push \
-  -t ghcr.io/hoang_viet/aws-hybrid-ai-agent:staging-abc123def456 \
-  -t ghcr.io/hoang_viet/aws-hybrid-ai-agent:staging-latest \
+  -t ghcr.io/<github-owner>/aws-hybrid-ai-agent:staging-abc123def456 \
+  -t ghcr.io/<github-owner>/aws-hybrid-ai-agent:staging-latest \
   ./agent_src
 ```
 
 **Step 4 - Build & Push Payment API:**
 ```bash
 docker buildx build --push \
-  -t ghcr.io/hoang_viet/aws-hybrid-payment-api:staging-abc123def456 \
-  -t ghcr.io/hoang_viet/aws-hybrid-payment-api:staging-latest \
+  -t ghcr.io/<github-owner>/aws-hybrid-payment-api:staging-abc123def456 \
+  -t ghcr.io/<github-owner>/aws-hybrid-payment-api:staging-latest \
   ./demo-web/backend
 ```
 
@@ -312,7 +312,7 @@ with:
   script: |
     cd /opt/aws-hybrid
     chmod +x automation/deploy.sh
-    export GHCR_OWNER="hoang_viet"
+    export GHCR_OWNER="${GITHUB_REPOSITORY_OWNER,,}"
     export GHCR_TOKEN="${{ secrets.GHCR_TOKEN }}"
     ./automation/deploy.sh staging "staging-abc123def456"
 ```
@@ -461,15 +461,17 @@ curl -X POST "https://api.telegram.org/bot${TELEGRAM_TOKEN}/sendMessage" \
 **Cách 1: Qua GitHub UI**
 ```
 Settings → Secrets and variables → Actions
-  TELEGRAM_TOKEN = 8482081904:AAHPcNZRY8FGIw_VkwEgJXnVjYeYsK-M8mk
-  TELEGRAM_CHAT_ID = -1003502728155
+  TELEGRAM_TOKEN = <TELEGRAM_BOT_TOKEN>
+  TELEGRAM_CHAT_ID = <TELEGRAM_CHAT_ID>
 ```
 
 **Cách 2: Qua GitHub CLI**
 ```bash
-gh secret set TELEGRAM_TOKEN -b "8482081904:AAHPcNZRY8FGIw_..."
-gh secret set TELEGRAM_CHAT_ID -b "-1003502728155"
+gh secret set TELEGRAM_TOKEN
+gh secret set TELEGRAM_CHAT_ID
 ```
+
+> Không commit token, API key, private key, chat ID thật hoặc nội dung file `.env.*` lên repository public. Luôn lưu các giá trị này trong GitHub Actions Secrets hoặc secret manager tương đương.
 
 ### Alert Levels
 
@@ -621,8 +623,8 @@ PHASE 4: AUTHENTICATION
 PHASE 5: PULL LATEST IMAGES
 ├─ docker compose pull
 ├─ Download images from GHCR:
-│  ├─ ghcr.io/hoang_viet/aws-hybrid-ai-agent:$IMAGE_TAG
-│  └─ ghcr.io/hoang_viet/aws-hybrid-payment-api:$IMAGE_TAG
+│  ├─ ghcr.io/<github-owner>/aws-hybrid-ai-agent:$IMAGE_TAG
+│  └─ ghcr.io/<github-owner>/aws-hybrid-payment-api:$IMAGE_TAG
 └─ Verify image pull successful
 
 PHASE 6: START CONTAINERS
@@ -768,7 +770,7 @@ cat release/.state/staging.tag
 
 # Manual rollback
 export IMAGE_TAG="previous-stable-tag"
-export GHCR_OWNER="hoang_viet"
+export GHCR_OWNER="<github-owner>"
 docker compose -f release/docker-compose.staging.yml pull
 docker compose -f release/docker-compose.staging.yml up -d
 
@@ -879,8 +881,8 @@ Error: failed to pull image: ghcr.io/.../ai-agent:staging-abc123
 1. Verify GHCR_TOKEN in secrets
 2. Test Docker login:
    ```bash
-   docker login ghcr.io -u <username> -p <token>
-   docker pull ghcr.io/hoang_viet/aws-hybrid-ai-agent:staging-latest
+   echo "<ghcr-token>" | docker login ghcr.io -u "<github-username>" --password-stdin
+   docker pull ghcr.io/<github-owner>/aws-hybrid-ai-agent:staging-latest
    ```
 3. Check image exists in GHCR registry
 
@@ -1029,4 +1031,3 @@ agent_src/.env              - Local development (not committed)
 - [FastAPI Health Checks](https://fastapi.tiangolo.com/advanced/health-checks/)
 
 ---
-

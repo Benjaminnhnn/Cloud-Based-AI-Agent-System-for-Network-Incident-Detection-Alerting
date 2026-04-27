@@ -72,11 +72,44 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Prepare environment files
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          AI_AGENT_PUBLIC_URL: ${{ secrets.AI_AGENT_PUBLIC_URL }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          SECRET_KEY: ${{ secrets.SECRET_KEY }}
         run: |
           cp release/.env.example release/.env.staging
           cp release/.env.example release/.env.production
           sed -i "s/^GHCR_OWNER=.*/GHCR_OWNER=${{ needs.build-and-push.outputs.owner_lc }}/" release/.env.staging
           sed -i "s/^GHCR_OWNER=.*/GHCR_OWNER=${{ needs.build-and-push.outputs.owner_lc }}/" release/.env.production
+          python - <<'PY'
+          import os
+          from pathlib import Path
+
+          values = {
+              "GEMINI_API_KEY": os.environ.get("GEMINI_API_KEY", ""),
+              "TELEGRAM_TOKEN": os.environ.get("TELEGRAM_TOKEN", ""),
+              "TELEGRAM_CHAT_ID": os.environ.get("TELEGRAM_CHAT_ID", ""),
+              "AI_AGENT_PUBLIC_URL": os.environ.get("AI_AGENT_PUBLIC_URL", ""),
+              "DATABASE_URL": os.environ.get("DATABASE_URL", ""),
+              "SECRET_KEY": os.environ.get("SECRET_KEY", ""),
+              "ENVIRONMENT": "production",
+          }
+
+          for env_file in (Path("release/.env.staging"), Path("release/.env.production")):
+              lines = env_file.read_text().splitlines()
+              existing = {line.split("=", 1)[0] for line in lines if "=" in line and not line.startswith("#")}
+              updated = []
+              for line in lines:
+                  key = line.split("=", 1)[0] if "=" in line and not line.startswith("#") else None
+                  updated.append(f"{key}={values[key]}" if key in values else line)
+              for key, value in values.items():
+                  if key not in existing:
+                      updated.append(f"{key}={value}")
+              env_file.write_text("\n".join(updated) + "\n")
+          PY
 
       - name: Preflight SSH authentication
         env:

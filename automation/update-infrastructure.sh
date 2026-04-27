@@ -10,8 +10,9 @@ NC='\033[0m' # No Color
 
 # Đường dẫn
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-TF_DIR="$SCRIPT_DIR/terraform"
-ANSIBLE_DIR="$SCRIPT_DIR/ansible"
+REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+TF_DIR="$REPO_ROOT/terraform"
+ANSIBLE_DIR="$REPO_ROOT/ansible"
 TF_VARS="$TF_DIR/terraform.tfvars"
 INVENTORY="$ANSIBLE_DIR/inventory.ini"
 

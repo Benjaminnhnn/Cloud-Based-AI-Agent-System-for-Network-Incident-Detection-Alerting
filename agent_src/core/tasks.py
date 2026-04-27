@@ -26,7 +26,19 @@ logger = logging.getLogger(__name__)
 
 load_dotenv()
 
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+def valid_env_value(value):
+    if not value:
+        return None
+
+    value = value.strip()
+    placeholders = ("your_", "change_me", "_here")
+    if not value or any(marker in value for marker in placeholders):
+        return None
+
+    return value
+
+
+GEMINI_API_KEY = valid_env_value(os.getenv("GEMINI_API_KEY"))
 VN_TZ = ZoneInfo("Asia/Ho_Chi_Minh")
 
 # Redis Configuration (để lưu incident context)
