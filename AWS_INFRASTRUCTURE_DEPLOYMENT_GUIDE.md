@@ -20,51 +20,51 @@
 
 ## 🏗️ Kiến trúc hệ thống
 
-### Topology (Actual System)
+### Mô hình hệ thống (Thực tế)
 
 ```
 ┌──────────────────────────────────────────────────────────────┐
-│                     AWS Account (ap-southeast-1)             │
+│                   AWS Account (ap-southeast-1 Singapore)      │
 ├──────────────────────────────────────────────────────────────┤
 │                                                              │
 │  ┌────────────────────────────────────────────────────────┐ │
-│  │         VPC: aiops-bank-vpc                           │ │
-│  │         CIDR: 10.0.0.0/16                             │ │
+│  │    VPC: aiops-bank-vpc (Mạng riêng ảo)               │ │
+│  │    CIDR: 10.0.0.0/16                                  │ │
 │  │                                                        │ │
 │  │  ┌──────────────┐  ┌─────────────────────────────┐   │ │
-│  │  │   IGW        │  │  Subnets (3 AZs)            │   │ │
+│  │  │  IGW        │  │  Subnets (3 vùng sẵn sàng)  │   │ │
 │  │  │              │  │  - 10.0.1.0/24 (ap-se-1a)   │   │ │
 │  │  │              │  │  - 10.0.2.0/24 (ap-se-1b)   │   │ │
 │  │  └──────────────┘  │  - 10.0.3.0/24 (ap-se-1c)   │   │ │
 │  │                    └─────────────────────────────┘   │ │
 │  │                                                        │ │
 │  │  ┌─────────────────────────────────────────────────┐ │ │
-│  │  │    EC2 Instances with Elastic IPs (Static)      │ │ │
+│  │  │   EC2 Instances với Elastic IPs (Tĩnh)        │ │ │
 │  │  │                                                 │ │ │
 │  │  │  ┌──────────────────────────┐                   │ │ │
-│  │  │  │ monitor-ai-01            │                   │ │ │
+│  │  │  │ monitor-ai-01 (AI & Monitoring)         │ │ │
 │  │  │  │ (t3.small: 2CPU, 2GB)    │                   │ │ │
 │  │  │  │ EIP: 52.74.118.8         │                   │ │ │
-│  │  │  │ Services:                │                   │ │ │
+│  │  │  │ Dịch vụ:                 │                   │ │ │
 │  │  │  │  - AI Agent: 8000        │                   │ │ │
 │  │  │  │  - Prometheus: 9090      │                   │ │ │
 │  │  │  │  - Grafana: 3000         │                   │ │ │
 │  │  │  └──────────────────────────┘                   │ │ │
 │  │  │                                                 │ │ │
 │  │  │  ┌──────────────────────────┐                   │ │ │
-│  │  │  │ bank-web-01              │                   │ │ │
+│  │  │  │ bank-web-01 (API & Frontend)            │ │ │
 │  │  │  │ (t2.micro: 1CPU, 1GB)    │                   │ │ │
 │  │  │  │ EIP: 18.136.112.28       │                   │ │ │
-│  │  │  │ Services:                │                   │ │ │
+│  │  │  │ Dịch vụ:                 │                   │ │ │
 │  │  │  │  - Payment API: 8000     │                   │ │ │
 │  │  │  │  - Frontend: 3000        │                   │ │ │
 │  │  │  └──────────────────────────┘                   │ │ │
 │  │  │                                                 │ │ │
 │  │  │  ┌──────────────────────────┐                   │ │ │
-│  │  │  │ bank-core-01             │                   │ │ │
+│  │  │  │ bank-core-01 (Database & Cache)         │ │ │
 │  │  │  │ (t2.micro: 1CPU, 1GB)    │                   │ │ │
 │  │  │  │ EIP: 54.255.94.179       │                   │ │ │
-│  │  │  │ Services:                │                   │ │ │
+│  │  │  │ Dịch vụ:                 │                   │ │ │
 │  │  │  │  - PostgreSQL: 5432      │                   │ │ │
 │  │  │  │  - Redis: 6379           │                   │ │ │
 │  │  │  │  - API Backend: 8000     │                   │ │ │
@@ -73,92 +73,92 @@
 │  │  └─────────────────────────────────────────────────┘ │ │
 │  │                                                        │ │
 │  │  ┌────────────────────────────────────────────────┐  │ │
-│  │  │  Security Groups                               │  │ │
-│  │  │  - SG-Monitor: SSH(22), HTTP(9090), Grafana(3000)   │ │
+│  │  │  Nhóm bảo mật (Security Groups)                │  │ │
+│  │  │  - SG-Monitor: SSH(22), HTTP(9090), Grafana(3000) │ │
 │  │  │  - SG-Web: SSH(22), HTTP(8000), HTTPS(443)    │  │ │
 │  │  │  - SG-Core: SSH(22), DB(5432), Cache(6379)    │  │ │
-│  │  │  - SG-Internal: Inter-instance communication  │  │ │
+│  │  │  - SG-Internal: Giao tiếp giữa instances       │  │ │
 │  │  └────────────────────────────────────────────────┘  │ │
 │  │                                                        │ │
 │  └────────────────────────────────────────────────────────┘ │
 │                                                              │
 │  ┌────────────────────────────────────────────────────────┐ │
-│  │         External Services                              │ │
-│  │  - GitHub (Code Repository + Actions)                 │ │
-│  │  - GHCR (ghcr.io - Container Registry)               │ │
-│  │  - Telegram API (Bot Notifications)                   │ │
-│  │  - Google Gemini API (AI Analysis)                    │ │
-│  │  - ChromaDB (Vector Database - local)                 │ │
+│  │         Dịch vụ Bên ngoài                              │ │
+│  │  - GitHub (Kho mã + GitHub Actions)                   │ │
+│  │  - GHCR (ghcr.io - Kho chứa Container)               │ │
+│  │  - Telegram API (Thông báo Bot)                       │ │
+│  │  - Google Gemini API (Phân tích AI)                   │ │
+│  │  - ChromaDB (Cơ sở dữ liệu Vector - cục bộ)          │ │
 │  └────────────────────────────────────────────────────────┘ │
 │                                                              │
 └──────────────────────────────────────────────────────────────┘
 ```
 
-### EC2 Instance Specification (Current)
+### Thông số kỹ thuật EC2 (Hiện tại)
 
-| Instance | Type | CPU | RAM | Disk | EIP | Purpose |
+| Instance | Loại | CPU | RAM | Disk | EIP | Mục đích |
 |----------|------|-----|-----|------|-----|---------|
 | monitor-ai-01 | t3.small | 2 | 2GB | 12GB | 52.74.118.8 | AI Agent, Prometheus, Grafana |
-| bank-web-01 | t2.micro | 1 | 1GB | 12GB | 18.136.112.28 | Payment API, Frontend |
-| bank-core-01 | t2.micro | 1 | 1GB | 12GB | 54.255.94.179 | PostgreSQL, Redis, DB |
-| **Total Cost** | - | - | - | - | - | **~$30/month** |
+| bank-web-01 | t2.micro | 1 | 1GB | 12GB | 18.136.112.28 | API Thanh toán, Frontend |
+| bank-core-01 | t2.micro | 1 | 1GB | 12GB | 54.255.94.179 | PostgreSQL, Redis, CSDL |
+| **Tổng chi phí** | - | - | - | - | - | **~$30/tháng** |
 
-**📝 Note:** Elastic IPs (EIP) are **static** - they won't change when instances stop/restart
+**📝 Ghi chú:** Elastic IPs (EIP) là **tĩnh** - không thay đổi khi dừng/khởi động lại instances
 
 ---
 
-### 🤖 AI Agent Architecture (agent_src)
+### 🤖 Kiến trúc AI Agent (agent_src)
 
-**Purpose:** Automated incident detection, diagnosis, and resolution using RAG + Gemini LLM
+**Mục đích:** Phát hiện tự động sự cố, chẩn đoán và xử lý sử dụng RAG + Gemini LLM
 
 **Structure:**
 
 ```
 agent_src/
 ├── core/
-│   ├── main.py              # FastAPI server (webhook receiver)
-│   ├── rag_engine.py        # ChromaDB RAG + knowledge base query
+│   ├── main.py              # Server FastAPI (nhận webhook)
+│   ├── rag_engine.py        # ChromaDB RAG + truy vấn cơ sở kiến thức
 │   ├── tasks.py             # Celery async tasks
-│   ├── celery_app.py        # Celery configuration
-│   └── metrics.py           # Metrics tracking
+│   ├── celery_app.py        # Cấu hình Celery
+│   └── metrics.py           # Theo dõi chỉ số
 ├── monitoring/
-│   ├── log_watcher.py       # Real-time log monitoring (3.9 KB)
-│   └── service_monitor.py   # Service health checks (12.6 KB)
+│   ├── log_watcher.py       # Giám sát log thời gian thực (3.9 KB)
+│   └── service_monitor.py   # Kiểm tra sức khỏe dịch vụ (12.6 KB)
 ├── tools/
-│   └── diag_tools.py        # Diagnostic functions (ping, metrics, logs)
+│   └── diag_tools.py        # Hàm chẩn đoán (ping, chỉ số, logs)
 ├── utils/
-│   └── telegram_bot.py      # Telegram integration
+│   └── telegram_bot.py      # Tích hợp Telegram
 ├── config/
-│   ├── services_config.json # Service definitions (nginx, postgresql, redis, docker)
+│   ├── services_config.json # Định nghĩa dịch vụ (nginx, postgresql, redis, docker)
 │   └── knowledge_base/      # RAG runbooks
 │       ├── runbook_docker.md
 │       ├── runbook_nginx.md
 │       ├── runbook_postgresql.md
 │       └── runbook_redis.md
-├── vector_db/               # ChromaDB vector store (embeddings)
-│   └── chroma.sqlite3       # SQLite database (282 KB)
-├── tests/                   # Unit tests
-├── requirements.txt         # Dependencies (FastAPI, ChromaDB, Celery, google-genai, etc.)
-└── Dockerfile              # Multi-stage Docker image
+├── vector_db/               # Kho vector ChromaDB (embeddings)
+│   └── chroma.sqlite3       # CSDL SQLite (282 KB)
+├── tests/                   # Bài kiểm tra đơn vị
+├── requirements.txt         # Phụ thuộc (FastAPI, ChromaDB, Celery, google-genai, v.v.)
+└── Dockerfile              # Docker image đa giai đoạn
 ```
 
-**Key Technologies:**
+**Công nghệ chính:**
 - **Framework:** FastAPI + Uvicorn (Python 3.11)
-- **AI/ML:** Google Gemini API, ChromaDB vector database, Sentence Transformers
+- **AI/ML:** Google Gemini API, CSDL vector ChromaDB, Sentence Transformers
 - **Async:** Celery task queue + Redis
-- **Monitoring:** Log watching, service health checks, system metrics
-- **Integration:** Telegram Bot API, Webhook receivers
+- **Giám sát:** Theo dõi log, kiểm tra sức khỏe dịch vụ, chỉ số hệ thống
+- **Tích hợp:** Telegram Bot API, Nhận webhook
 
-**Workflow:**
-1. **Detect** → Log watcher or service monitor detects anomaly
-2. **Retrieve** → Query RAG engine for relevant runbooks
-3. **Analyze** → Gemini LLM analyzes with RAG context + diagnostic tools
-4. **Propose** → Send analysis to Telegram with action buttons
-5. **Execute** → Run approved actions, learn for future incidents
+**Luồng công việc:**
+1. **Phát hiện** → Log watcher hoặc service monitor phát hiện bất thường
+2. **Truy xuất** → Truy vấn RAG engine để tìm runbooks liên quan
+3. **Phân tích** → Gemini LLM phân tích với RAG context + công cụ chẩn đoán
+4. **Đề xuất** → Gửi phân tích tới Telegram với nút hành động
+5. **Thực thi** → Chạy các hành động được phê duyệt, học cho các sự cố trong tương lai
 
 ---
 
-### 📦 CI/CD Pipeline Overview
+### 📦 Tổng quan CI/CD Pipeline
 
 **GitHub Actions Workflows:**
 
@@ -168,9 +168,9 @@ agent_src/
 | `cd-staging.yml` | Push to develop | Auto-deploy to staging | Build images → SSH to monitor instance → docker compose pull/up |
 | `cd-production.yml` | Tag v*.*.*, manual dispatch | Manual deploy to production | Requires approval → Build → SSH deploy to monitor instance |
 
-**Deployment Ports:**
+**Cổng triển khai:**
 - **Staging (monitor-ai-01: 52.74.118.8):**
-  - AI Agent: 18000 (for testing)
+  - AI Agent: 18000 (để kiểm tra)
   - Prometheus: 9090
   - Grafana: 3000
 - **Production (monitor-ai-01):**
@@ -397,55 +397,55 @@ gh secret list
 cd terraform
 terraform output -raw monitor_public_ip
 
-# Current value: 52.74.118.8
-# Update GitHub Secret: SSH_HOST = 52.74.118.8
-# (This is the monitor instance that runs AI Agent, Prometheus, Grafana)
+# Giá trị hiện tại: 52.74.118.8
+# Cập nhật GitHub Secret: SSH_HOST = 52.74.118.8
+# (Đây là monitor instance chạy AI Agent, Prometheus, Grafana)
 ```
 
-**GitHub Secrets Configuration:**
+**Cấu hình GitHub Secrets:**
 
 ```bash
 # Settings → Secrets and variables → Actions → Repository secrets
 
-SSH_HOST: 52.74.118.8              # Monitor instance (Elastic IP - static)
-SSH_PORT: 22                        # Standard SSH port
-SSH_PRIVATE_KEY: <key content>      # From aws-hybrid-key.pem
-GHCR_USERNAME: your-github-name     # Your GitHub username
-GHCR_TOKEN: ghp_xxxxxxxxx...        # GitHub token with packages scope
+SSH_HOST: 52.74.118.8              # Monitor instance (Elastic IP - tĩnh)
+SSH_PORT: 22                        # Cổng SSH chuẩn
+SSH_PRIVATE_KEY: <key content>      # Nội dung aws-hybrid-key.pem
+GHCR_USERNAME: your-github-name     # Tên người dùng GitHub
+GHCR_TOKEN: ghp_xxxxxxxxx...        # Token GitHub có phạm vi packages
 ```
 
-**Preflight Check (local machine):**
+**Kiểm tra trước chuyến bay (máy local):**
 
 ```bash
-# Test SSH connectivity to monitor instance
+# Kiểm tra kết nối SSH tới monitor instance
 ssh -i aws-hybrid-key.pem -p 22 ec2-user@52.74.118.8 'echo "SSH OK"'
 
-# Test Docker on monitor instance
+# Kiểm tra Docker trên monitor instance
 ssh -i aws-hybrid-key.pem ec2-user@52.74.118.8 'docker --version && docker compose version'
 
-# Test GHCR login
+# Kiểm tra đăng nhập GHCR
 echo $GHCR_TOKEN | docker login ghcr.io -u $GHCR_USERNAME --password-stdin
 ssh -i aws-hybrid-key.pem ec2-user@<SSH_HOST> 'docker --version && docker compose version'
 ```
 
 ---
 
-### 🔍 Monitored Services Configuration
+### 🔍 Cấu hình Dịch vụ Giám sát
 
-**Services being monitored** (agent_src/config/services_config.json):
+**Dịch vụ được giám sát** (agent_src/config/services_config.json):
 
-| Service | Port | Type | Severity | Check Interval | Metrics |
-|---------|------|------|----------|----------------|---------|
+| Dịch vụ | Cổng | Loại | Độ ưu tiên | Khoảng kiểm tra | Chỉ số |
+|---------|------|------|-----------|-----------------|--------|
 | Nginx | 80 | Web Server | CRITICAL | 5s | response_time, error_rate, uptime |
 | PostgreSQL | 5432 | Database | CRITICAL | 5s | connection_count, qps, replication_lag |
 | Redis | 6379 | Cache | HIGH | 10s | memory_usage, hit_rate, commands_per_sec |
 | Docker | - | Container | HIGH | 30s | container_status, resource_usage |
 
-**Knowledge Base for AI Analysis** (agent_src/config/knowledge_base/):
-- `runbook_docker.md` - Docker container troubleshooting
-- `runbook_nginx.md` - Nginx configuration and restart procedures
-- `runbook_postgresql.md` - Database connection and replication issues
-- `runbook_redis.md` - Cache consistency and memory management
+**Cơ sở kiến thức cho phân tích AI** (agent_src/config/knowledge_base/):
+- `runbook_docker.md` - Khắc phục sự cố container Docker
+- `runbook_nginx.md` - Cấu hình Nginx và thủ tục khởi động lại
+- `runbook_postgresql.md` - Vấn đề kết nối cơ sở dữ liệu và nhân rộng
+- `runbook_redis.md` - Quản lý tính nhất quán cache và bộ nhớ
 
 ---
 
@@ -536,15 +536,15 @@ EOF
 - Instance type: t3.medium hoặc t3.small tùy budget
 ```
 
-### Step 3: Apply Terraform Configuration
+### Bước 3: Áp dụng Cấu hình Terraform
 
 ```bash
-# 1. Review plan
+# 1. Xem lại kế hoạch
 terraform plan
 
-# 2. Apply configuration
+# 2. Áp dụng cấu hình
 terraform apply tfplan
-# → Creates:
+# → Tạo:
 #    ✅ VPC
 #    ✅ Subnets
 #    ✅ Internet Gateway
@@ -553,130 +553,130 @@ terraform apply tfplan
 #    ✅ EC2 Instances
 #    ✅ Elastic IPs
 
-# 3. Verify
+# 3. Xác minh
 terraform show
-# Shows all created resources
+# Hiển thị tất cả các tài nguyên đã tạo
 
-# 4. Get outputs
+# 4. Lấy outputs
 terraform output
-# Example:
+# Ví dụ:
 # staging_ip = "13.251.123.45"
 # production_ip = "13.251.123.46"
 ```
 
-### Step 4: Save Output Values
+### Bước 4: Lưu Giá trị Outputs
 
 ```bash
-# Get values từ terraform
+# Lấy giá trị từ terraform
 terraform output -json > outputs.json
 
-# Hoặc manually copy:
+# Hoặc sao chép thủ công:
 echo "Staging IP: $(terraform output -raw staging_public_ip)"
 echo "Production IP: $(terraform output -raw production_public_ip)"
 
-# Update GitHub Secrets:
-# SSH_HOST = staging_public_ip (change per environment)
+# Cập nhật GitHub Secrets:
+# SSH_HOST = staging_public_ip (thay đổi theo môi trường)
 ```
 
 ---
 
-## 🖥️ Setup EC2 Instances
+## 🖥️ Thiết lập EC2 Instances
 
-### Step 1: Connect to EC2
+### Bước 1: Kết nối tới EC2
 
 ```bash
-# 1. Get public IP từ Terraform output
+# 1. Lấy IP công khai từ Terraform output
 STAGING_IP=$(terraform output -raw staging_public_ip)
 PROD_IP=$(terraform output -raw production_public_ip)
 
 # 2. SSH vào staging
 ssh -i aws-hybrid-key.pem ubuntu@$STAGING_IP
 
-# 3. Update system
+# 3. Cập nhật hệ thống
 sudo apt update
 sudo apt upgrade -y
 sudo apt autoremove -y
 ```
 
-### Step 2: Create Directory Structure
+### Bước 2: Tạo Cấu trúc Thư mục
 
 ```bash
-# 1. Create app directories
+# 1. Tạo thư mục ứng dụng
 sudo mkdir -p /opt/aws-hybrid/staging
 sudo mkdir -p /opt/aws-hybrid/production
 sudo mkdir -p /opt/aws-hybrid/logs
 
-# 2. Set permissions
+# 2. Đặt quyền
 sudo chown -R ubuntu:ubuntu /opt/aws-hybrid
 chmod -R 755 /opt/aws-hybrid
 
-# 3. Verify
+# 3. Xác minh
 ls -la /opt/aws-hybrid
 ```
 
-### Step 3: Setup Environment Files
+### Bước 3: Thiết lập File Môi trường
 
 ```bash
-# 1. Staging environment
+# 1. Môi trường staging
 cat > /opt/aws-hybrid/staging/.env.staging << 'EOF'
-# Staging Environment
+# Môi trường Staging
 ENVIRONMENT=staging
 GHCR_OWNER=your-github-username
 IMAGE_TAG=staging-latest
 
-# Services
+# Dịch vụ
 AI_AGENT_PORT=8000
 API_PORT=8000
 
 # Google Generative AI
 GEMINI_API_KEY=your-gemini-key
 
-# Telegram (optional)
+# Telegram (tùy chọn)
 TELEGRAM_TOKEN=your-token
 TELEGRAM_CHAT_ID=your-chat-id
 
-# Database
+# Cơ sở dữ liệu
 DB_HOST=localhost
 DB_PORT=5432
 DB_NAME=aws_hybrid_staging
 EOF
 
-# 2. Production environment
+# 2. Môi trường production
 cat > /opt/aws-hybrid/production/.env.production << 'EOF'
-# Production Environment
+# Môi trường Production
 ENVIRONMENT=production
 GHCR_OWNER=your-github-username
 IMAGE_TAG=latest
 
-# Services
+# Dịch vụ
 AI_AGENT_PORT=8000
 API_PORT=8000
 
 # Google Generative AI
 GEMINI_API_KEY=your-gemini-key
 
-# Database
+# Cơ sở dữ liệu
 DB_HOST=localhost
 DB_PORT=5432
 DB_NAME=aws_hybrid_production
 EOF
 
-# 3. Restrict permissions
+# 3. Hạn chế quyền
 chmod 600 /opt/aws-hybrid/staging/.env.staging
 chmod 600 /opt/aws-hybrid/production/.env.production
 ```
 
 ---
 
-## 🐳 Install Docker & Docker Compose
+## 🐳 Cài đặt Docker & Docker Compose
 
-### Step 1: Install Docker Engine
+### Bước 1: Cài đặt Docker Engine
 
 ```bash
-# 1. Remove old docker
+# 1. Xóa docker cũ
 sudo apt remove docker docker-engine docker.io containerd runc
 
-# 2. Install dependencies
+# 2. Cài đặt phụ thuộc
 sudo apt install -y \
     ca-certificates \
     curl \
@@ -684,33 +684,33 @@ sudo apt install -y \
     lsb-release \
     apt-transport-https
 
-# 3. Add Docker GPG key
+# 3. Thêm Docker GPG key
 sudo mkdir -p /etc/apt/keyrings
 curl -fsSL https://download.docker.com/linux/ubuntu/gpg | \
     sudo gpg --dearmor -o /etc/apt/keyrings/docker-archive-keyring.gpg
 
-# 4. Setup repository
+# 4. Thiết lập kho lưu trữ
 echo \
   "deb [arch=amd64 signed-by=/etc/apt/keyrings/docker-archive-keyring.gpg] https://download.docker.com/linux/ubuntu \
   $(lsb_release -cs) stable" | sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
 
-# 5. Install Docker
+# 5. Cài đặt Docker
 sudo apt update
 sudo apt install -y docker-ce docker-ce-cli containerd.io
 
-# 6. Verify
+# 6. Xác minh
 sudo docker --version
 # Docker version 26.0.0+
 ```
 
-### Step 2: Setup Docker Daemon
+### Bước 2: Thiết lập Docker Daemon
 
 ```bash
-# 1. Add current user to docker group (no need sudo)
+# 1. Thêm người dùng hiện tại vào nhóm docker (không cần sudo)
 sudo usermod -aG docker $USER
 newgrp docker
 
-# 2. Configure Docker daemon
+# 2. Cấu hình Docker daemon
 sudo cat > /etc/docker/daemon.json << 'EOF'
 {
   "log-driver": "json-file",
@@ -723,61 +723,61 @@ sudo cat > /etc/docker/daemon.json << 'EOF'
 }
 EOF
 
-# 3. Restart Docker
+# 3. Khởi động lại Docker
 sudo systemctl restart docker
 sudo systemctl enable docker  # auto-start on boot
 
-# 4. Verify
+# 4. Xác minh
 docker ps
 docker info
 ```
 
-### Step 3: Install Docker Compose
+### Bước 3: Cài đặt Docker Compose
 
 ```bash
-# Latest version
+# Phiên bản mới nhất
 sudo curl -L \
   "https://github.com/docker/compose/releases/latest/download/docker-compose-$(uname -s)-$(uname -m)" \
   -o /usr/local/bin/docker-compose
 
-# Make executable
+# Làm cho nó có thể thực thi
 sudo chmod +x /usr/local/bin/docker-compose
 
-# Verify
+# Xác minh
 docker compose --version
 # Docker Compose version 2.20.0+
 ```
 
-### Step 4: Test Docker
+### Bước 4: Kiểm tra Docker
 
 ```bash
-# 1. Run test container
+# 1. Chạy test container
 docker run --rm -it ubuntu:22.04 echo "Hello from Docker!"
 
-# 2. Check logs
+# 2. Kiểm tra logs
 docker logs <container-id>
 
-# 3. List containers
+# 3. Liệt kê containers
 docker ps -a
 ```
 
 ---
 
-## 📦 Deploy Staging Environment (monitor-ai-01: 52.74.118.8)
+## 📦 Triển khai Môi trường Staging (monitor-ai-01: 52.74.118.8)
 
-### Actual Deployment via GitHub Actions (Recommended)
+### Triển khai tự động thông qua GitHub Actions (Khuyên cáo)
 
 ```
 Workflow: cd-staging.yml
-Trigger: Push to develop branch
-Action:
+Kích hoạt: Push vào nhánh develop
+Hành động:
   1. Build Docker images (AI Agent, Payment API)
-  2. Push to GHCR
-  3. SSH to monitor instance (52.74.118.8)
-  4. Run: automation/deploy.sh staging {image-tag}
+  2. Đẩy vào GHCR
+  3. SSH vào monitor instance (52.74.118.8)
+  4. Chạy: automation/deploy.sh staging {image-tag}
   5. Docker compose pull & up
-  6. Health checks (18x retries)
-  7. Save deployment state
+  6. Kiểm tra sức khỏe (18x retries)
+  7. Lưu trạng thái triển khai
 ```
 
 **GitHub Secrets Required:**
@@ -789,41 +789,41 @@ GHCR_USERNAME = <github username>
 GHCR_TOKEN = <github token>
 ```
 
-### Manual Deployment (First Time Setup)
+### Triển khai thủ công (Lần đầu tiên)
 
 ```bash
-# From local machine
+# Từ máy local
 MONITOR_IP="52.74.118.8"
 MONITOR_USER="ec2-user"
 KEY="aws-hybrid-key.pem"
 
-# 1. Create directories on monitor
+# 1. Tạo thư mục trên monitor
 ssh -i $KEY $MONITOR_USER@$MONITOR_IP \
   "mkdir -p /home/ec2-user/aws-hybrid/{release,automation}"
 
-# 2. Copy docker-compose files
+# 2. Sao chép file docker-compose
 scp -i $KEY release/docker-compose.staging.yml \
   $MONITOR_USER@$MONITOR_IP:/home/ec2-user/aws-hybrid/release/
 
 scp -i $KEY release/.env.example \
   $MONITOR_USER@$MONITOR_IP:/home/ec2-user/aws-hybrid/release/.env.staging
 
-# 3. Copy deploy script
+# 3. Sao chép deploy script
 scp -i $KEY automation/deploy.sh \
   $MONITOR_USER@$MONITOR_IP:/home/ec2-user/aws-hybrid/automation/
 
 chmod +x /home/ec2-user/aws-hybrid/automation/deploy.sh
 
-# 4. SSH to monitor
+# 4. SSH vào monitor
 ssh -i $KEY $MONITOR_USER@$MONITOR_IP
 ```
 
-**On Monitor Instance:**
+**Trên Monitor Instance:**
 
 ```bash
 cd /home/ec2-user/aws-hybrid
 
-# 1. Setup environment (update with your values)
+# 1. Thiết lập môi trường (cập nhật giá trị của bạn)
 cat > release/.env.staging << 'EOF'
 GHCR_OWNER=your-github-username
 IMAGE_TAG=staging-latest
@@ -832,20 +832,20 @@ TELEGRAM_TOKEN=your-telegram-token
 TELEGRAM_CHAT_ID=your-chat-id
 EOF
 
-# 2. Login to GHCR
+# 2. Đăng nhập vào GHCR
 echo $GHCR_TOKEN | docker login ghcr.io -u $GHCR_USERNAME --password-stdin
 
-# 3. Run deployment script
+# 3. Chạy script triển khai
 ./automation/deploy.sh staging staging-latest
 
-# 4. Verify deployment
+# 4. Kiểm tra triển khai
 docker compose -f release/docker-compose.staging.yml ps
 
-# 5. Check logs
+# 5. Kiểm tra log
 docker compose -f release/docker-compose.staging.yml logs ai-agent --tail=50
 ```
 
-### Service Ports on Staging (monitor-ai-01)
+### Cổng Dịch vụ trên Staging (monitor-ai-01)
 
 ```
 AI Agent:       http://52.74.118.8:18000/health
@@ -853,21 +853,21 @@ Prometheus:     http://52.74.118.8:9090
 Grafana:        http://52.74.118.8:3000
 ```
 
-### Verify Services
+### Kiểm tra Dịch vụ
 
 ```bash
-# Check running containers
+# Kiểm tra containers đang chạy
 docker compose -f release/docker-compose.staging.yml ps
 
-# Check logs
+# Kiểm tra log
 docker compose -f release/docker-compose.staging.yml logs ai-agent
 docker compose -f release/docker-compose.staging.yml logs payment-api
 
-# Test endpoints
+# Kiểm tra endpoints
 curl http://localhost:18000/health
 curl http://localhost:18080/api/health
 
-# Expected response:
+# Phản hồi kỳ vọng:
 # {
 #   "status": "healthy",
 #   "queue": "ok",
@@ -877,51 +877,51 @@ curl http://localhost:18080/api/health
 
 ---
 
-## 🏢 Deploy Production Environment (monitor-ai-01: 52.74.118.8)
+## 🏢 Triển khai Môi trường Production (monitor-ai-01: 52.74.118.8)
 
-### Automatic Deployment via GitHub Actions (Recommended)
+### Triển khai tự động thông qua GitHub Actions (Khuyên cáo)
 
 ```
 Workflow: cd-production.yml
-Trigger: Git tag creation (v*.*.*)
-Action:
-  1. Build Docker images with production tag
-  2. Push to GHCR
-  3. Require environment approval
-  4. SSH to monitor instance
-  5. Run: automation/deploy.sh production v1.0.0
+Kích hoạt: Tạo tag git (v*.*.*)
+Hành động:
+  1. Build Docker images với production tag
+  2. Đẩy lên GHCR
+  3. Yêu cầu phê duyệt môi trường
+  4. SSH tới monitor instance
+  5. Chạy: automation/deploy.sh production v1.0.0
   6. Docker compose pull & up (production config)
-  7. Health checks (18x retries)
-  8. Save deployment state
+  7. Kiểm tra sức khỏe (18x retry)
+  8. Lưu trạng thái triển khai
 ```
 
-**Deployment Workflow:**
+**Luồng công việc triển khai:**
 
 ```bash
-# On local machine - create and push tag
+# Trên máy local - tạo và đẩy tag
 git tag v1.0.0
 git push origin v1.0.0
 
-# → GitHub Actions automatically:
-#   1. Builds images with tag v1.0.0
-#   2. Waits for approval in GitHub
-#   3. Deploys to production on monitor instance
+# → GitHub Actions tự động:
+#   1. Build images với tag v1.0.0
+#   2. Chờ phê duyệt trong GitHub
+#   3. Triển khai tới production trên monitor instance
 ```
 
-**GitHub Actions Approval:**
+**Phê duyệt GitHub Actions:**
 ```
-GitHub → Actions → cd-production.yml run → Review deployments → Approve
+GitHub → Actions → cd-production.yml run → Phê duyệt triển khai → Phê duyệt
 ```
 
-### Manual Production Deployment (First Time)
+### Triển khai thủ công Production (Lần đầu tiên)
 
 ```bash
-# SSH to monitor instance
+# SSH vào monitor instance
 ssh -i aws-hybrid-key.pem ec2-user@52.74.118.8
 
 cd /home/ec2-user/aws-hybrid
 
-# 1. Setup production environment
+# 1. Thiết lập môi trường production
 cat > release/.env.production << 'EOF'
 GHCR_OWNER=your-github-username
 IMAGE_TAG=v1.0.0
@@ -930,18 +930,18 @@ TELEGRAM_TOKEN=your-telegram-token
 TELEGRAM_CHAT_ID=your-chat-id
 EOF
 
-# 2. Login to GHCR
+# 2. Đăng nhập vào GHCR
 echo $GHCR_TOKEN | docker login ghcr.io -u $GHCR_USERNAME --password-stdin
 
-# 3. Deploy production
+# 3. Triển khai production
 ./automation/deploy.sh production v1.0.0
 
-# 4. Verify
+# 4. Kiểm tra
 docker compose -f release/docker-compose.production.yml ps
 docker compose -f release/docker-compose.production.yml logs ai-agent --tail=50
 ```
 
-### Service Ports on Production (monitor-ai-01)
+### Cổng Dịch vụ trên Production (monitor-ai-01)
 
 ```
 AI Agent:       http://52.74.118.8:8000/health
@@ -949,47 +949,47 @@ Prometheus:     http://52.74.118.8:9090
 Grafana:        http://52.74.118.8:3000
 ```
 
-### Production Configuration
+### Cấu hình Production
 
-The production docker-compose uses:
-- **Port 8000** for AI Agent (vs 18000 for staging)
-- Same environment variables as staging
-- Same health checks and monitoring
+Docker-compose production sử dụng:
+- **Cổng 8000** cho AI Agent (thay vì 18000 cho staging)
+- Các biến môi trường giống staging
+- Cùng kiểm tra sức khỏe và giám sát
 
-**Verify Production:**
+**Kiểm tra Production:**
 
 ```bash
-# Check running containers
+# Kiểm tra containers đang chạy
 docker compose -f release/docker-compose.production.yml ps
 
-# Check logs
+# Kiểm tra log
 docker compose -f release/docker-compose.production.yml logs ai-agent
 
-# Test endpoints
+# Kiểm tra endpoints
 curl http://localhost:8000/health
 curl http://localhost:8080/api/health
 ```
 
-### Production Rollback
+### Hoàn trả ngược Production
 
-If deployment fails:
+Nếu triển khai thất bại:
 
 ```bash
-# SSH to monitor
+# SSH vào monitor
 ssh -i aws-hybrid-key.pem ec2-user@52.74.118.8
 
 cd /home/ec2-user/aws-hybrid
 
-# 1. Pull previous version
+# 1. Kéo phiên bản trước đó
 docker pull ghcr.io/{owner}/aws-hybrid-ai-agent:v0.9.9
 
-# 2. Update docker-compose
+# 2. Cập nhật docker-compose
 sed -i 's/v1.0.0/v0.9.9/g' release/.env.production
 
-# 3. Redeploy
+# 3. Triển khai lại
 ./automation/deploy.sh production v0.9.9
 
-# 4. Verify
+# 4. Kiểm tra
 docker compose -f release/docker-compose.production.yml ps
 curl http://localhost:8000/health
 ```
@@ -1115,69 +1115,69 @@ echo "✅ All validations passed!"
 
 ---
 
-## 📊 Monitoring & Logs
+## 📊 Giám sát & Logs
 
-### View Logs - Basic Commands
+### Xem Logs - Lệnh Cơ bản
 
 ```bash
-# 1. Real-time logs (follow - most common)
+# 1. Logs thực tế (follow - phổ biến nhất)
 docker compose logs -f ai-agent
 docker compose logs -f payment-api
-docker compose logs -f -n 50  # Last 50 lines, follow new
+docker compose logs -f -n 50  # 50 dòng cuối cùng, theo sau cái mới
 
-# 2. Specific time range
+# 2. Khoảng thời gian cụ thể
 docker compose logs --since 2026-04-24T10:00:00 ai-agent
 docker compose logs --until 2026-04-24T12:00:00 payment-api
 
-# 3. All container logs to file
+# 3. Tất cả logs container vào file
 docker compose logs > /opt/aws-hybrid/logs/all-services.log
 
-# 4. Access container logs directly
+# 4. Truy cập logs container trực tiếp
 docker logs <container-id>
 docker logs --tail=100 <container-id>
-docker logs --follow <container-id>  # Real-time
+docker logs --follow <container-id>  # Thực tế
 
-# 5. Logs from both services
+# 5. Logs từ cả hai dịch vụ
 docker compose logs ai-agent payment-api --tail=50
 
-# 6. Save logs and search
+# 6. Lưu logs và tìm kiếm
 docker compose logs > deploy.log
 grep "ERROR\|WARNING" deploy.log
 ```
 
 ---
 
-### Common Error Patterns & Solutions
+### Các Lỗi Thường gặp & Giải pháp
 
-#### ❌ Error 1: Container Exit Code 1 (General Error)
+#### ❌ Lỗi 1: Container Exit Code 1 (Lỗi chung)
 
-**Log Example:**
+**Ví dụ Log:**
 ```
 ai-agent exited with code 1
 ```
 
-**Diagnosis:**
+**Chẩn đoán:**
 ```bash
-# 1. Check exit logs
+# 1. Kiểm tra logs khi thoát
 docker compose logs ai-agent --tail=50
 
-# 2. Look for:
-# - Python syntax error
-# - Module import error
-# - Missing environment variable
-# - Port already in use
-# - Database connection refused
+# 2. Tìm kiếm:
+# - Lỗi cú pháp Python
+# - Lỗi nhập khẩu module
+# - Biến môi trường bị thiếu
+# - Cổng đã được sử dụng
+# - Kết nối cơ sở dữ liệu bị từ chối
 ```
 
-**Common causes:**
+**Nguyên nhân thường gặp:**
 ```
-- PYTHONUNBUFFERED not set → buffered output
-- Missing GEMINI_API_KEY → import error
-- Missing dependencies → ModuleNotFoundError
-- Port 8000 already bound → AddressInUse
+- PYTHONUNBUFFERED không được đặt → output bị đệm
+- GEMINI_API_KEY bị thiếu → lỗi nhập khẩu
+- Phụ thuộc bị thiếu → ModuleNotFoundError
+- Cổng 8000 đã bị ràng buộc → AddressInUse
 ```
 
-**Fix:**
+**Sửa chữa:**
 ```bash
 docker compose down
 docker compose pull
@@ -1187,76 +1187,76 @@ docker compose logs ai-agent
 
 ---
 
-#### ❌ Error 2: Connection Refused
+#### ❌ Lỗi 2: Kết nối bị từ chối
 
-**Log Example:**
+**Ví dụ Log:**
 ```
 ERROR - Connection refused to localhost:5432
 ConnectionRefusedError: [Errno 111] Connection refused
 ```
 
-**Diagnosis:**
+**Chẩn đoán:**
 ```bash
-# 1. Check if service running
+# 1. Kiểm tra nếu dịch vụ đang chạy
 docker compose ps
 
-# 2. Check port binding
+# 2. Kiểm tra ràng buộc cổng
 netstat -tlnp | grep 5432
 
-# 3. Check service logs
+# 3. Kiểm tra logs dịch vụ
 docker compose logs payment-api --tail=50
 
-# 4. Test connectivity
+# 4. Kiểm tra kết nối
 docker exec ai-agent curl http://payment-api:8000/health
 ```
 
-**Solutions:**
+**Giải pháp:**
 ```bash
-# If database not running
+# Nếu cơ sở dữ liệu không chạy
 docker compose restart postgres
 
-# If service not ready
+# Nếu dịch vụ chưa sẵn sàng
 docker compose logs payment-api | grep "Uvicorn running"
 
-# Wait for service startup
+# Chờ khởi động dịch vụ
 sleep 10
 curl http://localhost:18000/health
 ```
 
 ---
 
-#### ❌ Error 3: Out of Memory (OOM)
+#### ❌ Lỗi 3: Hết bộ nhớ (OOM)
 
-**Log Example:**
+**Ví dụ Log:**
 ```
 killed (signal 9)
 Killed
 Exception in thread "Finalizer": java.lang.OutOfMemoryError
 ```
 
-**Diagnosis:**
+**Chẩn đoán:**
 ```bash
-# Check memory usage
+# Kiểm tra mức sử dụng bộ nhớ
 docker stats ai-agent payment-api
 
-# Check container limits
+# Kiểm tra giới hạn container
 docker inspect ai-agent | grep -A5 "Memory"
 
-# Check system memory
+# Kiểm tra bộ nhớ hệ thống
 free -h
 df -h
 ```
 
-**Solutions:**
+**Giải pháp:**
 ```bash
-# Increase memory limit in docker-compose
+# Tăng giới hạn bộ nhớ trong docker-compose
 # ai-agent:
 #   deploy:
 #     resources:
 #       limits:
 #         memory: 2G
 
-# Restart with new limits
+# Khởi động lại với giới hạn mới
 docker compose down
 docker compose up -d
 docker stats
@@ -1264,158 +1264,158 @@ docker stats
 
 ---
 
-#### ❌ Error 4: Port Already in Use
+#### ❌ Lỗi 4: Cổng đã được sử dụng
 
-**Log Example:**
+**Ví dụ Log:**
 ```
 Error starting userland proxy: listen tcp 0.0.0.0:18000: bind: address already in use
 ```
 
-**Diagnosis:**
+**Chẩn đoán:**
 ```bash
-# Find what's using the port
+# Tìm kiếm điều gì đang sử dụng cổng
 lsof -i :18000
 netstat -tlnp | grep 18000
 ss -tlnp | grep 18000
 ```
 
-**Solutions:**
+**Giải pháp:**
 ```bash
-# Kill the process
+# Kết thúc quy trình
 kill -9 <PID>
 
-# Or stop the container
+# Hoặc dừng container
 docker ps -a | grep 18000
 docker kill <container-id>
 
-# Or change port in docker-compose
+# Hoặc thay đổi cổng trong docker-compose
 # ports:
-#   - "18001:8000"  # Use different port
+#   - "18001:8000"  # Sử dụng cổng khác
 ```
 
 ---
 
-#### ❌ Error 5: Health Check Timeout
+#### ❌ Lỗi 5: Kiểm tra Sức khỏe Hết thời gian
 
-**Log Example:**
+**Ví dụ Log:**
 ```
 Health check failed: timeout reached
 Starting 2nd attempt
 ```
 
-**Diagnosis:**
+**Chẩn đoán:**
 ```bash
-# Check if service responding
+# Kiểm tra nếu dịch vụ đang phản hồi
 curl -v http://localhost:18000/health
 
-# Check logs during health check
+# Kiểm tra logs trong khi kiểm tra sức khỏe
 docker compose logs ai-agent -f
 
-# Check port binding
+# Kiểm tra ràng buộc cổng
 netstat -tlnp | grep 18000
 
-# Check resource constraints
+# Kiểm tra ràng buộc tài nguyên
 docker stats ai-agent
 ```
 
-**Solutions:**
+**Giải pháp:**
 ```bash
-# Wait longer (service might be slow to start)
+# Chờ lâu hơn (dịch vụ có thể khởi động chậm)
 sleep 15
 curl http://localhost:18000/health
 
-# Increase health check timeout
+# Tăng thời gian chờ kiểm tra sức khỏe
 # healthcheck:
 #   test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
 #   interval: 30s
-#   timeout: 10s  # Increase this
+#   timeout: 10s  # Tăng giá trị này
 #   retries: 3
-#   start_period: 40s  # Wait before first check
+#   start_period: 40s  # Chờ trước khi kiểm tra đầu tiên
 
-# Restart with new config
+# Khởi động lại với cấu hình mới
 docker compose down
 docker compose up -d
 ```
 
 ---
 
-### Detailed Log Analysis Guide
+### Hướng dẫn Phân tích Log chi tiết
 
-#### Step 1: Capture Complete Error Context
+#### Bước 1: Chụp Ngữ cảnh Lỗi Đầy đủ
 
 ```bash
-# Capture error with surrounding lines
+# Chụp lỗi với các dòng xung quanh
 docker compose logs ai-agent 2>&1 | tee debug.log
 
-# Find error
+# Tìm lỗi
 grep -n "ERROR\|EXCEPTION\|Failed\|Traceback" debug.log
 
 # Show context (10 lines before/after error)
 grep -B10 -A10 "ERROR\|EXCEPTION" debug.log
 ```
 
-#### Step 2: Identify Error Type
+#### Bước 2: Xác định Loại Lỗi
 
-**Python Errors:**
+**Lỗi Python:**
 ```
-Traceback (most recent call last):       ← Start of stack trace
+Traceback (most recent call last):       ← Bắt đầu stack trace
   File "main.py", line 45, in <module>
-ModuleNotFoundError: No module named 'x'  ← Error type and message
+ModuleNotFoundError: No module named 'x'  ← Loại lỗi và tin nhắn
 ```
 
-**Docker Errors:**
+**Lỗi Docker:**
 ```
 ERROR: failed to solve with frontend dockerfile.v0
 ```
 
-**Network Errors:**
+**Lỗi Mạng:**
 ```
 ConnectionError: [Errno 110] Connection timed out
 requests.exceptions.ConnectionError: ('Connection aborted.', RemoteDisconnected(...))
 ```
 
-**Configuration Errors:**
+**Lỗi Cấu hình:**
 ```
 ValueError: invalid literal for int() with base 10: 'invalid'
 KeyError: 'GEMINI_API_KEY'
 ```
 
-#### Step 3: Trace Root Cause
+#### Bước 3: Theo dõi Nguyên nhân gốc
 
-**Example 1: ModuleNotFoundError**
+**Ví dụ 1: ModuleNotFoundError**
 ```
 ERROR: ModuleNotFoundError: No module named 'google'
 
-Action:
-1. Check requirements.txt has "google-generativeai"
-2. Verify pip install ran successfully
-3. Rebuild Docker image: docker compose build
-4. Verify: docker exec ai-agent pip list | grep google
+Hành động:
+1. Kiểm tra requirements.txt có "google-generativeai"
+2. Xác minh pip install đã chạy thành công
+3. Xây dựng lại Docker image: docker compose build
+4. Xác minh: docker exec ai-agent pip list | grep google
 ```
 
-**Example 2: Connection Refused**
+**Ví dụ 2: Kết nối bị từ chối**
 ```
 ERROR: ConnectionRefusedError: [Errno 111] Connection refused
 
-Action:
-1. Check destination service running: docker compose ps
-2. Check port correct: grep "ports:" docker-compose.yml
-3. Check firewall: netstat -tlnp | grep 5432
-4. Restart service: docker compose restart postgres
+Hành động:
+1. Kiểm tra dịch vụ đích đang chạy: docker compose ps
+2. Kiểm tra cổng chính xác: grep "ports:" docker-compose.yml
+3. Kiểm tra tường lửa: netstat -tlnp | grep 5432
+4. Khởi động lại dịch vụ: docker compose restart postgres
 ```
 
-**Example 3: Out of Memory**
+**Ví dụ 3: Hết bộ nhớ**
 ```
 ERROR: Killed
 
-Action:
-1. Check memory: docker stats ai-agent
-2. Check limits: docker inspect ai-agent | grep Memory
-3. Increase limit in docker-compose.yml
-4. Restart: docker compose down && docker compose up -d
+Hành động:
+1. Kiểm tra bộ nhớ: docker stats ai-agent
+2. Kiểm tra giới hạn: docker inspect ai-agent | grep Memory
+3. Tăng giới hạn trong docker-compose.yml
+4. Khởi động lại: docker compose down && docker compose up -d
 ```
 
-#### Step 4: Extract Actionable Information
+#### Bước 4: Trích xuất Thông tin Có hành động
 
 ```bash
 # Count errors by type
@@ -1427,55 +1427,55 @@ grep -m1 "ERROR\|EXCEPTION" debug.log
 # Find last error
 grep "ERROR\|EXCEPTION" debug.log | tail -1
 
-# Timeline of errors
+# Dòng thời gian các lỗi
 grep "ERROR" debug.log | awk '{print $1}' | sort -u
 ```
 
 ---
 
-### GitHub Actions Log Checking
+### Kiểm tra GitHub Actions Log
 
-#### Step 1: Access GitHub Actions Logs
+#### Bước 1: Truy cập GitHub Actions Logs
 
 ```
 GitHub Repo → Actions → [Workflow Name] → [Run #] → [Job] → Logs
 ```
 
-#### Step 2: Search for Errors in Logs
+#### Bước 2: Tìm kiếm Lỗi trong Logs
 
 ```
-Ctrl+F (or Cmd+F on Mac) → Search for:
+Ctrl+F (hoặc Cmd+F trên Mac) → Tìm kiếm:
 - "error"
 - "failed"
 - "exit code"
 - "FAILED"
 ```
 
-#### Step 3: Common CI Errors
+#### Bước 3: Các Lỗi CI phổ biến
 
-**❌ Lint Failed:**
+**❌ Lint thất bại:**
 ```
 Lint (critical rules)
 E9: SyntaxError in agent_src/main.py:45: invalid syntax
 ```
 
-**Fix:**
+**Sửa:**
 ```bash
 ruff check agent_src --show-fixes
-# Fix syntax error
+# Sửa lỗi cú pháp
 git add agent_src
 git commit -m "fix: syntax error"
 git push
 ```
 
-**❌ Test Failed:**
+**❌ Test thất bại:**
 ```
 Test AI Agent (pytest)
 FAILED agent_src/tests/test_health.py::test_endpoint
 AssertionError: assert 404 == 200
 ```
 
-**Fix:**
+**Sửa:**
 ```bash
 pytest -v agent_src/tests/test_health.py
 # Fix test or code
@@ -1507,124 +1507,124 @@ Deploy to staging EC2 via SSH
 Permission denied (publickey)
 ```
 
-**Fix:**
+**Sửa:**
 ```bash
-# Verify SSH credentials in GitHub Secrets
-# SSH_PRIVATE_KEY, SSH_HOST, SSH_USER, SSH_PORT all correct
-# Re-run workflow
+# Xác minh SSH credentials trong GitHub Secrets
+# SSH_PRIVATE_KEY, SSH_HOST, SSH_USER, SSH_PORT đều chính xác
+# Chạy lại workflow
 ```
 
-#### Step 4: Download Full Logs
+#### Bước 4: Tải xuống Đầy đủ Logs
 
 ```
-GitHub Actions → [Run] → Summary → Download logs (zip)
+GitHub Actions → [Run] → Summary → Tải xuống logs (zip)
 ```
 
 ---
 
-### Container Log Debugging Techniques
+### Các Kỹ thuật Gỡ lỗi Log Container
 
-#### Technique 1: Realtime Monitoring (Two Terminals)
+#### Kỹ thuật 1: Giám sát Thực tế (Hai terminal)
 
-**Terminal 1: Watch logs**
+**Terminal 1: Xem logs**
 ```bash
 cd /opt/aws-hybrid/staging
 docker compose logs -f ai-agent --timestamps
 ```
 
-**Terminal 2: Trigger action**
+**Terminal 2: Kích hoạt hành động**
 ```bash
 curl -X POST http://localhost:18000/detect \
   -H "Content-Type: application/json" \
   -d '{"event": "test"}'
 ```
 
-**Terminal 1 Output:**
+**Đầu ra Terminal 1:**
 ```
 ai-agent  | 2026-04-24T10:30:45.123Z INFO - Received request
 ai-agent  | 2026-04-24T10:30:45.456Z DEBUG - Processing event
 ai-agent  | 2026-04-24T10:30:45.789Z INFO - Response sent
 ```
 
-#### Technique 2: Interactive Shell
+#### Kỹ thuật 2: Shell Tương tác
 
 ```bash
-# Access container shell
+# Truy cập shell container
 docker exec -it ai-agent bash
 
-# Inside container
+# Bên trong container
 python -c "import google; print(google.__version__)"
 curl http://payment-api:8000/health
 env | grep GEMINI
 ls -la /app/
 ```
 
-#### Technique 3: Log File Analysis
+#### Kỹ thuật 3: Phân tích File Log
 
 ```bash
-# Save all logs to file
+# Lưu tất cả logs vào file
 docker compose logs > /tmp/all-logs.log
 
-# Analyze with grep
+# Phân tích với grep
 grep -E "ERROR|WARN|INFO" /tmp/all-logs.log | cut -d'|' -f2 | sort | uniq -c
 
-# Show errors with timestamps
+# Hiển thị lỗi có dấu thời gian
 grep "ERROR" /tmp/all-logs.log | awk '{print $1, $NF}'
 
-# Find performance issues
+# Tìm các vấn đề về hiệu suất
 grep "took.*ms" /tmp/all-logs.log | awk '{print $NF}' | sort -rn | head -10
 ```
 
-#### Technique 4: Resource Monitoring
+#### Kỹ thuật 4: Giám sát Tài nguyên
 
 ```bash
-# Monitor resources while running
+# Giám sát tài nguyên khi chạy
 watch -n 1 'docker stats --no-stream ai-agent payment-api'
 
-# Check file descriptors
+# Kiểm tra file descriptors
 docker exec ai-agent lsof | wc -l
 
-# Check connections
+# Kiểm tra kết nối
 docker exec ai-agent netstat -an | grep ESTABLISHED | wc -l
 
-# Memory usage
+# Mức sử dụng bộ nhớ
 docker exec ai-agent ps aux | grep python
 ```
 
 ---
 
-### Log File Interpretation
+### Giải thích File Log
 
-#### Docker Compose Log Format
+#### Định dạng Log Docker Compose
 
 ```
-service-name | timestamp | level | message
+tên-dịch-vụ | dấu-thời-gian | mức-độ | tin-nhắn
 
-Example:
+Ví dụ:
 ai-agent | 2026-04-24T10:30:45.123456789Z INFO - Uvicorn running on 0.0.0.0:8000
 payment-api | 2026-04-24T10:30:46.987654321Z INFO - Server started
 ```
 
-#### Log Levels
+#### Cấp độ Log
 
-| Level | Meaning | Example |
-|-------|---------|---------|
-| DEBUG | Detailed diagnostic info | Variable values, function calls |
-| INFO | General information | Server started, request received |
-| WARNING | Warning message | Deprecated function, low memory |
-| ERROR | Error occurred but continues | Failed to connect, invalid input |
-| CRITICAL | Critical error, might exit | Out of memory, file system full |
+| Cấp độ | Ý nghĩa | Ví dụ |
+|--------|---------|--------|
+| DEBUG | Thông tin chẩn đoán chi tiết | Giá trị biến, gọi hàm |
+| INFO | Thông tin chung | Máy chủ đã bắt đầu, yêu cầu nhận được |
+| WARNING | Cảnh báo | Chức năng không dùng nữa, bộ nhớ thấp |
+| ERROR | Lỗi xảy ra nhưng tiếp tục | Không thể kết nối, đầu vào không hợp lệ |
+| CRITICAL | Lỗi nghiêm trọng, có thể thoát | Hết bộ nhớ, hệ thống file đầy |
 
-#### Health Check Log Example
+#### Ví dụ Log Kiểm tra Sức khỏe
 
 ```bash
-# Good
+# Tốt
 ai-agent | health check passed (response time: 45ms)
 
-# Warning
+# Cảnh báo
 ai-agent | health check slow (response time: 2456ms)
 
-# Failed
+# Thất bại
 ai-agent | health check failed (attempt 1/3): connection refused
 ai-agent | health check failed (attempt 2/3): timeout
 ai-agent | health check failed (attempt 3/3): timeout
@@ -1633,41 +1633,41 @@ ai-agent | health check failed: service will be restarted
 
 ---
 
-### Setup Log Rotation
+### Thiết lập Xoay vòng Log
 
 ```bash
 # File: /etc/logrotate.d/aws-hybrid
 
 /opt/aws-hybrid/logs/*.log {
-  daily                    # Rotate daily
-  rotate 7                 # Keep 7 days
-  compress                 # Compress old logs (gzip)
-  delaycompress            # Don't compress latest
-  notifempty               # Don't rotate if empty
-  missingok                # Don't error if missing
-  create 0640 ubuntu ubuntu # New files: 640 permission
+  daily                    # Xoay hàng ngày
+  rotate 7                 # Giữ 7 ngày
+  compress                 # Nén logs cũ (gzip)
+  delaycompress            # Không nén log mới nhất
+  notifempty               # Không xoay nếu trống
+  missingok                # Không lỗi nếu thiếu
+  create 0640 ubuntu ubuntu # Tệp mới: quyền 640
   sharedscripts
   postrotate
-    # Signal services to reopen log files
+    # Gửi tín hiệu cho dịch vụ để mở lại các file log
     docker compose -f /opt/aws-hybrid/staging/docker-compose.staging.yml kill -s HUP
     docker compose -f /opt/aws-hybrid/production/docker-compose.production.yml kill -s HUP
   endscript
 }
 
-# Test logrotate
+# Kiểm tra logrotate
 sudo logrotate -f /etc/logrotate.d/aws-hybrid
 
-# Verify
+# Xác minh
 ls -la /opt/aws-hybrid/logs/
-# Should see: all-services.log, all-services.log.1.gz, all-services.log.2.gz, etc.
+# Nên thấy: all-services.log, all-services.log.1.gz, all-services.log.2.gz, v.v.
 ```
 
 ---
 
-### Setup Monitoring (Prometheus + Grafana)
+### Thiết lập Giám sát (Prometheus + Grafana)
 
 ```bash
-# 1. Create prometheus config
+# 1. Tạo cấu hình prometheus
 cat > /opt/aws-hybrid/prometheus.yml << 'EOF'
 global:
   scrape_interval: 15s
@@ -1686,31 +1686,31 @@ scrape_configs:
       - targets: ['localhost:18080']
 EOF
 
-# 2. Start Prometheus
+# 2. Khởi động Prometheus
 docker run -d \
   --name prometheus \
   -p 9090:9090 \
   -v /opt/aws-hybrid/prometheus.yml:/etc/prometheus/prometheus.yml \
   prom/prometheus
 
-# 3. Start Grafana
+# 3. Khởi động Grafana
 docker run -d \
   --name grafana \
   -p 3000:3000 \
   -e GF_SECURITY_ADMIN_PASSWORD=admin \
   grafana/grafana
 
-# 4. Access dashboards
+# 4. Truy cập các bảng điều khiển
 # Prometheus: http://localhost:9090
-#   - Targets → Check health
-#   - Graph → Query metrics
+#   - Targets → Kiểm tra sức khỏe
+#   - Graph → Truy vấn số liệu
 #
 # Grafana: http://localhost:3000 (admin/admin)
-#   - Add Prometheus datasource
-#   - Create dashboards
-#   - Set alerts
+#   - Thêm nguồn dữ liệu Prometheus
+#   - Tạo các bảng điều khiển
+#   - Đặt cảnh báo
 
-# 5. Useful Prometheus queries
+# 5. Các truy vấn Prometheus hữu ích
 # Container CPU: container_cpu_usage_seconds_total
 # Container Memory: container_memory_usage_bytes
 # HTTP Requests: http_requests_total
@@ -1719,205 +1719,205 @@ docker run -d \
 
 ---
 
-### Log Viewing Quick Reference
+### Tham khảo nhanh Xem Log
 
-| Command | Purpose |
-|---------|---------|
-| `docker compose logs ai-agent` | Show all logs for ai-agent |
-| `docker compose logs -f` | Follow logs (real-time) |
-| `docker compose logs --tail=50` | Last 50 lines |
-| `docker compose logs --since 10m` | Last 10 minutes |
-| `docker logs <container-id>` | Direct container logs |
-| `docker inspect <container-id>` | Container details & config |
-| `docker exec <container> bash` | Access container shell |
-| `docker stats <container>` | CPU/Memory usage |
-| `netstat -tlnp` | Show open ports |
-| `grep ERROR <logfile>` | Find errors in file |
-| `tail -f <logfile>` | Follow file updates |
-| `journalctl -u docker` | Docker service logs |
-| `dmesg` | Kernel logs (OOM kills, etc) |
+| Lệnh | Mục đích |
+|------|---------|
+| `docker compose logs ai-agent` | Hiển thị tất cả logs cho ai-agent |
+| `docker compose logs -f` | Theo dõi logs (thực tế) |
+| `docker compose logs --tail=50` | 50 dòng cuối cùng |
+| `docker compose logs --since 10m` | 10 phút gần đây |
+| `docker logs <container-id>` | Logs container trực tiếp |
+| `docker inspect <container-id>` | Chi tiết container & cấu hình |
+| `docker exec <container> bash` | Truy cập shell container |
+| `docker stats <container>` | Mức sử dụng CPU/Bộ nhớ |
+| `netstat -tlnp` | Hiển thị các cổng mở |
+| `grep ERROR <logfile>` | Tìm lỗi trong file |
+| `tail -f <logfile>` | Theo dõi cập nhật file |
+| `journalctl -u docker` | Logs dịch vụ Docker |
+| `dmesg` | Logs kernel (OOM kills, v.v) |
 
 ---
 
-## 🔧 Troubleshooting
+## 🔧 Khắc phục sự cố
 
-### Issue 1: Port Already in Use
+### Vấn đề 1: Cổng đã được sử dụng
 
 ```bash
-# Problem: Error binding port 18000
+# Vấn đề: Lỗi ràng buộc cổng 18000
 
-# Solution:
+# Giải pháp:
 lsof -i :18000
 kill -9 <PID>
 
-# OR find what's using it
+# HOẶC tìm kiếm thứ gì đang sử dụng nó
 ss -tlnp | grep 18000
 docker ps -a | grep 18000
 ```
 
-### Issue 2: Container Crashes on Start
+### Vấn đề 2: Container Bị sập khi Khởi động
 
 ```bash
-# Check logs
+# Kiểm tra logs
 docker compose logs ai-agent --tail=50
 
-# Common issues:
-# - Missing environment variables
-# - Port already bound
-# - Memory/CPU constraints
-# - Image pull failed
+# Các vấn đề phổ biến:
+# - Biến môi trường bị thiếu
+# - Cổng đã bị ràng buộc
+# - Ràng buộc bộ nhớ/CPU
+# - Không thể kéo image
 
-# Solution:
+# Giải pháp:
 docker compose down
 docker compose pull
 docker compose up -d
 ```
 
-### Issue 3: Network Issues
+### Vấn đề 3: Các vấn đề Mạng
 
 ```bash
-# Container can't reach external services
+# Container không thể tiếp cận các dịch vụ bên ngoài
 
-# 1. Check DNS
+# 1. Kiểm tra DNS
 docker exec ai-agent nslookup google.com
 
-# 2. Check network
+# 2. Kiểm tra mạng
 docker network ls
 docker network inspect staging_default
 
-# 3. Check firewall (Security Groups)
+# 3. Kiểm tra tường lửa (Security Groups)
 # AWS Console → Security Groups
-# Verify outbound rules allow traffic
+# Xác minh các quy tắc gửi đi cho phép lưu lượng
 ```
 
-### Issue 4: Out of Disk Space
+### Vấn đề 4: Không đủ dung lượng đĩa
 
 ```bash
-# Check disk
+# Kiểm tra đĩa
 df -h
 du -sh /var/lib/docker
 
-# Solution:
+# Giải pháp:
 docker system prune -a
 docker volume prune
 
-# Or cleanup old images:
+# Hoặc dọn dẹp các images cũ:
 docker image rm $(docker image ls -q -f "dangling=true")
 ```
 
-### Issue 5: GHCR Authentication Failed
+### Vấn đề 5: Xác thực GHCR thất bại
 
 ```bash
-# Problem: Error response from daemon: unauthorized
+# Vấn đề: Error response from daemon: unauthorized
 
-# Solution:
+# Giải pháp:
 docker logout ghcr.io
 echo $GHCR_TOKEN | docker login ghcr.io -u $GHCR_USERNAME --password-stdin
 
-# Verify token has permissions:
+# Xác minh token có quyền:
 # GitHub → Settings → Personal access tokens
-# Check: read:packages, write:packages
+# Kiểm tra: read:packages, write:packages
 ```
 
-### Issue 6: Health Check Timeout
+### Vấn đề 6: Kiểm tra sức khỏe Hết thời gian
 
 ```bash
-# Problem: curl: (7) Failed to connect
+# Vấn đề: curl: (7) Failed to connect
 
-# Solution:
-# 1. Check service running
+# Giải pháp:
+# 1. Kiểm tra dịch vụ đang chạy
 docker compose ps
 
-# 2. Check port
+# 2. Kiểm tra cổng
 netstat -tlnp | grep 18000
 
-# 3. Check firewall
+# 3. Kiểm tra tường lửa
 sudo ufw status
 sudo ufw allow 18000
 
-# 4. Wait for service startup
+# 4. Chờ khởi động dịch vụ
 sleep 10
 curl http://localhost:18000/health
 ```
 
 ---
 
-## 🆘 Disaster Recovery
+## 🆘 Phục hồi Thảm họa
 
-### Backup Strategy
+### Chiến lược Sao lưu
 
 ```bash
-# 1. Backup database (if using)
+# 1. Sao lưu cơ sở dữ liệu (nếu sử dụng)
 docker exec postgres pg_dump -U admin database_name > backup.sql
 
-# 2. Backup volumes
+# 2. Sao lưu các volume
 docker run --rm \
   -v staging_data:/data \
   -v /opt/backups:/backup \
   alpine tar czf /backup/data-$(date +%Y%m%d).tar.gz -C /data .
 
-# 3. Backup configurations
+# 3. Sao lưu cấu hình
 tar czf /opt/backups/config-$(date +%Y%m%d).tar.gz \
   /opt/aws-hybrid/staging/.env.staging \
   /opt/aws-hybrid/production/.env.production
 ```
 
-### Rollback Procedure
+### Quy trình Hoàn trả ngược
 
 ```bash
-# 1. If container is broken
+# 1. Nếu container bị hỏng
 docker compose pull <previous-tag>
 docker compose up -d
 
-# 2. If deployment is broken (via GitHub)
-# GitHub → Releases → Select previous version
-# Create tag (git tag v1.0.0) → Push
-# CD workflow automatically deploys
+# 2. Nếu triển khai bị hỏng (thông qua GitHub)
+# GitHub → Releases → Chọn phiên bản trước
+# Tạo tag (git tag v1.0.0) → Đẩy
+# Workflow CD tự động triển khai
 
-# 3. Manual rollback
+# 3. Hoàn trả ngược thủ công
 docker compose down
 docker image rm ghcr.io/owner/ai-agent:staging-latest
-docker pull ghcr.io/owner/ai-agent:staging-abc123  # previous hash
+docker pull ghcr.io/owner/ai-agent:staging-abc123  # hash trước đó
 docker tag ghcr.io/owner/ai-agent:staging-abc123 ghcr.io/owner/ai-agent:staging-latest
 docker compose up -d
 ```
 
-### Emergency Shutdown
+### Tắt máy Khẩn cấp
 
 ```bash
-# If you need to shutdown everything:
+# Nếu bạn cần tắt máy tất cả:
 docker compose down
 
-# Stop all containers
+# Dừng tất cả containers
 docker stop $(docker ps -q)
 
-# Remove all containers
+# Xóa tất cả containers
 docker rm $(docker ps -aq)
 
-# Cleanup everything (DANGEROUS!)
+# Dọn dẹp tất cả (NGUY HIỂM!)
 docker system prune -a --volumes
 ```
 
 ---
 
-## 📋 Final Checklist
+## 📋 Danh sách Kiểm tra Cuối cùng
 
-### Before Going Live
+### Trước khi Đi trực tiếp
 
-- [ ] AWS account created
-- [ ] SSH keys generated and stored ⭐ (mandatory for deployment)
-- [ ] Terraform infrastructure created (run locally)
-- [ ] IAM user created (optional - only if automating Terraform)
-- [ ] EC2 instances running
-- [ ] Docker installed on all instances
-- [ ] Environment files configured
-- [ ] GitHub Secrets configured (SSH_HOST, SSH_PORT, SSH_PRIVATE_KEY, GHCR credentials)
-- [ ] Staging deployment successful
-- [ ] All health checks passing
-- [ ] Production deployment successful
-- [ ] Monitoring setup complete
-- [ ] Logs being collected
-- [ ] Backup strategy in place
+- [ ] Tài khoản AWS được tạo
+- [ ] Khóa SSH được tạo và lưu trữ ⭐ (bắt buộc để triển khai)
+- [ ] Cơ sở hạ tầng Terraform được tạo (chạy cục bộ)
+- [ ] Người dùng IAM được tạo (tùy chọn - chỉ nếu tự động hóa Terraform)
+- [ ] EC2 instances đang chạy
+- [ ] Docker được cài đặt trên tất cả instances
+- [ ] Các file môi trường được cấu hình
+- [ ] GitHub Secrets được cấu hình (SSH_HOST, SSH_PORT, SSH_PRIVATE_KEY, GHCR credentials)
+- [ ] Triển khai staging thành công
+- [ ] Tất cả kiểm tra sức khỏe đang vượt qua
+- [ ] Triển khai production thành công
+- [ ] Thiết lập giám sát hoàn tất
+- [ ] Logs đang được thu thập
+- [ ] Chiến lược sao lưu đã có sẵn
 - [ ] Team trained on procedures
 - [ ] Documentation complete
 - [ ] Disaster recovery tested
