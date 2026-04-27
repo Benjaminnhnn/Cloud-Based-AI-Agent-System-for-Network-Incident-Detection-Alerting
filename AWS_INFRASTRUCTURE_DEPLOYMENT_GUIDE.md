@@ -20,77 +20,265 @@
 
 ## 🏗️ Kiến trúc hệ thống
 
-### Topology
+### Topology (Actual System)
 
 ```
-┌─────────────────────────────────────────────────────────┐
-│                     AWS Account                         │
-├─────────────────────────────────────────────────────────┤
-│                                                         │
-│  ┌─────────────────────────────────────────────────┐   │
-│  │         VPC: aws-hybrid-vpc                     │   │
-│  │         CIDR: 10.0.0.0/16                       │   │
-│  │                                                 │   │
-│  │  ┌──────────────┐  ┌──────────────────────────┐│   │
-│  │  │   IGW        │  │  Subnets (Public)        ││   │
-│  │  │              │  │  - 10.0.1.0/24 (2a)      ││   │
-│  │  │              │  │  - 10.0.2.0/24 (2b)      ││   │
-│  │  └──────────────┘  │  - 10.0.3.0/24 (2c)      ││   │
-│  │                    └──────────────────────────┘│   │
-│  │                                                 │   │
-│  │  ┌─────────────────────────────────────────────┤   │
-│  │  │    EC2 Instances                            │   │
-│  │  │                                             │   │
-│  │  │  ┌─────────────────┐  Staging             │   │
-│  │  │  │ ai-agent-stage  │  Port: 18000         │   │
-│  │  │  │ payment-api-s   │  Port: 18080         │   │
-│  │  │  └─────────────────┘                       │   │
-│  │  │                                             │   │
-│  │  │  ┌─────────────────┐  Production          │   │
-│  │  │  │ ai-agent-prod   │  Port: 8000          │   │
-│  │  │  │ payment-api-p   │  Port: 8080          │   │
-│  │  │  └─────────────────┘                       │   │
-│  │  │                                             │   │
-│  │  │  ┌─────────────────┐  Monitoring          │   │
-│  │  │  │ prometheus      │  Port: 9090          │   │
-│  │  │  │ grafana         │  Port: 3000          │   │
-│  │  │  └─────────────────┘                       │   │
-│  │  └─────────────────────────────────────────────┤   │
-│  │                                                 │   │
-│  │  ┌────────────────────────────────────────────┐│   │
-│  │  │  Security Groups                           ││   │
-│  │  │  - SG-Web: 80, 443, 18000, 18080          ││   │
-│  │  │  - SG-Prod: 8000, 8080 (restricted IP)    ││   │
-│  │  │  - SG-Monitor: 9090, 3000                 ││   │
-│  │  │  - SG-Internal: 22 (SSH from bastion)     ││   │
-│  │  └────────────────────────────────────────────┘│   │
-│  │                                                 │   │
-│  └─────────────────────────────────────────────────┘   │
-│                                                         │
-│  ┌─────────────────────────────────────────────────┐   │
-│  │         External Services                       │   │
-│  │  - GitHub (Code Repository)                    │   │
-│  │  - GHCR (Container Registry)                   │   │
-│  │  - Telegram (Notifications)                    │   │
-│  └─────────────────────────────────────────────────┘   │
-│                                                         │
-└─────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────┐
+│                     AWS Account (ap-southeast-1)             │
+├──────────────────────────────────────────────────────────────┤
+│                                                              │
+│  ┌────────────────────────────────────────────────────────┐ │
+│  │         VPC: aiops-bank-vpc                           │ │
+│  │         CIDR: 10.0.0.0/16                             │ │
+│  │                                                        │ │
+│  │  ┌──────────────┐  ┌─────────────────────────────┐   │ │
+│  │  │   IGW        │  │  Subnets (3 AZs)            │   │ │
+│  │  │              │  │  - 10.0.1.0/24 (ap-se-1a)   │   │ │
+│  │  │              │  │  - 10.0.2.0/24 (ap-se-1b)   │   │ │
+│  │  └──────────────┘  │  - 10.0.3.0/24 (ap-se-1c)   │   │ │
+│  │                    └─────────────────────────────┘   │ │
+│  │                                                        │ │
+│  │  ┌─────────────────────────────────────────────────┐ │ │
+│  │  │    EC2 Instances with Elastic IPs (Static)      │ │ │
+│  │  │                                                 │ │ │
+│  │  │  ┌──────────────────────────┐                   │ │ │
+│  │  │  │ monitor-ai-01            │                   │ │ │
+│  │  │  │ (t3.small: 2CPU, 2GB)    │                   │ │ │
+│  │  │  │ EIP: 52.74.118.8         │                   │ │ │
+│  │  │  │ Services:                │                   │ │ │
+│  │  │  │  - AI Agent: 8000        │                   │ │ │
+│  │  │  │  - Prometheus: 9090      │                   │ │ │
+│  │  │  │  - Grafana: 3000         │                   │ │ │
+│  │  │  └──────────────────────────┘                   │ │ │
+│  │  │                                                 │ │ │
+│  │  │  ┌──────────────────────────┐                   │ │ │
+│  │  │  │ bank-web-01              │                   │ │ │
+│  │  │  │ (t2.micro: 1CPU, 1GB)    │                   │ │ │
+│  │  │  │ EIP: 18.136.112.28       │                   │ │ │
+│  │  │  │ Services:                │                   │ │ │
+│  │  │  │  - Payment API: 8000     │                   │ │ │
+│  │  │  │  - Frontend: 3000        │                   │ │ │
+│  │  │  └──────────────────────────┘                   │ │ │
+│  │  │                                                 │ │ │
+│  │  │  ┌──────────────────────────┐                   │ │ │
+│  │  │  │ bank-core-01             │                   │ │ │
+│  │  │  │ (t2.micro: 1CPU, 1GB)    │                   │ │ │
+│  │  │  │ EIP: 54.255.94.179       │                   │ │ │
+│  │  │  │ Services:                │                   │ │ │
+│  │  │  │  - PostgreSQL: 5432      │                   │ │ │
+│  │  │  │  - Redis: 6379           │                   │ │ │
+│  │  │  │  - API Backend: 8000     │                   │ │ │
+│  │  │  └──────────────────────────┘                   │ │ │
+│  │  │                                                 │ │ │
+│  │  └─────────────────────────────────────────────────┘ │ │
+│  │                                                        │ │
+│  │  ┌────────────────────────────────────────────────┐  │ │
+│  │  │  Security Groups                               │  │ │
+│  │  │  - SG-Monitor: SSH(22), HTTP(9090), Grafana(3000)   │ │
+│  │  │  - SG-Web: SSH(22), HTTP(8000), HTTPS(443)    │  │ │
+│  │  │  - SG-Core: SSH(22), DB(5432), Cache(6379)    │  │ │
+│  │  │  - SG-Internal: Inter-instance communication  │  │ │
+│  │  └────────────────────────────────────────────────┘  │ │
+│  │                                                        │ │
+│  └────────────────────────────────────────────────────────┘ │
+│                                                              │
+│  ┌────────────────────────────────────────────────────────┐ │
+│  │         External Services                              │ │
+│  │  - GitHub (Code Repository + Actions)                 │ │
+│  │  - GHCR (ghcr.io - Container Registry)               │ │
+│  │  - Telegram API (Bot Notifications)                   │ │
+│  │  - Google Gemini API (AI Analysis)                    │ │
+│  │  - ChromaDB (Vector Database - local)                 │ │
+│  └────────────────────────────────────────────────────────┘ │
+│                                                              │
+└──────────────────────────────────────────────────────────────┘
 ```
 
-### EC2 Instance Spec
+### EC2 Instance Specification (Current)
 
-| Thành phần | Instance Type | CPU | RAM | Disk | Giá ($/tháng) |
-|-----------|---------------|-----|-----|------|---------------|
-| Staging | t3.small | 2 | 2GB | 30GB | ~$12 |
-| Production | t3.medium | 2 | 4GB | 50GB | ~$24 |
-| Monitoring | t3.micro | 1 | 1GB | 20GB | ~$8 |
-| **Total** | - | - | - | - | **~$44** |
+| Instance | Type | CPU | RAM | Disk | EIP | Purpose |
+|----------|------|-----|-----|------|-----|---------|
+| monitor-ai-01 | t3.small | 2 | 2GB | 12GB | 52.74.118.8 | AI Agent, Prometheus, Grafana |
+| bank-web-01 | t2.micro | 1 | 1GB | 12GB | 18.136.112.28 | Payment API, Frontend |
+| bank-core-01 | t2.micro | 1 | 1GB | 12GB | 54.255.94.179 | PostgreSQL, Redis, DB |
+| **Total Cost** | - | - | - | - | - | **~$30/month** |
 
-**Note:** Có thể dùng 1 EC2 cho cả staging + production (namespace separation bằng port)
+**📝 Note:** Elastic IPs (EIP) are **static** - they won't change when instances stop/restart
 
 ---
 
-## ✅ Chuẩn bị AWS Account
+### 🤖 AI Agent Architecture (agent_src)
+
+**Purpose:** Automated incident detection, diagnosis, and resolution using RAG + Gemini LLM
+
+**Structure:**
+
+```
+agent_src/
+├── core/
+│   ├── main.py              # FastAPI server (webhook receiver)
+│   ├── rag_engine.py        # ChromaDB RAG + knowledge base query
+│   ├── tasks.py             # Celery async tasks
+│   ├── celery_app.py        # Celery configuration
+│   └── metrics.py           # Metrics tracking
+├── monitoring/
+│   ├── log_watcher.py       # Real-time log monitoring (3.9 KB)
+│   └── service_monitor.py   # Service health checks (12.6 KB)
+├── tools/
+│   └── diag_tools.py        # Diagnostic functions (ping, metrics, logs)
+├── utils/
+│   └── telegram_bot.py      # Telegram integration
+├── config/
+│   ├── services_config.json # Service definitions (nginx, postgresql, redis, docker)
+│   └── knowledge_base/      # RAG runbooks
+│       ├── runbook_docker.md
+│       ├── runbook_nginx.md
+│       ├── runbook_postgresql.md
+│       └── runbook_redis.md
+├── vector_db/               # ChromaDB vector store (embeddings)
+│   └── chroma.sqlite3       # SQLite database (282 KB)
+├── tests/                   # Unit tests
+├── requirements.txt         # Dependencies (FastAPI, ChromaDB, Celery, google-genai, etc.)
+└── Dockerfile              # Multi-stage Docker image
+```
+
+**Key Technologies:**
+- **Framework:** FastAPI + Uvicorn (Python 3.11)
+- **AI/ML:** Google Gemini API, ChromaDB vector database, Sentence Transformers
+- **Async:** Celery task queue + Redis
+- **Monitoring:** Log watching, service health checks, system metrics
+- **Integration:** Telegram Bot API, Webhook receivers
+
+**Workflow:**
+1. **Detect** → Log watcher or service monitor detects anomaly
+2. **Retrieve** → Query RAG engine for relevant runbooks
+3. **Analyze** → Gemini LLM analyzes with RAG context + diagnostic tools
+4. **Propose** → Send analysis to Telegram with action buttons
+5. **Execute** → Run approved actions, learn for future incidents
+
+---
+
+### 📦 CI/CD Pipeline Overview
+
+**GitHub Actions Workflows:**
+
+| Workflow | Trigger | Purpose | Details |
+|----------|---------|---------|---------|
+| `ci.yml` | PR to develop/main, push to feature/develop/main | Lint, Test, Build | Ruff (linting), pytest, Docker build for AI Agent & Payment API |
+| `cd-staging.yml` | Push to develop | Auto-deploy to staging | Build images → SSH to monitor instance → docker compose pull/up |
+| `cd-production.yml` | Tag v*.*.*, manual dispatch | Manual deploy to production | Requires approval → Build → SSH deploy to monitor instance |
+
+**Deployment Ports:**
+- **Staging (monitor-ai-01: 52.74.118.8):**
+  - AI Agent: 18000 (for testing)
+  - Prometheus: 9090
+  - Grafana: 3000
+- **Production (monitor-ai-01):**
+  - AI Agent: 8000
+  - Prometheus: 9090
+  - Grafana: 3000
+
+**Docker Images:**
+- `ghcr.io/{owner}/aws-hybrid-ai-agent:staging-latest` / `{tag}`
+- `ghcr.io/{owner}/aws-hybrid-payment-api:staging-latest` / `{tag}`
+
+---
+
+### 📁 Project Folder Structure
+
+```
+aws-hybrid/
+├── .github/
+│   └── workflows/           # GitHub Actions CI/CD
+│       ├── ci.yml          # Lint, test, build
+│       ├── cd-staging.yml  # Auto-deploy to staging
+│       └── cd-production.yml # Manual deploy to production
+├── agent_src/              # AI Agent (see above)
+├── demo-web/               # Demo application
+│   ├── backend/            # FastAPI payment API
+│   ├── frontend/           # React UI
+│   └── database/           # PostgreSQL init.sql, seed.sql
+├── ansible/                # Ansible playbooks & config
+│   ├── inventory.ini       # Pre-configured for 3 instances
+│   ├── playbooks/          # Deployment & bootstrap playbooks
+│   └── config/             # Alert rules, Prometheus config
+├── terraform/              # Infrastructure as Code
+│   ├── compute.tf          # EC2 instances definition
+│   ├── network.tf          # VPC, subnets, IGW
+│   ├── security.tf         # Security groups
+│   ├── provider.tf         # AWS provider config
+│   ├── variables.tf        # Input variables
+│   ├── outputs.tf          # Terraform outputs (EIPs, SSH commands)
+│   ├── terraform.tfvars    # Variable values (DO NOT commit!)
+│   ├── terraform.tfstate   # Current state (updated by terraform apply)
+│   └── versions.tf         # Provider versions
+├── release/                # Deployment manifests
+│   ├── docker-compose.staging.yml
+│   ├── docker-compose.production.yml
+│   ├── .env.example        # Environment template
+│   ├── .env.staging        # Staging config (DO NOT commit!)
+│   └── .env.production     # Production config (DO NOT commit!)
+├── automation/             # Deployment scripts
+│   ├── deploy.sh           # Main deployment orchestrator
+│   ├── deploy-infrastructure.sh
+│   ├── ansible-deploy.sh
+│   ├── update-infrastructure.sh
+│   └── fix-credentials.sh
+├── platform-config/        # Local development config
+│   ├── docker-compose.dev.yml
+│   ├── prometheus.yml
+│   └── blackbox.yml
+├── diagram/                # Architecture diagrams
+│   ├── CI_CD_DEPLOYMENT_DIAGRAM.md
+│   └── PRODUCTION_ARCHITECTURE_SUMMARY.md
+├── scripts/                # Legacy scripts
+└── README.md               # Main documentation
+
+**Important Files (DO NOT commit to GitHub):**
+- terraform/terraform.tfvars (AWS credentials location)
+- release/.env.staging
+- release/.env.production
+- .ssh/ (private keys)
+```
+
+---
+
+### 📋 Workflow Tóm tắt
+
+```
+┌─────────────────────────────────────┐
+│  LOCAL MACHINE (Dev)                │
+├─────────────────────────────────────┤
+│ Step 1: Create AWS Account          │
+│ Step 2: SSH Key Pair Generation ⭐  │
+│ Step 3: Run Terraform               │
+│   export AWS_ACCESS_KEY_ID=xxx      │ ← Local only, NOT in GitHub
+│   terraform apply                   │
+│                                     │
+│ Result: EC2 instances created       │
+└─────────────────────────────────────┘
+                  ↓
+┌─────────────────────────────────────┐
+│  GITHUB REPOSITORY                  │
+├─────────────────────────────────────┤
+│ Step 4: Setup GitHub Secrets        │
+│   - SSH_HOST (from terraform)       │
+│   - SSH_PORT (22)                   │
+│   - SSH_PRIVATE_KEY ⭐              │
+│   - GHCR_USERNAME                   │
+│   - GHCR_TOKEN                      │
+│                                     │
+│ Step 5: Trigger CI/CD Workflow      │
+│   - Push to develop → Staging       │
+│   - Tag v1.0.0 → Production         │
+│                                     │
+│ Result: Auto deploy via SSH         │
+└─────────────────────────────────────┘
+```
+
+**🔑 Chỉ cần AWS credentials (Access Key) khi:**
+- Chạy `terraform init/apply` trên local machine
+- KH\u00d4NG cần trong GitHub Actions (SSH deployment đủ)
 
 ### Step 1: Create AWS Account
 
@@ -107,7 +295,13 @@
 # 6. Choose Support Plan (Free tier okay)
 ```
 
-### Step 2: Create IAM User cho CI/CD
+### Step 2: Create IAM User cho Terraform (OPTIONAL)
+
+⚠️ **CHỈ CẦN NẾU muốn tự động hóa Terraform trong CI/CD**
+
+Hiện tại, Terraform được chạy **MANUAL** trên local machine, nên bước này KHÔNG bắt buộc.
+
+Nếu muốn GitHub Actions tự động chạy `terraform apply` (không khuyến cáo), thì:
 
 ```bash
 # 1. Vào AWS Console → IAM
@@ -121,12 +315,16 @@
 # 7. Security credentials:
 #    - Access key ID: copy this
 #    - Secret access key: copy this
-# 8. Save to GitHub Secrets:
+# 8. Save to GitHub Secrets (nếu tự động hóa):
 #    AWS_ACCESS_KEY_ID
 #    AWS_SECRET_ACCESS_KEY
 ```
 
-### Step 3: Generate SSH Key Pair
+❌ **KHÔNG KHUYẾN CÁO**: Tự động hóa Terraform có rủi ro cao (thay đổi production infrastructure). Cách làm hiện tại (manual + SSH deploy) an toàn hơn.
+
+### Step 3: Generate SSH Key Pair (BẮT BUỘC ⭐)
+
+**Bắt buộc** để GitHub Actions deploy tới EC2 instances.
 
 ```bash
 # Trong AWS Console → EC2 → Key Pairs
@@ -147,28 +345,33 @@
 
 Trước khi trigger workflow `CD Staging` hoặc `CD Production`, kiểm tra repository đã có đủ secrets cần thiết.
 
-**Secrets bắt buộc:**
+**Secrets cho CI/CD Deployment:**
 
-| Secret | Mục đích | Ghi chú |
-|--------|----------|---------|
-| `AWS_ACCESS_KEY_ID` | Terraform/AWS automation | Access key của IAM user `github-actions` |
-| `AWS_SECRET_ACCESS_KEY` | Terraform/AWS automation | Secret key tương ứng |
-| `SSH_HOST` | EC2 target để deploy | Dùng public IP của EC2 nhận deploy, ví dụ monitor/staging host |
-| `SSH_PORT` | SSH port | Thường là `22` |
-| `SSH_PRIVATE_KEY` | SSH key để GitHub Actions vào EC2 | Nội dung private key, giữ nguyên header/footer |
-| `GHCR_USERNAME` | Login GitHub Container Registry | GitHub username hoặc bot account |
-| `GHCR_TOKEN` | Pull/push image trên GHCR | PAT có quyền `read:packages`, `write:packages`; nếu repo private cần thêm `repo` |
+| Secret | Mục đích | Status | Ghi chú |
+|--------|----------|--------|---------|
+| `SSH_HOST` | EC2 target để deploy | ⭐ **BẮT BUỘC** | Public IP của EC2 (lấy từ `terraform output`) |
+| `SSH_PORT` | SSH port | ⭐ **BẮT BUỘC** | Thường là `22` |
+| `SSH_PRIVATE_KEY` | SSH key để GitHub Actions vào EC2 | ⭐ **BẮT BUỘC** | Nội dung private key `aws-hybrid-key.pem` đầy đủ |
+| `GHCR_USERNAME` | Login GitHub Container Registry | ⭐ **BẮT BUỘC** | GitHub username hoặc bot account |
+| `GHCR_TOKEN` | Pull/push image trên GHCR | ⭐ **BẮT BUỘC** | PAT có quyền `read:packages`, `write:packages`; nếu repo private cần `repo` |
+| `AWS_ACCESS_KEY_ID` | Terraform (Local only) | ❌ **KHÔNG CẦN** | Chỉ dùng khi chạy `terraform apply` trên local machine |
+| `AWS_SECRET_ACCESS_KEY` | Terraform (Local only) | ❌ **KHÔNG CẦN** | Chỉ dùng khi chạy `terraform apply` trên local machine |
 
 **Kiểm tra bằng GitHub UI:**
 
 ```text
 Repository → Settings → Secrets and variables → Actions → Repository secrets
 
-Verify:
-- Tất cả secrets ở bảng trên đã tồn tại
-- Không có secret bị đặt sai tên, ví dụ GHCR_OWNER thay cho GHCR_USERNAME
-- SSH_HOST trùng với public IP hiện tại sau khi Terraform apply
-- SSH_PRIVATE_KEY là private key đầy đủ, không phải public key .pub
+Verify (BẮT BUỘC cho CI/CD):
+✅ SSH_HOST trùng với public IP của EC2 hiện tại
+✅ SSH_PORT = 22
+✅ SSH_PRIVATE_KEY = private key đầy đủ (không phải public key .pub)
+✅ GHCR_USERNAME = GitHub username
+✅ GHCR_TOKEN = GitHub token với quyền packages
+
+KH\u00d4NG C\u1ea6N cho CI/CD deployment (ch\u1ec1 d\u00f9ng local):
+❌ AWS_ACCESS_KEY_ID (ch\u1ec9 d\u00f9ng khi ch\u1ea1y Terraform tr\u00ean local)
+❌ AWS_SECRET_ACCESS_KEY (ch\u1ec9 d\u00f9ng khi ch\u1ea1y Terraform tr\u00ean local)
 ```
 
 **Kiểm tra bằng GitHub CLI (nếu đã cài `gh`):**
@@ -176,49 +379,89 @@ Verify:
 ```bash
 gh secret list
 
-# Expected names:
-# AWS_ACCESS_KEY_ID
-# AWS_SECRET_ACCESS_KEY
+# Required for CI/CD deployment:
 # SSH_HOST
 # SSH_PORT
 # SSH_PRIVATE_KEY
 # GHCR_USERNAME
 # GHCR_TOKEN
+
+# NOT needed for CI/CD (local only):
+# AWS_ACCESS_KEY_ID (chỉ cho terraform apply trên local)
+# AWS_SECRET_ACCESS_KEY (chỉ cho terraform apply trên local)
 ```
 
-**Cập nhật `SSH_HOST` sau khi Terraform tạo hoặc thay EC2:**
+**Cập nhật `SSH_HOST` từ Terraform outputs:**
 
 ```bash
 cd terraform
-terraform output
+terraform output -raw monitor_public_ip
 
-# Chọn public IP của EC2 dùng để deploy CD staging/production,
-# sau đó cập nhật lại GitHub Secret SSH_HOST trong repo.
+# Current value: 52.74.118.8
+# Update GitHub Secret: SSH_HOST = 52.74.118.8
+# (This is the monitor instance that runs AI Agent, Prometheus, Grafana)
 ```
 
-**Preflight local trước khi chạy workflow:**
+**GitHub Secrets Configuration:**
 
 ```bash
-# Test SSH bằng cùng user/key mà workflow dùng
-ssh -i aws-hybrid-key.pem -p 22 ec2-user@<SSH_HOST> 'echo auth-ok'
+# Settings → Secrets and variables → Actions → Repository secrets
 
-# Test Docker/GHCR trên EC2 nếu đã cài Docker
+SSH_HOST: 52.74.118.8              # Monitor instance (Elastic IP - static)
+SSH_PORT: 22                        # Standard SSH port
+SSH_PRIVATE_KEY: <key content>      # From aws-hybrid-key.pem
+GHCR_USERNAME: your-github-name     # Your GitHub username
+GHCR_TOKEN: ghp_xxxxxxxxx...        # GitHub token with packages scope
+```
+
+**Preflight Check (local machine):**
+
+```bash
+# Test SSH connectivity to monitor instance
+ssh -i aws-hybrid-key.pem -p 22 ec2-user@52.74.118.8 'echo "SSH OK"'
+
+# Test Docker on monitor instance
+ssh -i aws-hybrid-key.pem ec2-user@52.74.118.8 'docker --version && docker compose version'
+
+# Test GHCR login
+echo $GHCR_TOKEN | docker login ghcr.io -u $GHCR_USERNAME --password-stdin
 ssh -i aws-hybrid-key.pem ec2-user@<SSH_HOST> 'docker --version && docker compose version'
 ```
 
 ---
 
+### 🔍 Monitored Services Configuration
+
+**Services being monitored** (agent_src/config/services_config.json):
+
+| Service | Port | Type | Severity | Check Interval | Metrics |
+|---------|------|------|----------|----------------|---------|
+| Nginx | 80 | Web Server | CRITICAL | 5s | response_time, error_rate, uptime |
+| PostgreSQL | 5432 | Database | CRITICAL | 5s | connection_count, qps, replication_lag |
+| Redis | 6379 | Cache | HIGH | 10s | memory_usage, hit_rate, commands_per_sec |
+| Docker | - | Container | HIGH | 30s | container_status, resource_usage |
+
+**Knowledge Base for AI Analysis** (agent_src/config/knowledge_base/):
+- `runbook_docker.md` - Docker container troubleshooting
+- `runbook_nginx.md` - Nginx configuration and restart procedures
+- `runbook_postgresql.md` - Database connection and replication issues
+- `runbook_redis.md` - Cache consistency and memory management
+
+---
+
 ## 🔧 Tạo Infrastructure với Terraform
 
-### Step 1: Initialize Terraform
+### Step 1: Initialize Terraform (Chạy trên LOCAL MACHINE)
+
+⚠️ **Terraform chạy MANUAL trên máy local, KHÔNG tự động trong GitHub Actions**
 
 ```bash
 cd /path/to/aws-hybrid/terraform
 
-# 1. Cấu hình AWS credentials
-export AWS_ACCESS_KEY_ID="your-access-key"
-export AWS_SECRET_ACCESS_KEY="your-secret-key"
-export AWS_DEFAULT_REGION="ap-southeast-1"  # Singapore
+# 1. Cấu hình AWS credentials (LOCAL ONLY - không commit!)
+export AWS_ACCESS_KEY_ID="your-access-key"          # IAM user access key
+export AWS_SECRET_ACCESS_KEY="your-secret-key"      # IAM user secret key
+export AWS_DEFAULT_REGION="ap-southeast-1"          # Singapore
 
 # 2. Initialize Terraform
 terraform init
@@ -231,6 +474,17 @@ terraform validate
 # 4. Preview changes
 terraform plan -out=tfplan
 # → Shows what will be created
+```
+
+**🔐 Bảo mật:**
+```bash
+# KHÔNG commit terraform.tfvars hoặc .env!
+echo "terraform.tfvars" >> .gitignore
+echo ".env" >> .gitignore
+
+# AWS credentials chỉ ở local machine, KHÔNG push lên GitHub
+export AWS_ACCESS_KEY_ID=xxx   # Terminal session only
+unset AWS_ACCESS_KEY_ID        # Clean up after use
 ```
 
 ### Step 2: Review terraform.tfvars
@@ -509,75 +763,109 @@ docker ps -a
 
 ---
 
-## 📦 Deploy Staging Environment
+## 📦 Deploy Staging Environment (monitor-ai-01: 52.74.118.8)
 
-### Step 1: Copy Files to EC2
+### Actual Deployment via GitHub Actions (Recommended)
 
-```bash
-# From your local machine
-STAGING_IP="13.251.123.45"
-KEY="aws-hybrid-key.pem"
-
-# 1. Copy code
-scp -i $KEY -r . ubuntu@$STAGING_IP:/opt/aws-hybrid/staging/
-
-# 2. Copy docker-compose
-scp -i $KEY release/docker-compose.staging.yml \
-  ubuntu@$STAGING_IP:/opt/aws-hybrid/staging/
-
-# 3. Copy .env
-scp -i $KEY release/.env.staging \
-  ubuntu@$STAGING_IP:/opt/aws-hybrid/staging/
-
-# 4. Copy deploy script
-scp -i $KEY automation/deploy.sh \
-  ubuntu@$STAGING_IP:/opt/aws-hybrid/staging/
+```
+Workflow: cd-staging.yml
+Trigger: Push to develop branch
+Action:
+  1. Build Docker images (AI Agent, Payment API)
+  2. Push to GHCR
+  3. SSH to monitor instance (52.74.118.8)
+  4. Run: automation/deploy.sh staging {image-tag}
+  5. Docker compose pull & up
+  6. Health checks (18x retries)
+  7. Save deployment state
 ```
 
-### Step 2: Manual Deploy (First Time)
+**GitHub Secrets Required:**
+```
+SSH_HOST = 52.74.118.8
+SSH_PORT = 22
+SSH_PRIVATE_KEY = <private key content>
+GHCR_USERNAME = <github username>
+GHCR_TOKEN = <github token>
+```
+
+### Manual Deployment (First Time Setup)
 
 ```bash
-# SSH vào staging
-ssh -i aws-hybrid-key.pem ubuntu@$STAGING_IP
+# From local machine
+MONITOR_IP="52.74.118.8"
+MONITOR_USER="ec2-user"
+KEY="aws-hybrid-key.pem"
 
-# 1. Navigate
-cd /opt/aws-hybrid/staging
+# 1. Create directories on monitor
+ssh -i $KEY $MONITOR_USER@$MONITOR_IP \
+  "mkdir -p /home/ec2-user/aws-hybrid/{release,automation}"
+
+# 2. Copy docker-compose files
+scp -i $KEY release/docker-compose.staging.yml \
+  $MONITOR_USER@$MONITOR_IP:/home/ec2-user/aws-hybrid/release/
+
+scp -i $KEY release/.env.example \
+  $MONITOR_USER@$MONITOR_IP:/home/ec2-user/aws-hybrid/release/.env.staging
+
+# 3. Copy deploy script
+scp -i $KEY automation/deploy.sh \
+  $MONITOR_USER@$MONITOR_IP:/home/ec2-user/aws-hybrid/automation/
+
+chmod +x /home/ec2-user/aws-hybrid/automation/deploy.sh
+
+# 4. SSH to monitor
+ssh -i $KEY $MONITOR_USER@$MONITOR_IP
+```
+
+**On Monitor Instance:**
+
+```bash
+cd /home/ec2-user/aws-hybrid
+
+# 1. Setup environment (update with your values)
+cat > release/.env.staging << 'EOF'
+GHCR_OWNER=your-github-username
+IMAGE_TAG=staging-latest
+GEMINI_API_KEY=your-gemini-key
+TELEGRAM_TOKEN=your-telegram-token
+TELEGRAM_CHAT_ID=your-chat-id
+EOF
 
 # 2. Login to GHCR
 echo $GHCR_TOKEN | docker login ghcr.io -u $GHCR_USERNAME --password-stdin
 
-# 3. Pull images
-docker compose pull
+# 3. Run deployment script
+./automation/deploy.sh staging staging-latest
 
-# 4. Start containers
-docker compose up -d
+# 4. Verify deployment
+docker compose -f release/docker-compose.staging.yml ps
 
-# 5. Check status
-docker compose ps
-
-# 6. Health check
-sleep 5
-curl http://localhost:18000/health
-curl http://localhost:18080/health
+# 5. Check logs
+docker compose -f release/docker-compose.staging.yml logs ai-agent --tail=50
 ```
 
-### Step 3: Verify Services
+### Service Ports on Staging (monitor-ai-01)
+
+```
+AI Agent:       http://52.74.118.8:18000/health
+Prometheus:     http://52.74.118.8:9090
+Grafana:        http://52.74.118.8:3000
+```
+
+### Verify Services
 
 ```bash
+# Check running containers
+docker compose -f release/docker-compose.staging.yml ps
+
 # Check logs
-docker compose logs ai-agent
-docker compose logs payment-api
-
-# Check network
-docker network ls
-docker network inspect staging_default
-
-# Check volumes
-docker volume ls
+docker compose -f release/docker-compose.staging.yml logs ai-agent
+docker compose -f release/docker-compose.staging.yml logs payment-api
 
 # Test endpoints
-curl -v http://localhost:18000/health
-curl -v http://localhost:18080/api/health
+curl http://localhost:18000/health
+curl http://localhost:18080/api/health
 
 # Expected response:
 # {
@@ -589,65 +877,122 @@ curl -v http://localhost:18080/api/health
 
 ---
 
-## 🏢 Deploy Production Environment
+## 🏢 Deploy Production Environment (monitor-ai-01: 52.74.118.8)
 
-### Step 1: Production Setup
+### Automatic Deployment via GitHub Actions (Recommended)
 
-```bash
-# SSH vào production EC2
-ssh -i aws-hybrid-key.pem ubuntu@$PROD_IP
-
-# 1. Create directories
-sudo mkdir -p /opt/aws-hybrid/production
-sudo chown -R ubuntu:ubuntu /opt/aws-hybrid
-
-# 2. Copy files
-cd /opt/aws-hybrid/production
-# Copy same files as staging
-
-# 3. Copy .env.production
-scp -i $KEY release/.env.production \
-  ubuntu@$PROD_IP:/opt/aws-hybrid/production/
+```
+Workflow: cd-production.yml
+Trigger: Git tag creation (v*.*.*)
+Action:
+  1. Build Docker images with production tag
+  2. Push to GHCR
+  3. Require environment approval
+  4. SSH to monitor instance
+  5. Run: automation/deploy.sh production v1.0.0
+  6. Docker compose pull & up (production config)
+  7. Health checks (18x retries)
+  8. Save deployment state
 ```
 
-### Step 2: Configure for Production
+**Deployment Workflow:**
 
 ```bash
-# Edit environment file
-vim /opt/aws-hybrid/production/.env.production
+# On local machine - create and push tag
+git tag v1.0.0
+git push origin v1.0.0
 
-# Change:
-# ENVIRONMENT=production
-# IMAGE_TAG=latest  (instead of staging-latest)
-# DB_NAME=aws_hybrid_production
-
-# ⚠️ Restrict permissions
-chmod 600 .env.production
-chmod 600 docker-compose.production.yml
+# → GitHub Actions automatically:
+#   1. Builds images with tag v1.0.0
+#   2. Waits for approval in GitHub
+#   3. Deploys to production on monitor instance
 ```
 
-### Step 3: Deploy Production
+**GitHub Actions Approval:**
+```
+GitHub → Actions → cd-production.yml run → Review deployments → Approve
+```
+
+### Manual Production Deployment (First Time)
 
 ```bash
-# 1. Login to GHCR
+# SSH to monitor instance
+ssh -i aws-hybrid-key.pem ec2-user@52.74.118.8
+
+cd /home/ec2-user/aws-hybrid
+
+# 1. Setup production environment
+cat > release/.env.production << 'EOF'
+GHCR_OWNER=your-github-username
+IMAGE_TAG=v1.0.0
+GEMINI_API_KEY=your-gemini-key
+TELEGRAM_TOKEN=your-telegram-token
+TELEGRAM_CHAT_ID=your-chat-id
+EOF
+
+# 2. Login to GHCR
 echo $GHCR_TOKEN | docker login ghcr.io -u $GHCR_USERNAME --password-stdin
 
-# 2. Pull production images
-docker compose -f docker-compose.production.yml pull
-
-# 3. Start containers
-docker compose -f docker-compose.production.yml up -d
+# 3. Deploy production
+./automation/deploy.sh production v1.0.0
 
 # 4. Verify
-docker compose -f docker-compose.production.yml ps
-docker compose -f docker-compose.production.yml logs ai-agent
-
-# 5. Health check
-curl http://localhost:8000/health
-curl http://localhost:8080/health
+docker compose -f release/docker-compose.production.yml ps
+docker compose -f release/docker-compose.production.yml logs ai-agent --tail=50
 ```
 
----
+### Service Ports on Production (monitor-ai-01)
+
+```
+AI Agent:       http://52.74.118.8:8000/health
+Prometheus:     http://52.74.118.8:9090
+Grafana:        http://52.74.118.8:3000
+```
+
+### Production Configuration
+
+The production docker-compose uses:
+- **Port 8000** for AI Agent (vs 18000 for staging)
+- Same environment variables as staging
+- Same health checks and monitoring
+
+**Verify Production:**
+
+```bash
+# Check running containers
+docker compose -f release/docker-compose.production.yml ps
+
+# Check logs
+docker compose -f release/docker-compose.production.yml logs ai-agent
+
+# Test endpoints
+curl http://localhost:8000/health
+curl http://localhost:8080/api/health
+```
+
+### Production Rollback
+
+If deployment fails:
+
+```bash
+# SSH to monitor
+ssh -i aws-hybrid-key.pem ec2-user@52.74.118.8
+
+cd /home/ec2-user/aws-hybrid
+
+# 1. Pull previous version
+docker pull ghcr.io/{owner}/aws-hybrid-ai-agent:v0.9.9
+
+# 2. Update docker-compose
+sed -i 's/v1.0.0/v0.9.9/g' release/.env.production
+
+# 3. Redeploy
+./automation/deploy.sh production v0.9.9
+
+# 4. Verify
+docker compose -f release/docker-compose.production.yml ps
+curl http://localhost:8000/health
+```
 
 ## ✅ Kiểm tra & Validation
 
@@ -1560,12 +1905,13 @@ docker system prune -a --volumes
 ### Before Going Live
 
 - [ ] AWS account created
-- [ ] IAM users setup
-- [ ] SSH keys generated and stored
-- [ ] Terraform infrastructure created
+- [ ] SSH keys generated and stored ⭐ (mandatory for deployment)
+- [ ] Terraform infrastructure created (run locally)
+- [ ] IAM user created (optional - only if automating Terraform)
 - [ ] EC2 instances running
 - [ ] Docker installed on all instances
 - [ ] Environment files configured
+- [ ] GitHub Secrets configured (SSH_HOST, SSH_PORT, SSH_PRIVATE_KEY, GHCR credentials)
 - [ ] Staging deployment successful
 - [ ] All health checks passing
 - [ ] Production deployment successful
