@@ -1,12 +1,11 @@
 # main.py
 import os
-import json
 import logging
 import redis
-from contextlib import asynccontextmanager          # FIX #4
-from fastapi import FastAPI, Request
+from contextlib import asynccontextmanager
+from fastapi import FastAPI
 from pydantic import BaseModel
-from typing import List, Optional, cast 
+from typing import List, Optional
 from dotenv import load_dotenv
 
 from core.tasks import process_alerts_task
@@ -85,69 +84,13 @@ class AlertmanagerPayload(BaseModel):
 
 @app.post("/webhook")
 async def prometheus_webhook(payload: AlertmanagerPayload):
-    """Tiếp nhận Alert và đẩy ngay vào Celery để xử lý bất đồng bộ."""
+    """
+    PHASE 3: Tiếp nhận Alert và đẩy ngay vào Celery để xử lý bất đồng bộ.
+    
+    AlertManager gửi webhook POST → FastAPI nhận → enqueue to Celery
+    """
     process_alerts_task.delay(payload.model_dump())  # model_dump() đúng chuẩn Pydantic v2
     return {"status": "enqueued", "alert_count": len(payload.alerts)}
-
-
-@app.post("/telegram/webhook")
-async def telegram_callback(request: Request):
-    """Xử lý phản hồi từ Telegram (Approved/Rejected)."""
-    try:
-        data = await request.json()
-        if "callback_query" not in data:
-            return {"status": "ok"}
-
-        cb      = data["callback_query"]
-        cb_data = cb.get("data", "")
-        parts   = cb_data.split("|")
-
-        if len(parts) < 2:
-            return {"status": "ok"}
-
-        action_type, incident_id = parts[0], parts[1]
-
-        # FIX #8: Wrap Redis read trong try-except
-        try:
-            ctx_raw = redis_client.get(f"incident:{incident_id}")
-        except redis.RedisError as e:
-            logger.error(f"Redis read error: {e}")
-            send_telegram_message("⚠️ Lỗi kết nối Redis, không thể xử lý callback.")
-            return {"status": "error"}
-
-        if not ctx_raw:
-            send_telegram_message(f"⚠️ Hết hạn context cho sự cố `{incident_id}`.")
-            return {"status": "ok"}
-
-        ctx = json.loads(cast(str, ctx_raw))
-        rag = get_rag_instance()
-
-        if action_type == "ok":
-            action = ctx.get("proposal", {}).get("action", "fix")
-            send_telegram_message(f"⚙️ *Thực thi:* `{action}` trên `{ctx['instance']}`...")
-            if rag:
-                rag.save_incident(
-                    alert_name=ctx["alert_name"],
-                    description=ctx["incident_details"],
-                    ai_analysis=ctx["ai_analysis"],
-                    resolution=action,
-                    outcome="executed_by_human"
-                )
-            send_telegram_message(f"🚀 *Hoàn tất:* `{action}` thành công!")
-
-        elif action_type == "ignore":
-            send_telegram_message(f"🚫 *Bỏ qua:* `{ctx['alert_name']}`.")
-
-        # FIX #8: Wrap Redis delete trong try-except
-        try:
-            redis_client.delete(f"incident:{incident_id}")
-        except redis.RedisError as e:
-            logger.error(f"Redis delete error: {e}")
-
-    except Exception as e:
-        logger.error(f"Callback error: {e}")
-
-    return {"status": "ok"}
 
 
 @app.get("/metrics")

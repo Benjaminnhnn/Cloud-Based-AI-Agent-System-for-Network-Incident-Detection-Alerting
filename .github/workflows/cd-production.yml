@@ -79,6 +79,7 @@ jobs:
           AI_AGENT_PUBLIC_URL: ${{ secrets.AI_AGENT_PUBLIC_URL }}
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
           SECRET_KEY: ${{ secrets.SECRET_KEY }}
+          PROMETHEUS_URL: ${{ secrets.PROMETHEUS_URL }}
         run: |
           cp release/.env.example release/.env.staging
           cp release/.env.example release/.env.production
@@ -96,6 +97,7 @@ jobs:
               "AI_AGENT_PUBLIC_URL",
               "DATABASE_URL",
               "SECRET_KEY",
+              "PROMETHEUS_URL",
           ):
               value = os.environ.get(key, "")
               if value:
@@ -227,8 +229,8 @@ jobs:
           mkdir -p ~/.ssh
           echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/deploy_key
           chmod 600 ~/.ssh/deploy_key
-          scp -o StrictHostKeyChecking=no -o ConnectTimeout=10 -i ~/.ssh/deploy_key -r release/ ec2-user@${{ secrets.SSH_HOST }}:/home/ec2-user/aws-hybrid/
-          scp -o StrictHostKeyChecking=no -o ConnectTimeout=10 -i ~/.ssh/deploy_key -r automation/ ec2-user@${{ secrets.SSH_HOST }}:/home/ec2-user/aws-hybrid/
+          scp -o StrictHostKeyChecking=no -o ConnectTimeout=10 -i ~/.ssh/deploy_key -r release/ ec2-user@${{ secrets.SSH_HOST }}:/home/ec2-user/aws-hybrid/release/
+          scp -o StrictHostKeyChecking=no -o ConnectTimeout=10 -i ~/.ssh/deploy_key -r automation/ ec2-user@${{ secrets.SSH_HOST }}:/home/ec2-user/aws-hybrid/automation/
           rm ~/.ssh/deploy_key
 
       - name: Run deploy script on EC2
