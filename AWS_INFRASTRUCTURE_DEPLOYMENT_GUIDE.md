@@ -494,46 +494,36 @@ unset AWS_ACCESS_KEY_ID        # Clean up after use
 
 cat > terraform.tfvars << 'EOF'
 aws_region = "ap-southeast-1"  # Singapore - closest to Vietnam
-aws_profile = "default"
-
-# VPC Configuration
-vpc_cidr = "10.0.0.0/16"
-vpc_name = "aws-hybrid-vpc"
-
-# Subnets
-subnet_1_cidr = "10.0.1.0/24"   # 2a (AZ 1)
-subnet_1_az   = "ap-southeast-1a"
-subnet_1_name = "subnet-staging"
-
-subnet_2_cidr = "10.0.2.0/24"   # 2b (AZ 2)
-subnet_2_az   = "ap-southeast-1b"
-subnet_2_name = "subnet-production"
-
-# EC2 Instances
-instance_type = "t3.medium"     # 2 CPU, 4GB RAM
-ami_filter    = "ubuntu/images/hvm-ssd/ubuntu-jammy-22.04-amd64-server-*"
-
-# Instance Configuration
-instance_count_staging = 1
-instance_count_production = 1
-instance_monitoring_count = 1
 
 # Security Groups
-enable_http  = true    # Allow 80
-enable_https = true    # Allow 443
-allow_ssh_cidr = ["0.0.0.0/0"]  # Change to restricted IP!
+my_ip_cidr = "YOUR_PUBLIC_IP/32"  # Example: 125.235.236.242/32
+ci_cd_ssh_cidr_blocks = []        # Add CI/CD runner CIDRs only if needed
 
-# Tags
-project_name = "aws-hybrid"
-environment  = "staging"
+# SSH key paths
+public_key_path  = "/mnt/c/Users/win/.ssh/id_rsa.pub"
+private_key_path = "/mnt/c/Users/win/.ssh/id_rsa"
+
+# EC2 Instances
+monitor_instance_type = "t3.small"
+web_instance_type     = "t3.micro"
+core_instance_type    = "t3.micro"
+
+# EBS root volumes
+root_volume_size = 30
+
+# Optional tags
+project_name = "aiops-bank"
+environment  = "dev"
 EOF
 ```
 
 **⚠️ QUAN TRỌNG:**
 ```
-- Đổi allow_ssh_cidr từ 0.0.0.0/0 thành IP cụ thể của bạn
+- Đổi my_ip_cidr thành IP public cụ thể của bạn, định dạng x.x.x.x/32
+- Không để ci_cd_ssh_cidr_blocks = ["0.0.0.0/0"] trừ khi chỉ dùng tạm thời để debug
 - Để nguyên region ap-southeast-1 (Singapore - gần nhất)
-- Instance type: t3.medium hoặc t3.small tùy budget
+- AWS profile hiện đang cấu hình trong terraform/provider.tf: profile = "target-account"
+- Instance types có thể giảm/tăng tùy budget: monitor_instance_type, web_instance_type, core_instance_type
 ```
 
 ### Bước 3: Áp dụng Cấu hình Terraform
@@ -1951,5 +1941,4 @@ docker system prune -a --volumes
    - When it started failing
 
 ---
-
 
