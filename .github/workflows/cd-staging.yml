@@ -230,8 +230,8 @@ jobs:
           command_timeout: 600s
           script: |
             cd /home/ec2-user/aws-hybrid
-            chmod +x automation/deploy.sh
+            chmod +x automation/app-release-deploy.sh
             export GHCR_USERNAME="${{ secrets.GHCR_USERNAME }}"
             export GHCR_TOKEN="${{ secrets.GHCR_TOKEN }}"
             export GHCR_OWNER="${{ needs.build-and-push.outputs.owner_lc }}"
-            ./automation/deploy.sh staging "${{ needs.build-and-push.outputs.image_tag }}"
+            ./automation/app-release-deploy.sh staging "${{ needs.build-and-push.outputs.image_tag }}"

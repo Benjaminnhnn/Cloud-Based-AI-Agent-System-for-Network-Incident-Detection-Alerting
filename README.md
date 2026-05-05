@@ -43,9 +43,8 @@ aws-hybrid/
 
 ### Key Automation Scripts
 
-- `automation/deploy.sh` - Script triển khai chính (xử lý pull image, check health, rollback)
-- `automation/deploy-infrastructure.sh` - Khởi tạo hạ tầng AWS và chạy Ansible
-- `automation/ansible-deploy.sh` - Wrapper cho Ansible (load credentials, bootstrap)
+- `automation/ansible-deploy.sh` - Script deploy hạ tầng/dịch vụ bằng Ansible (load credentials, bootstrap, deploy stack)
+- `automation/app-release-deploy.sh` - Script deploy app release cho CI/CD (pull image, health check, rollback)
 - `automation/update-infrastructure.sh` - Cập nhật hạ tầng và đồng bộ IP
 
 ---
@@ -74,7 +73,7 @@ export TELEGRAM_CHAT_ID="your-chat-id"
 
 ### Cách 1: Triển khai tự động (Khuyên dùng)
 ```bash
-bash automation/deploy-infrastructure.sh
+bash automation/ansible-deploy.sh
 ```
 Script này sẽ tự động kiểm tra hạ tầng, cài đặt môi trường và triển khai toàn bộ stack.
 
@@ -109,5 +108,3 @@ Xem thêm chi tiết tại thư mục `diagram/` và các file hướng dẫn:
 - `ANSIBLE_DEPLOYMENT_GUIDE.md`: Hướng dẫn chi tiết về Ansible.
 - `diagram/ARCHITECTURE_DIAGRAMS.md`: Sơ đồ hạ tầng AWS.
 - `diagram/CI_CD_DEPLOYMENT_DIAGRAM.md`: Sơ đồ luồng CI/CD.
-
-

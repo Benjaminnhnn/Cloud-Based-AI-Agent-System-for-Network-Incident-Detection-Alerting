@@ -7,8 +7,8 @@
 1. [Kiến trúc hệ thống](#kiến-trúc-hệ-thống)
 2. [Chuẩn bị AWS Account](#chuẩn-bị-aws-account)
 3. [Tạo Infrastructure với Terraform](#tạo-infrastructure-với-terraform)
-4. [Setup EC2 Instances](#setup-ec2-instances)
-5. [Install Docker & Docker Compose](#install-docker--docker-compose)
+4. [Đồng bộ Ansible Inventory](#đồng-bộ-ansible-inventory)
+5. [Deploy Hạ tầng và Dịch vụ bằng Ansible](#deploy-hạ-tầng-và-dịch-vụ-bằng-ansible)
 6. [Deploy Staging Environment](#deploy-staging-environment)
 7. [Deploy Production Environment](#deploy-production-environment)
 8. [Kiểm tra & Validation](#kiểm-tra--validation)
@@ -219,9 +219,8 @@ aws-hybrid/
 │   ├── .env.staging        # Staging config (DO NOT commit!)
 │   └── .env.production     # Production config (DO NOT commit!)
 ├── automation/             # Deployment scripts
-│   ├── deploy.sh           # Main deployment orchestrator
-│   ├── deploy-infrastructure.sh
-│   ├── ansible-deploy.sh
+│   ├── ansible-deploy.sh      # Deploy hạ tầng/dịch vụ bằng Ansible
+│   ├── app-release-deploy.sh  # Deploy app release qua Docker Compose (CI/CD)
 │   ├── update-infrastructure.sh
 │   └── fix-credentials.sh
 ├── platform-config/        # Local development config
@@ -259,26 +258,80 @@ aws-hybrid/
 └─────────────────────────────────────┘
                   ↓
 ┌─────────────────────────────────────┐
+│  Ansible Control Machine (Local)    │
+├─────────────────────────────────────┤
+│ Bước 4: Đồng bộ inventory           │
+│   terraform output ansible_inventory│
+│                                     │
+│ Bước 5: Bootstrap + deploy stack    │
+│   automation/ansible-deploy.sh      │
+│                                     │
+│ Kết quả: Docker, monitoring, web,   │
+│ core services, AI Agent được cài    │
+│ trên EC2 instances                  │
+└─────────────────────────────────────┘
+                  ↓
+┌─────────────────────────────────────┐
 │  GitHub Repository                  │
 ├─────────────────────────────────────┤
-│ Bước 4: Thiết lập GitHub Secrets    │
+│ Bước 6: Thiết lập GitHub Secrets    │
 │   - SSH_HOST (từ terraform)         │
 │   - SSH_PORT (22)                   │
 │   - SSH_PRIVATE_KEY ⭐              │
 │   - GHCR_USERNAME                   │
 │   - GHCR_TOKEN                      │
 │                                     │
-│ Bước 5: Kích hoạt CI/CD Workflow    │
+│ Bước 7: Kích hoạt CI/CD Workflow    │
 │   - Push tới develop → Staging      │
 │   - Tag v1.0.0 → Production         │
 │                                     │
-│ Kết quả: Tự động triển khai via SSH │
+│ Kết quả: App release được cập nhật  │
+│ qua SSH/GitHub Actions              │
 └─────────────────────────────────────┘
 ```
 
 **🔑 Chỉ cần AWS credentials (Access Key) khi:**
 - Chạy `terraform init/apply` trên local machine
 - KHÔNG cần trong GitHub Actions (SSH deployment đủ)
+
+**🧭 Luồng đúng hiện tại:** Terraform chỉ tạo tài nguyên AWS. Sau khi EC2 đã chạy, Ansible là lớp chính để bootstrap server và deploy toàn bộ stack dịch vụ.
+
+### Chuẩn bị máy dev mới
+
+Nếu một dev khác dùng máy riêng để triển khai, họ cần cấu hình các giá trị phụ thuộc máy local trước khi chạy Terraform/Ansible.
+
+```bash
+# 1. Clone repo và đặt biến PROJECT_ROOT cho terminal hiện tại
+git clone <repo-url> aws-hybrid
+cd aws-hybrid
+export PROJECT_ROOT="$(pwd)"
+
+# 2. Cài công cụ cần thiết trên máy local
+terraform version
+ansible --version
+aws --version
+
+# 3. Cấu hình AWS profile đúng với terraform/provider.tf
+aws configure --profile target-account
+
+# 4. Chuẩn bị SSH key dùng để vào EC2
+export SSH_KEY_PATH="$HOME/.ssh/id_rsa"
+chmod 600 "$SSH_KEY_PATH"
+test -f "${SSH_KEY_PATH}.pub"
+```
+
+Các giá trị cần điều chỉnh theo từng máy:
+
+| Giá trị | Nằm ở đâu | Ví dụ |
+|---------|-----------|-------|
+| `PROJECT_ROOT` | Terminal local | `/home/alice/aws-hybrid` |
+| `SSH_KEY_PATH` | Terminal local và `terraform.tfvars` | `/home/alice/.ssh/id_rsa` |
+| `public_key_path` | `terraform/terraform.tfvars` | `/home/alice/.ssh/id_rsa.pub` |
+| `private_key_path` | `terraform/terraform.tfvars` | `/home/alice/.ssh/id_rsa` |
+| `my_ip_cidr` | `terraform/terraform.tfvars` | `x.x.x.x/32` |
+| `agent_src/.env` | File local, không commit | Gemini/Telegram credentials |
+
+**Không hard-code đường dẫn của máy khác** như `/home/hoang_viet/...` hoặc `/mnt/c/Users/win/...` khi giao cho dev mới.
 
 ### Step 1: Create AWS Account
 
@@ -324,21 +377,26 @@ Nếu muốn GitHub Actions tự động chạy `terraform apply` (không khuy�
 
 ### Step 3: Generate SSH Key Pair (BẮT BUỘC ⭐)
 
-**Bắt buộc** để GitHub Actions deploy tới EC2 instances.
+Terraform tạo AWS EC2 Key Pair từ `public_key_path`, nên mỗi dev cần có SSH key pair local trước khi chạy `terraform apply`.
 
 ```bash
-# Trong AWS Console → EC2 → Key Pairs
-# Click "Create key pair"
-# 
-# Name: aws-hybrid-key
-# Type: RSA
-# Format: .pem (Linux/Mac) or .ppk (Windows with PuTTY)
-#
-# Download file: aws-hybrid-key.pem
-# chmod 400 aws-hybrid-key.pem  # Linux/Mac
-# 
-# Save to GitHub Secrets:
-# SSH_PRIVATE_KEY = content của aws-hybrid-key.pem
+# Trên máy local của dev
+export SSH_KEY_PATH="$HOME/.ssh/id_rsa"
+
+# Tạo key nếu máy chưa có
+if [ ! -f "$SSH_KEY_PATH" ]; then
+  ssh-keygen -t rsa -b 4096 -f "$SSH_KEY_PATH" -N ""
+fi
+
+chmod 600 "$SSH_KEY_PATH"
+test -f "${SSH_KEY_PATH}.pub"
+
+# Sau đó cấu hình trong terraform/terraform.tfvars:
+# public_key_path  = "/home/<your-user>/.ssh/id_rsa.pub"
+# private_key_path = "/home/<your-user>/.ssh/id_rsa"
+
+# Nếu dùng GitHub Actions CD, lưu private key vào GitHub Secret:
+# SSH_PRIVATE_KEY = nội dung file $SSH_KEY_PATH
 ```
 
 ### Step 4: Kiểm tra GitHub Secrets trước khi chạy CI/CD
@@ -351,9 +409,16 @@ Trước khi trigger workflow `CD Staging` hoặc `CD Production`, kiểm tra re
 |--------|----------|--------|---------|
 | `SSH_HOST` | EC2 target để deploy | ⭐ **BẮT BUỘC** | Public IP của EC2 (lấy từ `terraform output`) |
 | `SSH_PORT` | SSH port | ⭐ **BẮT BUỘC** | Thường là `22` |
-| `SSH_PRIVATE_KEY` | SSH key để GitHub Actions vào EC2 | ⭐ **BẮT BUỘC** | Nội dung private key `aws-hybrid-key.pem` đầy đủ |
+| `SSH_PRIVATE_KEY` | SSH key để GitHub Actions vào EC2 | ⭐ **BẮT BUỘC** | Nội dung private key tương ứng với `private_key_path` |
 | `GHCR_USERNAME` | Login GitHub Container Registry | ⭐ **BẮT BUỘC** | GitHub username hoặc bot account |
 | `GHCR_TOKEN` | Pull/push image trên GHCR | ⭐ **BẮT BUỘC** | PAT có quyền `read:packages`, `write:packages`; nếu repo private cần `repo` |
+| `GEMINI_API_KEY` | Runtime config cho AI Agent | ⭐ **BẮT BUỘC** | Workflow ghi vào `release/.env.*` |
+| `TELEGRAM_TOKEN` | Telegram bot token | ⭐ **BẮT BUỘC nếu bật Telegram** | Workflow ghi vào `release/.env.*` |
+| `TELEGRAM_CHAT_ID` | Telegram chat ID | ⭐ **BẮT BUỘC nếu bật Telegram** | Workflow ghi vào `release/.env.*` |
+| `AI_AGENT_PUBLIC_URL` | Public URL của AI Agent | Tùy cấu hình | Dùng nếu app cần callback/public URL |
+| `DATABASE_URL` | Database URL cho service cần DB | Tùy cấu hình | Workflow ghi vào `release/.env.*` nếu có |
+| `SECRET_KEY` | Secret key cho backend/API | ⭐ **BẮT BUỘC nếu backend dùng auth/session** | Workflow ghi vào `release/.env.*` |
+| `PROMETHEUS_URL` | Prometheus URL | Production | Dùng trong `cd-production.yml` |
 | `AWS_ACCESS_KEY_ID` | Terraform (Local only) | ❌ **KHÔNG CẦN** | Chỉ dùng khi chạy `terraform apply` trên local machine |
 | `AWS_SECRET_ACCESS_KEY` | Terraform (Local only) | ❌ **KHÔNG CẦN** | Chỉ dùng khi chạy `terraform apply` trên local machine |
 
@@ -368,6 +433,8 @@ Verify (BẮT BUỘC cho CI/CD):
 ✅ SSH_PRIVATE_KEY = private key đầy đủ (không phải public key .pub)
 ✅ GHCR_USERNAME = GitHub username
 ✅ GHCR_TOKEN = GitHub token với quyền packages
+✅ GEMINI_API_KEY / TELEGRAM_TOKEN / TELEGRAM_CHAT_ID / SECRET_KEY đã có nếu service cần
+✅ DATABASE_URL / AI_AGENT_PUBLIC_URL / PROMETHEUS_URL đã có nếu workflow/service đang dùng
 
 KHÔNG CẦN cho CI/CD deployment (chỉ dùng local):
 ❌ AWS_ACCESS_KEY_ID (chỉ dùng khi chạy Terraform trên local)
@@ -385,6 +452,13 @@ gh secret list
 # SSH_PRIVATE_KEY
 # GHCR_USERNAME
 # GHCR_TOKEN
+# GEMINI_API_KEY
+# TELEGRAM_TOKEN
+# TELEGRAM_CHAT_ID
+# AI_AGENT_PUBLIC_URL
+# DATABASE_URL
+# SECRET_KEY
+# PROMETHEUS_URL (production)
 
 # NOT needed for CI/CD (local only):
 # AWS_ACCESS_KEY_ID (chỉ cho terraform apply trên local)
@@ -409,7 +483,7 @@ terraform output -raw monitor_public_ip
 
 SSH_HOST: 52.74.118.8              # Monitor instance (Elastic IP - tĩnh)
 SSH_PORT: 22                        # Cổng SSH chuẩn
-SSH_PRIVATE_KEY: <key content>      # Nội dung aws-hybrid-key.pem
+SSH_PRIVATE_KEY: <key content>      # Nội dung private key trong private_key_path
 GHCR_USERNAME: your-github-name     # Tên người dùng GitHub
 GHCR_TOKEN: ghp_xxxxxxxxx...        # Token GitHub có phạm vi packages
 ```
@@ -418,14 +492,14 @@ GHCR_TOKEN: ghp_xxxxxxxxx...        # Token GitHub có phạm vi packages
 
 ```bash
 # Kiểm tra kết nối SSH tới monitor instance
-ssh -i aws-hybrid-key.pem -p 22 ec2-user@52.74.118.8 'echo "SSH OK"'
+ssh -i "$SSH_KEY_PATH" -p 22 ec2-user@52.74.118.8 'echo "SSH OK"'
 
 # Kiểm tra Docker trên monitor instance
-ssh -i aws-hybrid-key.pem ec2-user@52.74.118.8 'docker --version && docker compose version'
+ssh -i "$SSH_KEY_PATH" ec2-user@52.74.118.8 'docker --version && docker compose version'
 
 # Kiểm tra đăng nhập GHCR
 echo $GHCR_TOKEN | docker login ghcr.io -u $GHCR_USERNAME --password-stdin
-ssh -i aws-hybrid-key.pem ec2-user@<SSH_HOST> 'docker --version && docker compose version'
+ssh -i "$SSH_KEY_PATH" ec2-user@<SSH_HOST> 'docker --version && docker compose version'
 ```
 
 ---
@@ -456,7 +530,7 @@ ssh -i aws-hybrid-key.pem ec2-user@<SSH_HOST> 'docker --version && docker compos
 ⚠️ **Terraform chạy MANUAL trên máy local, KHÔNG tự động trong GitHub Actions**
 
 ```bash
-cd /path/to/aws-hybrid/terraform
+cd "$PROJECT_ROOT/terraform"
 
 # 1. Cấu hình AWS credentials (LOCAL ONLY - không commit!)
 export AWS_ACCESS_KEY_ID="your-access-key"          # IAM user access key
@@ -500,8 +574,8 @@ my_ip_cidr = "YOUR_PUBLIC_IP/32"  # Example: 125.235.236.242/32
 ci_cd_ssh_cidr_blocks = []        # Add CI/CD runner CIDRs only if needed
 
 # SSH key paths
-public_key_path  = "/mnt/c/Users/win/.ssh/id_rsa.pub"
-private_key_path = "/mnt/c/Users/win/.ssh/id_rsa"
+public_key_path  = "/home/<your-user>/.ssh/id_rsa.pub"
+private_key_path = "/home/<your-user>/.ssh/id_rsa"
 
 # EC2 Instances
 monitor_instance_type = "t3.small"
@@ -520,6 +594,7 @@ EOF
 **⚠️ QUAN TRỌNG:**
 ```
 - Đổi my_ip_cidr thành IP public cụ thể của bạn, định dạng x.x.x.x/32
+- Đổi public_key_path/private_key_path thành đường dẫn SSH key trên máy đang triển khai
 - Không để ci_cd_ssh_cidr_blocks = ["0.0.0.0/0"] trừ khi chỉ dùng tạm thời để debug
 - Để nguyên region ap-southeast-1 (Singapore - gần nhất)
 - AWS profile hiện đang cấu hình trong terraform/provider.tf: profile = "target-account"
@@ -550,8 +625,9 @@ terraform show
 # 4. Lấy outputs
 terraform output
 # Ví dụ:
-# staging_ip = "13.251.123.45"
-# production_ip = "13.251.123.46"
+# monitor_public_ip = "52.74.118.8"
+# web_public_ip     = "18.136.112.28"
+# core_public_ip    = "54.255.94.179"
 ```
 
 ### Bước 4: Lưu Giá trị Outputs
@@ -561,201 +637,168 @@ terraform output
 terraform output -json > outputs.json
 
 # Hoặc sao chép thủ công:
-echo "Staging IP: $(terraform output -raw staging_public_ip)"
-echo "Production IP: $(terraform output -raw production_public_ip)"
+echo "Monitor IP: $(terraform output -raw monitor_public_ip)"
+echo "Web IP: $(terraform output -raw web_public_ip)"
+echo "Core IP: $(terraform output -raw core_public_ip)"
 
 # Cập nhật GitHub Secrets:
-# SSH_HOST = staging_public_ip (thay đổi theo môi trường)
+# SSH_HOST = monitor_public_ip nếu dùng GitHub Actions deploy app lên monitor instance
 ```
 
 ---
 
-## 🖥️ Thiết lập EC2 Instances
+## 🧭 Đồng bộ Ansible Inventory
 
-### Bước 1: Kết nối tới EC2
+Sau khi Terraform tạo xong EC2 instances, bước tiếp theo là đồng bộ IP từ Terraform outputs sang `ansible/inventory.ini`. Đây là inventory thực tế Ansible dùng để bootstrap và deploy dịch vụ.
 
-```bash
-# 1. Lấy IP công khai từ Terraform output
-STAGING_IP=$(terraform output -raw staging_public_ip)
-PROD_IP=$(terraform output -raw production_public_ip)
-
-# 2. SSH vào staging
-ssh -i aws-hybrid-key.pem ubuntu@$STAGING_IP
-
-# 3. Cập nhật hệ thống
-sudo apt update
-sudo apt upgrade -y
-sudo apt autoremove -y
-```
-
-### Bước 2: Tạo Cấu trúc Thư mục
+### Bước 1: Kiểm tra Terraform outputs
 
 ```bash
-# 1. Tạo thư mục ứng dụng
-sudo mkdir -p /opt/aws-hybrid/staging
-sudo mkdir -p /opt/aws-hybrid/production
-sudo mkdir -p /opt/aws-hybrid/logs
+cd "$PROJECT_ROOT/terraform"
+terraform output
 
-# 2. Đặt quyền
-sudo chown -R ubuntu:ubuntu /opt/aws-hybrid
-chmod -R 755 /opt/aws-hybrid
-
-# 3. Xác minh
-ls -la /opt/aws-hybrid
+# Outputs cần có:
+# monitor_public_ip
+# web_public_ip
+# core_public_ip
+# ansible_inventory
 ```
 
-### Bước 3: Thiết lập File Môi trường
+### Bước 2: Sinh Ansible inventory từ Terraform output
 
 ```bash
-# 1. Môi trường staging
-cat > /opt/aws-hybrid/staging/.env.staging << 'EOF'
-# Môi trường Staging
-ENVIRONMENT=staging
-GHCR_OWNER=your-github-username
-IMAGE_TAG=staging-latest
+cd "$PROJECT_ROOT/terraform"
+terraform output -raw ansible_inventory > "$PROJECT_ROOT/ansible/inventory.ini"
 
-# Dịch vụ
-AI_AGENT_PORT=8000
-API_PORT=8000
-
-# Google Generative AI
-GEMINI_API_KEY=your-gemini-key
-
-# Telegram (tùy chọn)
-TELEGRAM_TOKEN=your-token
-TELEGRAM_CHAT_ID=your-chat-id
-
-# Cơ sở dữ liệu
-DB_HOST=localhost
-DB_PORT=5432
-DB_NAME=aws_hybrid_staging
-EOF
-
-# 2. Môi trường production
-cat > /opt/aws-hybrid/production/.env.production << 'EOF'
-# Môi trường Production
-ENVIRONMENT=production
-GHCR_OWNER=your-github-username
-IMAGE_TAG=latest
-
-# Dịch vụ
-AI_AGENT_PORT=8000
-API_PORT=8000
-
-# Google Generative AI
-GEMINI_API_KEY=your-gemini-key
-
-# Cơ sở dữ liệu
-DB_HOST=localhost
-DB_PORT=5432
-DB_NAME=aws_hybrid_production
-EOF
-
-# 3. Hạn chế quyền
-chmod 600 /opt/aws-hybrid/staging/.env.staging
-chmod 600 /opt/aws-hybrid/production/.env.production
+cd "$PROJECT_ROOT"
+cat ansible/inventory.ini
 ```
+
+Lệnh này sẽ:
+- Đọc IP EC2 từ Terraform outputs.
+- Ghi lại `ansible/inventory.ini`.
+- Dùng `ssh_user` từ Terraform, mặc định là `ec2-user`.
+- Dùng `private_key_path` trong `terraform/terraform.tfvars`, đúng theo máy của dev đang triển khai.
+
+**Lưu ý:** Nếu IP public của máy dev thay đổi, cập nhật lại `my_ip_cidr` trong `terraform/terraform.tfvars`, chạy `terraform apply`, rồi sinh lại inventory bằng lệnh trên.
+
+Inventory kỳ vọng:
+
+```ini
+[monitor]
+monitor-ai-01 ansible_host=52.74.118.8 ansible_user=ec2-user
+
+[web]
+bank-web-01 ansible_host=18.136.112.28 ansible_user=ec2-user
+
+[core]
+bank-core-01 ansible_host=54.255.94.179 ansible_user=ec2-user
+
+[app:children]
+web
+core
+
+[all:vars]
+ansible_python_interpreter=/usr/bin/python3
+ansible_ssh_private_key_file=/home/<your-user>/.ssh/id_rsa
+```
+
+### Bước 3: Kiểm tra SSH/Ansible
+
+```bash
+cd "$PROJECT_ROOT"
+ansible all -i ansible/inventory.ini -m ping
+```
+
+Kết quả kỳ vọng là cả 3 host đều `SUCCESS`.
 
 ---
 
-## 🐳 Cài đặt Docker & Docker Compose
+## 🚀 Deploy Hạ tầng và Dịch vụ bằng Ansible
 
-### Bước 1: Cài đặt Docker Engine
+Ansible là cơ chế chính để cấu hình EC2 sau Terraform. Không cần SSH từng máy để cài Docker thủ công. Playbook sẽ tự động bootstrap server và triển khai toàn bộ stack.
 
-```bash
-# 1. Xóa docker cũ
-sudo apt remove docker docker-engine docker.io containerd runc
+### Các file Ansible chính
 
-# 2. Cài đặt phụ thuộc
-sudo apt install -y \
-    ca-certificates \
-    curl \
-    gnupg \
-    lsb-release \
-    apt-transport-https
+| File | Vai trò |
+|------|--------|
+| `ansible/inventory.ini` | Danh sách EC2 hosts và SSH user/key |
+| `ansible/playbooks/bootstrap.yml` | Cài package hệ thống, Docker, Python modules, sudoers |
+| `ansible/playbooks/deploy-complete-infrastructure.yml` | Deploy Node Exporter, Prometheus, AlertManager, Grafana, Webserver, Core services, AI Agent |
+| `automation/ansible-deploy.sh` | Wrapper one-stop: load credentials, ping, bootstrap, deploy |
 
-# 3. Thêm Docker GPG key
-sudo mkdir -p /etc/apt/keyrings
-curl -fsSL https://download.docker.com/linux/ubuntu/gpg | \
-    sudo gpg --dearmor -o /etc/apt/keyrings/docker-archive-keyring.gpg
+### Bước 1: Chuẩn bị credentials cho AI Agent
 
-# 4. Thiết lập kho lưu trữ
-echo \
-  "deb [arch=amd64 signed-by=/etc/apt/keyrings/docker-archive-keyring.gpg] https://download.docker.com/linux/ubuntu \
-  $(lsb_release -cs) stable" | sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
-
-# 5. Cài đặt Docker
-sudo apt update
-sudo apt install -y docker-ce docker-ce-cli containerd.io
-
-# 6. Xác minh
-sudo docker --version
-# Docker version 26.0.0+
-```
-
-### Bước 2: Thiết lập Docker Daemon
+Credentials được lưu trong `agent_src/.env`. Nếu file này đã có sẵn thì chỉ cần kiểm tra nội dung, không cần export thủ công từng biến.
 
 ```bash
-# 1. Thêm người dùng hiện tại vào nhóm docker (không cần sudo)
-sudo usermod -aG docker $USER
-newgrp docker
+cd "$PROJECT_ROOT"
 
-# 2. Cấu hình Docker daemon
-sudo cat > /etc/docker/daemon.json << 'EOF'
-{
-  "log-driver": "json-file",
-  "log-opts": {
-    "max-size": "10m",
-    "max-file": "3"
-  },
-  "live-restore": true,
-  "userland-proxy": false
-}
+# Chỉ tạo file nếu chưa có
+if [ ! -f agent_src/.env ]; then
+  cat > agent_src/.env << 'EOF'
+GEMINI_API_KEY=your-gemini-api-key
+TELEGRAM_TOKEN=your-telegram-bot-token
+TELEGRAM_CHAT_ID=your-telegram-chat-id
 EOF
+  chmod 600 agent_src/.env
+fi
 
-# 3. Khởi động lại Docker
-sudo systemctl restart docker
-sudo systemctl enable docker  # auto-start on boot
-
-# 4. Xác minh
-docker ps
-docker info
+# Kiểm tra nhanh các key đã có trong file hiện tại
+grep -E "^(GEMINI_API_KEY|TELEGRAM_TOKEN|TELEGRAM_CHAT_ID)=" agent_src/.env
 ```
 
-### Bước 3: Cài đặt Docker Compose
+### Bước 2: Chạy Ansible deployment
 
 ```bash
-# Phiên bản mới nhất
-sudo curl -L \
-  "https://github.com/docker/compose/releases/latest/download/docker-compose-$(uname -s)-$(uname -m)" \
-  -o /usr/local/bin/docker-compose
-
-# Làm cho nó có thể thực thi
-sudo chmod +x /usr/local/bin/docker-compose
-
-# Xác minh
-docker compose --version
-# Docker Compose version 2.20.0+
+cd "$PROJECT_ROOT"
+bash automation/ansible-deploy.sh
 ```
 
-### Bước 4: Kiểm tra Docker
+Script này thực hiện 4 bước:
+
+```text
+[STEP 1/4] Load credentials từ agent_src/.env
+[STEP 2/4] Test SSH connectivity bằng ansible ping
+[STEP 3/4] Chạy bootstrap.yml
+[STEP 4/4] Chạy deploy-complete-infrastructure.yml
+```
+
+### Bước 3: Kiểm tra sau deploy
 
 ```bash
-# 1. Chạy test container
-docker run --rm -it ubuntu:22.04 echo "Hello from Docker!"
+cd "$PROJECT_ROOT"
 
-# 2. Kiểm tra logs
-docker logs <container-id>
+# Kiểm tra containers trên tất cả instances
+ansible all -i ansible/inventory.ini -m shell -a "docker ps --format 'table {{.Names}}\t{{.Status}}\t{{.Ports}}'"
 
-# 3. Liệt kê containers
-docker ps -a
+# Kiểm tra service trên monitor
+ansible monitor -i ansible/inventory.ini -m shell -a "curl -s http://localhost:9090/-/ready && curl -s http://localhost:3000/api/health"
+
+# Kiểm tra service trên web/core
+ansible web -i ansible/inventory.ini -m shell -a "docker ps"
+ansible core -i ansible/inventory.ini -m shell -a "docker ps"
 ```
+
+### URL truy cập sau khi Ansible deploy thành công
+
+```text
+Frontend React:   http://18.136.112.28:3000
+API Docs:         http://54.255.94.179:8000/docs
+API Health:       http://54.255.94.179:8000/api/health
+AI Agent Health:  http://52.74.118.8:8000/health
+Prometheus:       http://52.74.118.8:9090
+Grafana:          http://52.74.118.8:3000
+AlertManager:     http://52.74.118.8:9093
+```
+
+**Ghi chú:** Các lệnh SSH/Docker thủ công chỉ dùng để debug. Luồng chuẩn của dự án là Terraform tạo AWS resources, sau đó Ansible bootstrap và deploy services.
 
 ---
 
 ## 📦 Triển khai Môi trường Staging (monitor-ai-01: 52.74.118.8)
 
-### Triển khai tự động thông qua GitHub Actions (Khuyên cáo)
+### Triển khai qua GitHub Actions
 
 ```
 Workflow: cd-staging.yml
@@ -763,76 +806,56 @@ Kích hoạt: Push vào nhánh develop
 Hành động:
   1. Build Docker images (AI Agent, Payment API)
   2. Đẩy vào GHCR
-  3. SSH vào monitor instance (52.74.118.8)
-  4. Chạy: automation/deploy.sh staging {image-tag}
-  5. Docker compose pull & up
-  6. Kiểm tra sức khỏe (18x retries)
-  7. Lưu trạng thái triển khai
+  3. Tạo release/.env.staging từ GitHub Secrets
+  4. SSH vào monitor instance bằng SSH_PRIVATE_KEY
+  5. Copy release/ và automation/ lên EC2
+  6. Chạy: automation/app-release-deploy.sh staging {image-tag}
+  7. Docker compose pull & up
+  8. Kiểm tra sức khỏe (18x retries)
+  9. Lưu trạng thái triển khai
 ```
 
-**GitHub Secrets Required:**
-```
-SSH_HOST = 52.74.118.8
-SSH_PORT = 22
-SSH_PRIVATE_KEY = <private key content>
-GHCR_USERNAME = <github username>
-GHCR_TOKEN = <github token>
-```
+### GitHub Secrets dùng cho Staging
 
-### Triển khai thủ công (Lần đầu tiên)
+Workflow staging lấy toàn bộ cấu hình runtime từ GitHub Secrets, không tạo `.env` thủ công trên EC2.
+
+| Secret | Vai trò |
+|--------|--------|
+| `SSH_HOST` | Public IP/EIP của monitor instance |
+| `SSH_PORT` | SSH port, thường là `22` |
+| `SSH_PRIVATE_KEY` | Private key để GitHub Actions SSH vào EC2 |
+| `GHCR_USERNAME` | Username để login GHCR |
+| `GHCR_TOKEN` | Token để push/pull GHCR packages |
+| `GEMINI_API_KEY` | Gemini API key cho AI Agent |
+| `TELEGRAM_TOKEN` | Telegram bot token |
+| `TELEGRAM_CHAT_ID` | Telegram chat ID |
+| `AI_AGENT_PUBLIC_URL` | Public URL của AI Agent nếu cần |
+| `DATABASE_URL` | Database URL cho service cần DB |
+| `SECRET_KEY` | Secret key cho backend/API |
+
+### Cách trigger staging
 
 ```bash
-# Từ máy local
-MONITOR_IP="52.74.118.8"
-MONITOR_USER="ec2-user"
-KEY="aws-hybrid-key.pem"
+git checkout develop
+git push origin develop
 
-# 1. Tạo thư mục trên monitor
-ssh -i $KEY $MONITOR_USER@$MONITOR_IP \
-  "mkdir -p /home/ec2-user/aws-hybrid/{release,automation}"
-
-# 2. Sao chép file docker-compose
-scp -i $KEY release/docker-compose.staging.yml \
-  $MONITOR_USER@$MONITOR_IP:/home/ec2-user/aws-hybrid/release/
-
-scp -i $KEY release/.env.example \
-  $MONITOR_USER@$MONITOR_IP:/home/ec2-user/aws-hybrid/release/.env.staging
-
-# 3. Sao chép deploy script
-scp -i $KEY automation/deploy.sh \
-  $MONITOR_USER@$MONITOR_IP:/home/ec2-user/aws-hybrid/automation/
-
-chmod +x /home/ec2-user/aws-hybrid/automation/deploy.sh
-
-# 4. SSH vào monitor
-ssh -i $KEY $MONITOR_USER@$MONITOR_IP
+# Hoặc chạy thủ công:
+# GitHub → Actions → CD Staging → Run workflow
 ```
 
-**Trên Monitor Instance:**
+### Kiểm tra trên GitHub
 
-```bash
-cd /home/ec2-user/aws-hybrid
+```text
+GitHub → Actions → CD Staging → run mới nhất
 
-# 1. Thiết lập môi trường (cập nhật giá trị của bạn)
-cat > release/.env.staging << 'EOF'
-GHCR_OWNER=your-github-username
-IMAGE_TAG=staging-latest
-GEMINI_API_KEY=your-gemini-key
-TELEGRAM_TOKEN=your-telegram-token
-TELEGRAM_CHAT_ID=your-chat-id
-EOF
-
-# 2. Đăng nhập vào GHCR
-echo $GHCR_TOKEN | docker login ghcr.io -u $GHCR_USERNAME --password-stdin
-
-# 3. Chạy script triển khai
-./automation/deploy.sh staging staging-latest
-
-# 4. Kiểm tra triển khai
-docker compose -f release/docker-compose.staging.yml ps
-
-# 5. Kiểm tra log
-docker compose -f release/docker-compose.staging.yml logs ai-agent --tail=50
+Kiểm tra các step:
+- Login to GHCR
+- Build & push AI Agent
+- Build & push Payment API
+- Prepare environment files
+- Preflight SSH authentication
+- Copy files to EC2 using SCP
+- Run deploy script on EC2
 ```
 
 ### Cổng Dịch vụ trên Staging (monitor-ai-01)
@@ -846,6 +869,9 @@ Grafana:        http://52.74.118.8:3000
 ### Kiểm tra Dịch vụ
 
 ```bash
+ssh -i "$SSH_KEY_PATH" ec2-user@52.74.118.8
+cd /home/ec2-user/aws-hybrid
+
 # Kiểm tra containers đang chạy
 docker compose -f release/docker-compose.staging.yml ps
 
@@ -869,26 +895,47 @@ curl http://localhost:18080/api/health
 
 ## 🏢 Triển khai Môi trường Production (monitor-ai-01: 52.74.118.8)
 
-### Triển khai tự động thông qua GitHub Actions (Khuyên cáo)
+### Triển khai qua GitHub Actions
 
 ```
 Workflow: cd-production.yml
-Kích hoạt: Tạo tag git (v*.*.*)
+Kích hoạt: Tạo tag git (v*) hoặc workflow_dispatch với release_tag
 Hành động:
   1. Build Docker images với production tag
   2. Đẩy lên GHCR
-  3. Yêu cầu phê duyệt môi trường
-  4. SSH tới monitor instance
-  5. Chạy: automation/deploy.sh production v1.0.0
-  6. Docker compose pull & up (production config)
-  7. Kiểm tra sức khỏe (18x retry)
-  8. Lưu trạng thái triển khai
+  3. Tạo release/.env.production từ GitHub Secrets
+  4. Yêu cầu phê duyệt environment production nếu GitHub Environment đang bật approval
+  5. SSH tới monitor instance bằng SSH_PRIVATE_KEY
+  6. Copy release/ và automation/ lên EC2
+  7. Chạy: automation/app-release-deploy.sh production {release-tag}
+  8. Docker compose pull & up (production config)
+  9. Kiểm tra sức khỏe (18x retry)
+  10. Lưu trạng thái triển khai
 ```
+
+### GitHub Secrets dùng cho Production
+
+Production dùng cùng nhóm secrets với staging, và thêm `PROMETHEUS_URL` nếu production cần trỏ AI Agent/API tới Prometheus.
+
+| Secret | Vai trò |
+|--------|--------|
+| `SSH_HOST` | Public IP/EIP của monitor instance |
+| `SSH_PORT` | SSH port, thường là `22` |
+| `SSH_PRIVATE_KEY` | Private key để GitHub Actions SSH vào EC2 |
+| `GHCR_USERNAME` | Username để login GHCR |
+| `GHCR_TOKEN` | Token để push/pull GHCR packages |
+| `GEMINI_API_KEY` | Gemini API key cho AI Agent |
+| `TELEGRAM_TOKEN` | Telegram bot token |
+| `TELEGRAM_CHAT_ID` | Telegram chat ID |
+| `AI_AGENT_PUBLIC_URL` | Public URL của AI Agent nếu cần |
+| `DATABASE_URL` | Database URL cho service cần DB |
+| `SECRET_KEY` | Secret key cho backend/API |
+| `PROMETHEUS_URL` | Prometheus URL cho production monitoring |
 
 **Luồng công việc triển khai:**
 
 ```bash
-# Trên máy local - tạo và đẩy tag
+# Trên máy local - tạo và đẩy tag production
 git tag v1.0.0
 git push origin v1.0.0
 
@@ -898,37 +945,15 @@ git push origin v1.0.0
 #   3. Triển khai tới production trên monitor instance
 ```
 
+Hoặc chạy thủ công:
+
+```text
+GitHub → Actions → CD Production → Run workflow → release_tag = v1.0.0
+```
+
 **Phê duyệt GitHub Actions:**
 ```
 GitHub → Actions → cd-production.yml run → Phê duyệt triển khai → Phê duyệt
-```
-
-### Triển khai thủ công Production (Lần đầu tiên)
-
-```bash
-# SSH vào monitor instance
-ssh -i aws-hybrid-key.pem ec2-user@52.74.118.8
-
-cd /home/ec2-user/aws-hybrid
-
-# 1. Thiết lập môi trường production
-cat > release/.env.production << 'EOF'
-GHCR_OWNER=your-github-username
-IMAGE_TAG=v1.0.0
-GEMINI_API_KEY=your-gemini-key
-TELEGRAM_TOKEN=your-telegram-token
-TELEGRAM_CHAT_ID=your-chat-id
-EOF
-
-# 2. Đăng nhập vào GHCR
-echo $GHCR_TOKEN | docker login ghcr.io -u $GHCR_USERNAME --password-stdin
-
-# 3. Triển khai production
-./automation/deploy.sh production v1.0.0
-
-# 4. Kiểm tra
-docker compose -f release/docker-compose.production.yml ps
-docker compose -f release/docker-compose.production.yml logs ai-agent --tail=50
 ```
 
 ### Cổng Dịch vụ trên Production (monitor-ai-01)
@@ -949,6 +974,9 @@ Docker-compose production sử dụng:
 **Kiểm tra Production:**
 
 ```bash
+ssh -i "$SSH_KEY_PATH" ec2-user@52.74.118.8
+cd /home/ec2-user/aws-hybrid
+
 # Kiểm tra containers đang chạy
 docker compose -f release/docker-compose.production.yml ps
 
@@ -966,7 +994,7 @@ Nếu triển khai thất bại:
 
 ```bash
 # SSH vào monitor
-ssh -i aws-hybrid-key.pem ec2-user@52.74.118.8
+ssh -i "$SSH_KEY_PATH" ec2-user@52.74.118.8
 
 cd /home/ec2-user/aws-hybrid
 
@@ -977,7 +1005,7 @@ docker pull ghcr.io/{owner}/aws-hybrid-ai-agent:v0.9.9
 sed -i 's/v1.0.0/v0.9.9/g' release/.env.production
 
 # 3. Triển khai lại
-./automation/deploy.sh production v0.9.9
+./automation/app-release-deploy.sh production v0.9.9
 
 # 4. Kiểm tra
 docker compose -f release/docker-compose.production.yml ps
@@ -1110,29 +1138,30 @@ echo "✅ All validations passed!"
 ### Xem Logs - Lệnh Cơ bản
 
 ```bash
-# 1. Logs thực tế (follow - phổ biến nhất)
-docker compose logs -f ai-agent
-docker compose logs -f payment-api
-docker compose logs -f -n 50  # 50 dòng cuối cùng, theo sau cái mới
+# 1. Kiểm tra containers trên tất cả EC2 bằng Ansible
+ansible all -i ansible/inventory.ini -m shell -a "docker ps --format 'table {{.Names}}\t{{.Status}}'"
 
-# 2. Khoảng thời gian cụ thể
-docker compose logs --since 2026-04-24T10:00:00 ai-agent
-docker compose logs --until 2026-04-24T12:00:00 payment-api
+# 2. Logs AI Agent trên monitor instance
+ansible monitor -i ansible/inventory.ini -m shell -a "cd /opt/ai-agent && docker-compose logs --tail=100 ai-agent"
 
-# 3. Tất cả logs container vào file
-docker compose logs > /opt/aws-hybrid/logs/all-services.log
+# 3. Follow logs trực tiếp bằng SSH khi cần debug sâu
+ssh -i "$SSH_KEY_PATH" ec2-user@52.74.118.8
+cd /opt/ai-agent
+docker-compose logs -f ai-agent
 
 # 4. Truy cập logs container trực tiếp
 docker logs <container-id>
 docker logs --tail=100 <container-id>
 docker logs --follow <container-id>  # Thực tế
 
-# 5. Logs từ cả hai dịch vụ
-docker compose logs ai-agent payment-api --tail=50
+# 5. Logs Prometheus/Grafana trên monitor
+cd /opt/prometheus && docker-compose logs --tail=100
+cd /opt/grafana && docker-compose logs --tail=100
 
 # 6. Lưu logs và tìm kiếm
-docker compose logs > deploy.log
-grep "ERROR\|WARNING" deploy.log
+cd /opt/ai-agent
+docker-compose logs > /tmp/ai-agent-deploy.log
+grep "ERROR\|WARNING" /tmp/ai-agent-deploy.log
 ```
 
 ---
@@ -1518,8 +1547,9 @@ GitHub Actions → [Run] → Summary → Tải xuống logs (zip)
 
 **Terminal 1: Xem logs**
 ```bash
-cd /opt/aws-hybrid/staging
-docker compose logs -f ai-agent --timestamps
+ssh -i "$SSH_KEY_PATH" ec2-user@52.74.118.8
+cd /opt/ai-agent
+docker-compose logs -f ai-agent --timestamps
 ```
 
 **Terminal 2: Kích hoạt hành động**
@@ -1626,30 +1656,27 @@ ai-agent | health check failed: service will be restarted
 ### Thiết lập Xoay vòng Log
 
 ```bash
-# File: /etc/logrotate.d/aws-hybrid
+# File: /etc/logrotate.d/ai-agent
 
-/opt/aws-hybrid/logs/*.log {
+/opt/ai-agent/logs/*.log {
   daily                    # Xoay hàng ngày
   rotate 7                 # Giữ 7 ngày
   compress                 # Nén logs cũ (gzip)
   delaycompress            # Không nén log mới nhất
   notifempty               # Không xoay nếu trống
   missingok                # Không lỗi nếu thiếu
-  create 0640 ubuntu ubuntu # Tệp mới: quyền 640
+  create 0640 ec2-user ec2-user # Tệp mới: quyền 640
   sharedscripts
   postrotate
-    # Gửi tín hiệu cho dịch vụ để mở lại các file log
-    docker compose -f /opt/aws-hybrid/staging/docker-compose.staging.yml kill -s HUP
-    docker compose -f /opt/aws-hybrid/production/docker-compose.production.yml kill -s HUP
+    cd /opt/ai-agent && docker-compose restart ai-agent > /dev/null 2>&1 || true
   endscript
 }
 
 # Kiểm tra logrotate
-sudo logrotate -f /etc/logrotate.d/aws-hybrid
+sudo logrotate -f /etc/logrotate.d/ai-agent
 
 # Xác minh
-ls -la /opt/aws-hybrid/logs/
-# Nên thấy: all-services.log, all-services.log.1.gz, all-services.log.2.gz, v.v.
+ls -la /opt/ai-agent/logs/
 ```
 
 ---
@@ -1657,47 +1684,24 @@ ls -la /opt/aws-hybrid/logs/
 ### Thiết lập Giám sát (Prometheus + Grafana)
 
 ```bash
-# 1. Tạo cấu hình prometheus
-cat > /opt/aws-hybrid/prometheus.yml << 'EOF'
-global:
-  scrape_interval: 15s
+# Prometheus, AlertManager và Grafana được tạo bởi Ansible.
+# Không cần docker run thủ công.
 
-scrape_configs:
-  - job_name: 'docker'
-    static_configs:
-      - targets: ['localhost:9090']
-  
-  - job_name: 'ai-agent'
-    static_configs:
-      - targets: ['localhost:18000']
-  
-  - job_name: 'payment-api'
-    static_configs:
-      - targets: ['localhost:18080']
-EOF
+cd "$PROJECT_ROOT"
+ansible-playbook -i ansible/inventory.ini ansible/playbooks/deploy-complete-infrastructure.yml -v
 
-# 2. Khởi động Prometheus
-docker run -d \
-  --name prometheus \
-  -p 9090:9090 \
-  -v /opt/aws-hybrid/prometheus.yml:/etc/prometheus/prometheus.yml \
-  prom/prometheus
+# Kiểm tra trên monitor instance
+ansible monitor -i ansible/inventory.ini -m shell -a "cd /opt/prometheus && docker-compose ps"
+ansible monitor -i ansible/inventory.ini -m shell -a "cd /opt/grafana && docker-compose ps"
 
-# 3. Khởi động Grafana
-docker run -d \
-  --name grafana \
-  -p 3000:3000 \
-  -e GF_SECURITY_ADMIN_PASSWORD=admin \
-  grafana/grafana
-
-# 4. Truy cập các bảng điều khiển
-# Prometheus: http://localhost:9090
+# Truy cập các bảng điều khiển
+# Prometheus: http://52.74.118.8:9090
 #   - Targets → Kiểm tra sức khỏe
 #   - Graph → Truy vấn số liệu
 #
-# Grafana: http://localhost:3000 (admin/admin)
-#   - Thêm nguồn dữ liệu Prometheus
-#   - Tạo các bảng điều khiển
+# Grafana: http://52.74.118.8:3000 (admin/admin123)
+#   - Datasource Prometheus được provision bởi Ansible
+#   - Dashboards được provision bởi Ansible
 #   - Đặt cảnh báo
 
 # 5. Các truy vấn Prometheus hữu ích
@@ -1848,8 +1852,11 @@ docker run --rm \
 
 # 3. Sao lưu cấu hình
 tar czf /opt/backups/config-$(date +%Y%m%d).tar.gz \
-  /opt/aws-hybrid/staging/.env.staging \
-  /opt/aws-hybrid/production/.env.production
+  /opt/ai-agent/.env \
+  /opt/ai-agent/docker-compose.yml \
+  /opt/prometheus/prometheus.yml \
+  /opt/alertmanager/alertmanager.yml \
+  /opt/grafana/provisioning
 ```
 
 ### Quy trình Hoàn trả ngược
@@ -1941,4 +1948,3 @@ docker system prune -a --volumes
    - When it started failing
 
 ---
-

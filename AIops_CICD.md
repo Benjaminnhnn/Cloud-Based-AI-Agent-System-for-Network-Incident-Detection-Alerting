@@ -311,15 +311,15 @@ with:
   script_stop: true
   script: |
     cd /opt/aws-hybrid
-    chmod +x automation/deploy.sh
+    chmod +x automation/app-release-deploy.sh
     export GHCR_OWNER="${GITHUB_REPOSITORY_OWNER,,}"
     export GHCR_TOKEN="${{ secrets.GHCR_TOKEN }}"
-    ./automation/deploy.sh staging "staging-abc123def456"
+    ./automation/app-release-deploy.sh staging "staging-abc123def456"
 ```
 
 **Deploy Script Execution:**
 ```
-automation/deploy.sh staging staging-abc123def456
+automation/app-release-deploy.sh staging staging-abc123def456
 ├─ Kiểm tra environment variables
 ├─ Load .env.staging
 ├─ WORK_DIR=/opt/aws-hybrid/staging
