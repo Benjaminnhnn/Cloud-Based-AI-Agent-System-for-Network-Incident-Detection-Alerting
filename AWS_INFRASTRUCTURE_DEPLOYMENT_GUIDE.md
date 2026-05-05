@@ -764,6 +764,13 @@ Script này thực hiện 4 bước:
 [STEP 4/4] Chạy deploy-complete-infrastructure.yml
 ```
 
+**Lưu ý cho Amazon Linux 2023:** PostgreSQL và Redis được chạy bằng Docker Compose trong `/opt/webserver/docker-compose.yml`, không cài trực tiếp bằng package host. Nếu thấy lỗi kiểu `No package postgresql-server available` hoặc `No package redis available`, nghĩa là dev đang dùng bản playbook cũ. Pull code mới rồi chạy lại:
+
+```bash
+git pull
+bash automation/ansible-deploy.sh
+```
+
 ### Bước 3: Kiểm tra sau deploy
 
 ```bash

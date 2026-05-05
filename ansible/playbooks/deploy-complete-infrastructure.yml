@@ -371,89 +371,10 @@
     nginx_port: 80
   
   tasks:
-    # ============ PostgreSQL Database Setup ============
-    - name: Install PostgreSQL database server
-      package:
-        name: postgresql-server
-        state: present
-      ignore_errors: yes
-    
-    - name: Initialize PostgreSQL database
-      shell: |
-        postgresql-setup initdb 2>/dev/null || true
-      ignore_errors: yes
-    
-    - name: Enable and start PostgreSQL service
-      systemd:
-        name: postgresql
-        enabled: yes
-        state: started
-      ignore_errors: yes
-    
-    - name: Configure PostgreSQL for remote connections
-      lineinfile:
-        path: /var/lib/pgsql/data/postgresql.conf
-        regexp: '^#listen_addresses'
-        line: "listen_addresses = '*'"
-        backup: yes
-      notify: restart_postgresql
-      ignore_errors: yes
-    
-    - name: Configure PostgreSQL host-based authentication
-      lineinfile:
-        path: /var/lib/pgsql/data/pg_hba.conf
-        regexp: '^host.*all.*all.*0.0.0.0'
-        line: "host    all    all    0.0.0.0/0    md5"
-        backup: yes
-      notify: restart_postgresql
-      ignore_errors: yes
-    
-    - name: Wait for PostgreSQL to be ready
-      wait_for:
-        port: "{{ postgresql_port }}"
-        delay: 2
-        timeout: 30
-      ignore_errors: yes
-    
-    # ============ Redis Cache Setup ============
-    - name: Install Redis cache server
-      package:
-        name: redis
-        state: present
-      ignore_errors: yes
-    
-    - name: Configure Redis to accept remote connections
-      lineinfile:
-        path: /etc/redis.conf
-        regexp: '^bind'
-        line: 'bind 0.0.0.0'
-        backup: yes
-      notify: restart_redis
-      ignore_errors: yes
-    
-    - name: Configure Redis persistence
-      lineinfile:
-        path: /etc/redis.conf
-        regexp: '^save'
-        line: 'save 900 1'
-        backup: yes
-      notify: restart_redis
-      ignore_errors: yes
-    
-    - name: Enable and start Redis service
-      systemd:
-        name: redis
-        enabled: yes
-        state: started
-      ignore_errors: yes
-    
-    - name: Wait for Redis to be ready
-      wait_for:
-        port: "{{ redis_port }}"
-        delay: 2
-        timeout: 30
-      ignore_errors: yes
-    
+    # PostgreSQL and Redis run as Docker containers in /opt/webserver/docker-compose.yml.
+    # Do not install host packages here; Amazon Linux 2023 package names differ and
+    # host-level services would duplicate the containerized database/cache.
+
     # ============ Nginx Webserver Setup ============
     - name: Create webserver directories
       file:
@@ -620,20 +541,6 @@
       shell: docker exec redis redis-cli ping | grep -q PONG && echo "Redis is healthy" || echo "Redis not ready yet"
       changed_when: false
       ignore_errors: yes
-  
-  handlers:
-    - name: restart_postgresql
-      systemd:
-        name: postgresql
-        state: restarted
-      ignore_errors: yes
-    
-    - name: restart_redis
-      systemd:
-        name: redis
-        state: restarted
-      ignore_errors: yes
-
 # ========== PHASE 5: Deploy AI Agent (Monitor Server) ==========
 - name: "PHASE 5: Deploy AI Agent"
   hosts: monitor

@@ -19,6 +19,7 @@ terraform/awscliv2.zip
 # Ansible
 *.retry
 .ansible-vault
+.ansible/
 
 # AWS & Credentials
 .aws/

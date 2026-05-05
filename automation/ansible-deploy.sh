@@ -11,6 +11,12 @@ ANSIBLE_DIR="${PROJECT_ROOT}/ansible"
 
 cd "${PROJECT_ROOT}"
 
+# Keep Ansible temp files inside the project so the script works on machines
+# where the default ~/.ansible/tmp path is unavailable or read-only.
+export ANSIBLE_LOCAL_TEMP="${ANSIBLE_LOCAL_TEMP:-${PROJECT_ROOT}/.ansible/tmp}"
+export ANSIBLE_REMOTE_TEMP="${ANSIBLE_REMOTE_TEMP:-/tmp/ansible-remote}"
+mkdir -p "${ANSIBLE_LOCAL_TEMP}"
+
 echo "=========================================="
 echo "🚀 AWS Hybrid - Ansible Deployment"
 echo "=========================================="
