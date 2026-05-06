@@ -90,7 +90,7 @@ docker-compose -f platform-config/docker-compose.dev.yml up -d
 *   **Grafana**: `http://<Monitor-IP>:3000` (admin/admin123)
 *   **Prometheus**: `http://<Monitor-IP>:9090`
 *   **AI Agent API**: `http://<Monitor-IP>:8000/health`
-*   **Web Server (Frontend)**: `http://<Web-IP>:3000`
+*   **Web Server (Nginx)**: `http://<Web-IP>` (`/health`)
 *   **API Backend Docs**: `http://<Core-IP>:8000/docs`
 
 ---

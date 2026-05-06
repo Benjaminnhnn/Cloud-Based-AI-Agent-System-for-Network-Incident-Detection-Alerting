@@ -47,19 +47,34 @@ fi
 
 # Extract IPs from inventory.ini dynamically
 echo -e "${BLUE}📍 Reading AWS Infrastructure from inventory...${NC}"
-MONITOR_IP=$(grep -A1 "^\[monitor\]" "${ANSIBLE_DIR}/inventory.ini" | grep ansible_host | cut -d'=' -f2 | xargs)
-WEB_IP=$(grep -A1 "^\[web\]" "${ANSIBLE_DIR}/inventory.ini" | grep ansible_host | cut -d'=' -f2 | xargs)
-CORE_IP=$(grep -A1 "^\[all:children\]" -A10 "${ANSIBLE_DIR}/inventory.ini" | grep -E "monitor-ai|bank-web|bank-core" | head -3 | tail -1 | cut -d'=' -f2 | xargs)
+get_inventory_ip() {
+    local host="$1"
+    awk -v host="$host" '
+        $1 == host {
+            for (i = 1; i <= NF; i++) {
+                if ($i ~ /^ansible_host=/) {
+                    sub(/^ansible_host=/, "", $i)
+                    print $i
+                    exit
+                }
+            }
+        }
+    ' "${ANSIBLE_DIR}/inventory.ini"
+}
+
+MONITOR_IP=$(get_inventory_ip "monitor-ai-01")
+WEB_IP=$(get_inventory_ip "bank-web-01")
+CORE_IP=$(get_inventory_ip "bank-core-01")
 
 # Try alternative method if above fails
 if [ -z "$MONITOR_IP" ]; then
-    MONITOR_IP=$(grep "monitor-ai-01" "${ANSIBLE_DIR}/inventory.ini" | grep ansible_host | cut -d'=' -f2 | xargs)
+    MONITOR_IP=$(grep "monitor-ai-01" "${ANSIBLE_DIR}/inventory.ini" | sed -n 's/.*ansible_host=\([^ ]*\).*/\1/p')
 fi
 if [ -z "$WEB_IP" ]; then
-    WEB_IP=$(grep "bank-web-01" "${ANSIBLE_DIR}/inventory.ini" | grep ansible_host | cut -d'=' -f2 | xargs)
+    WEB_IP=$(grep "bank-web-01" "${ANSIBLE_DIR}/inventory.ini" | sed -n 's/.*ansible_host=\([^ ]*\).*/\1/p')
 fi
 if [ -z "$CORE_IP" ]; then
-    CORE_IP=$(grep "bank-core-01" "${ANSIBLE_DIR}/inventory.ini" | grep ansible_host | cut -d'=' -f2 | xargs)
+    CORE_IP=$(grep "bank-core-01" "${ANSIBLE_DIR}/inventory.ini" | sed -n 's/.*ansible_host=\([^ ]*\).*/\1/p')
 fi
 
 echo "   Monitor:  ${MONITOR_IP:-NOT FOUND}"
@@ -113,6 +128,9 @@ if [ $ENV_CHECK -eq 1 ]; then
     echo "  - TELEGRAM_CHAT_ID: Get from @userinfobot on Telegram"
     exit 1
 fi
+export GEMINI_API_KEY
+export TELEGRAM_TOKEN
+export TELEGRAM_CHAT_ID
 echo "   ✓ All credentials loaded successfully"
 echo ""
 
@@ -138,11 +156,12 @@ echo "==========================================${NC}"
 echo ""
 echo -e "${BLUE}🌐 Access URLs:${NC}"
 if [ -n "$WEB_IP" ]; then
-    echo "   Frontend (React):   ${GREEN}http://${WEB_IP}:3000${NC}"
+    echo "   Webserver (Nginx):  ${GREEN}http://${WEB_IP}${NC}"
+    echo "   Web Health:         ${GREEN}http://${WEB_IP}/health${NC}"
 fi
 if [ -n "$CORE_IP" ]; then
-    echo "   API Docs:           ${GREEN}http://${CORE_IP}:8000/docs${NC}"
-    echo "   API Health:         ${GREEN}http://${CORE_IP}:8000/api/health${NC}"
+    echo "   API Docs:           ${YELLOW}http://${CORE_IP}:8000/docs${NC} (internal: web/monitor SG only)"
+    echo "   API Health:         ${YELLOW}http://${CORE_IP}:8000/api/health${NC} (internal: web/monitor SG only)"
 fi
 if [ -n "$MONITOR_IP" ]; then
     echo "   Prometheus:         ${GREEN}http://${MONITOR_IP}:9090${NC}"

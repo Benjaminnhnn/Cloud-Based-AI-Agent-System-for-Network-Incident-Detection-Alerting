@@ -2,7 +2,7 @@
 # Complete Infrastructure Deployment Playbook
 # Deploys: Prometheus, Grafana, Webserver, AI Agent, and all monitoring components
 # Usage: ansible-playbook -i inventory.ini playbooks/deploy-complete-infrastructure.yml
-# 
+#
 # This playbook imports bootstrap.yml first to install system dependencies and Docker
 
 # ========== PHASE 0: Bootstrap (imported from bootstrap.yml) ==========
@@ -29,7 +29,7 @@
   hosts: all
   become: yes
   gather_facts: yes
-  
+
   tasks:
     - name: Download and install node_exporter
       shell: |
@@ -41,39 +41,39 @@
         rm -rf node_exporter-1.7.0.linux-amd64*
       args:
         creates: /usr/local/bin/node_exporter
-    
+
     - name: Create node_exporter systemd service
       copy:
         content: |
           [Unit]
           Description=Node Exporter
           After=network.target
-          
+
           [Service]
           Type=simple
           User=nobody
           ExecStart=/usr/local/bin/node_exporter --collector.processes
           Restart=on-failure
           RestartSec=5
-          
+
           [Install]
           WantedBy=multi-user.target
         dest: /etc/systemd/system/node_exporter.service
         mode: '0644'
-    
+
     - name: Enable and start node_exporter service
       systemd:
         name: node_exporter
         enabled: yes
         state: restarted
         daemon_reload: yes
-    
+
     - name: Wait for node_exporter to be ready
       wait_for:
         port: 9100
         delay: 2
         timeout: 30
-    
+
     - name: Verify node_exporter metrics
       shell: curl -s http://localhost:9100/metrics | head -3
       register: node_exporter_metrics
@@ -84,7 +84,7 @@
   hosts: monitor
   become: yes
   gather_facts: yes
-  
+
   tasks:
     - name: Create Prometheus data directories
       file:
@@ -98,16 +98,97 @@
         - /opt/prometheus/data
         - /opt/alertmanager
         - /opt/alertmanager/data
-    
+
     - name: Copy Prometheus configuration
       copy:
-        src: /home/hoang_viet/aws-hybrid/platform-config/prometheus.yml
+        content: |
+          global:
+            scrape_interval: 15s
+            evaluation_interval: 15s
+            external_labels:
+              monitor: 'aiops-monitor'
+
+          alerting:
+            alertmanagers:
+              - static_configs:
+                  - targets: ['localhost:9093']
+
+          rule_files:
+            - "/etc/prometheus/alert_rules.yml"
+
+          scrape_configs:
+            - job_name: 'prometheus'
+              static_configs:
+                - targets: ['localhost:9090']
+
+            - job_name: 'node_exporter_monitor'
+              static_configs:
+                - targets: ['localhost:9100']
+                  labels:
+                    instance: 'monitor-ai-01'
+                    service: 'system'
+              scrape_interval: 15s
+              scrape_timeout: 10s
+
+            - job_name: 'node_exporter_web'
+              static_configs:
+                - targets: ['{{ hostvars[groups["web"][0]].ansible_default_ipv4.address }}:9100']
+                  labels:
+                    instance: 'bank-web-01'
+                    service: 'system'
+              scrape_interval: 15s
+              scrape_timeout: 10s
+
+            - job_name: 'node_exporter_core'
+              static_configs:
+                - targets: ['{{ hostvars[groups["core"][0]].ansible_default_ipv4.address }}:9100']
+                  labels:
+                    instance: 'bank-core-01'
+                    service: 'system'
+              scrape_interval: 15s
+              scrape_timeout: 10s
+
+            - job_name: 'blackbox_http_web'
+              metrics_path: /probe
+              params:
+                module: [http_2xx]
+              static_configs:
+                - targets: ['http://{{ hostvars[groups["web"][0]].ansible_host }}/health']
+                  labels:
+                    instance: 'bank-web-01'
+                    service: 'web-endpoint'
+                    endpoint: '/health'
+              relabel_configs:
+                - source_labels: [__address__]
+                  target_label: __param_target
+                - target_label: __address__
+                  replacement: localhost:9115
+                - source_labels: [__param_target]
+                  target_label: target
         dest: /opt/prometheus/prometheus.yml
         owner: nobody
         group: nobody
         mode: '0644'
-      when: ansible_local is not defined or ansible_local.prometheus is not defined
-    
+
+    - name: Check alert rules path
+      stat:
+        path: /opt/prometheus/alert_rules.yml
+      register: prometheus_alert_rules
+
+    - name: Remove stale alert rules directory
+      file:
+        path: /opt/prometheus/alert_rules.yml
+        state: absent
+      when: prometheus_alert_rules.stat.isdir | default(false)
+
+    - name: Copy Prometheus alert rules
+      copy:
+        src: /home/hoang_viet/aws-hybrid/ansible/config/alert_rules.yml
+        dest: /opt/prometheus/alert_rules.yml
+        owner: nobody
+        group: nobody
+        mode: '0644'
+
     - name: Copy AlertManager configuration
       copy:
         src: /home/hoang_viet/aws-hybrid/ansible/config/alertmanager.yml
@@ -115,7 +196,7 @@
         owner: nobody
         group: nobody
         mode: '0644'
-    
+
     - name: Create Prometheus docker-compose.yml
       copy:
         content: |
@@ -134,7 +215,7 @@
                 - '--storage.tsdb.path=/prometheus'
                 - '--storage.tsdb.retention.time=30d'
               restart: unless-stopped
-            
+
             alertmanager:
               image: prom/alertmanager:latest
               container_name: alertmanager
@@ -146,32 +227,32 @@
                 - '--config.file=/etc/alertmanager/alertmanager.yml'
                 - '--storage.path=/alertmanager'
               restart: unless-stopped
-          
+
           networks:
             aiops-network:
               driver: bridge
         dest: /opt/prometheus/docker-compose.yml
         mode: '0644'
-    
+
     - name: Start Prometheus and AlertManager
       shell: |
         cd /opt/prometheus
-        docker-compose up -d
+        docker-compose up -d --force-recreate
       register: prometheus_start
       changed_when: "'Started' in prometheus_start.stderr or 'Creating' in prometheus_start.stderr"
-    
+
     - name: Wait for Prometheus to be ready
       wait_for:
         port: 9090
         delay: 5
         timeout: 30
-    
+
     - name: Wait for AlertManager to be ready
       wait_for:
         port: 9093
         delay: 5
         timeout: 30
-    
+
     - name: Verify Prometheus is responding
       shell: curl -s http://localhost:9090/-/healthy
       register: prometheus_health
@@ -182,7 +263,7 @@
   hosts: monitor
   become: yes
   gather_facts: yes
-  
+
   tasks:
     - name: Create Grafana data directories
       file:
@@ -197,7 +278,7 @@
         - /opt/grafana/provisioning
         - /opt/grafana/provisioning/datasources
         - /opt/grafana/provisioning/dashboards
-    
+
     - name: Create Grafana datasource configuration
       copy:
         content: |
@@ -211,7 +292,7 @@
               editable: true
         dest: /opt/grafana/provisioning/datasources/prometheus.yml
         mode: '0644'
-    
+
     - name: Create Grafana docker-compose.yml
       copy:
         content: |
@@ -232,33 +313,33 @@
               networks:
                 - aiops-network
               restart: unless-stopped
-          
+
           networks:
             aiops-network:
               driver: bridge
         dest: /opt/grafana/docker-compose.yml
         mode: '0644'
-    
+
     - name: Start Grafana
       shell: |
         cd /opt/grafana
         docker-compose up -d
       register: grafana_start
       changed_when: "'Started' in grafana_start.stderr or 'Creating' in grafana_start.stderr"
-    
+
     - name: Wait for Grafana to be ready
       wait_for:
         port: 3000
         delay: 5
         timeout: 30
-    
+
     - name: Verify Grafana is responding
       shell: curl -s http://localhost:3000/api/health
       register: grafana_health
       changed_when: false
       retries: 3
       delay: 2
-    
+
     - name: Wait for Prometheus to be ready for dashboard creation
       uri:
         url: "http://localhost:9090/-/healthy"
@@ -269,7 +350,7 @@
       register: prometheus_ready
       until: prometheus_ready.status == 200
       ignore_errors: yes
-    
+
     - name: Create Prometheus datasource via API
       uri:
         url: "http://localhost:3000/api/datasources"
@@ -291,7 +372,7 @@
           }
         status_code: [200, 409]
       register: datasource_result
-    
+
     - name: Delete all existing dashboards
       shell: |
         curl -s "http://admin:admin123@localhost:3000/api/search?type=dash-db" | \
@@ -301,7 +382,7 @@
           echo "Deleted dashboard: $uid"
         done
       ignore_errors: yes
-    
+
     - name: Copy dashboard JSON templates to monitor server
       copy:
         src: templates/{{ item }}-dashboard.json
@@ -321,7 +402,7 @@
           echo "✓ Deployed ${dashboard} dashboard"
         done
       ignore_errors: yes
-    
+
     - name: Display Grafana Setup Complete
       debug:
         msg:
@@ -359,24 +440,19 @@
           - "  Password: admin123"
           - "=========================================="
 
-# ========== PHASE 4: Deploy Webserver, Database & Cache ==========
-- name: "PHASE 4: Deploy Webserver, Database & Cache"
-  hosts: web
+# ========== PHASE 4A: Deploy Backend, Database & Cache ==========
+- name: "PHASE 4A: Deploy Backend, Database & Cache"
+  hosts: core
   become: yes
   gather_facts: yes
-  
+
   vars:
     postgresql_port: 5432
     redis_port: 6379
-    nginx_port: 80
-  
-  tasks:
-    # PostgreSQL and Redis run as Docker containers in /opt/webserver/docker-compose.yml.
-    # Do not install host packages here; Amazon Linux 2023 package names differ and
-    # host-level services would duplicate the containerized database/cache.
+    backend_port: 8000
 
-    # ============ Nginx Webserver Setup ============
-    - name: Create webserver directories
+  tasks:
+    - name: Create backend directories
       file:
         path: "{{ item }}"
         state: directory
@@ -384,93 +460,89 @@
         group: ec2-user
         mode: '0755'
       loop:
-        - /opt/webserver
-        - /opt/webserver/config
-      ignore_errors: yes
-    
-    - name: Copy nginx configuration
+        - /opt/bank-core
+        - /opt/bank-core/backend
+        - /opt/bank-core/database
+
+    - name: Reset temporary backend source directory
+      file:
+        path: /tmp/bank-core-src
+        state: absent
+      become: no
+
+    - name: Copy backend source to temporary directory
       copy:
-        src: /home/hoang_viet/aws-hybrid/platform-config/nginx.conf
-        dest: /opt/webserver/config/nginx.conf
-        owner: ec2-user
-        group: ec2-user
-        mode: '0644'
-      ignore_errors: yes
-    
-    - name: Create default nginx configuration if not exists
+        src: "{{ playbook_dir }}/../../demo-web/backend/"
+        dest: /tmp/bank-core-src/backend/
+        mode: preserve
+      become: no
+
+    - name: Copy database scripts to temporary directory
       copy:
-        content: |
-          worker_processes auto;
-          
-          events {
-            worker_connections 1024;
-          }
-          
-          http {
-            upstream backend {
-              server localhost:8000;
-            }
-            
-            server {
-              listen 80 default_server;
-              server_name _;
-              
-              location / {
-                proxy_pass http://backend;
-                proxy_set_header Host $host;
-                proxy_set_header X-Real-IP $remote_addr;
-              }
-              
-              location /health {
-                return 200 "OK\n";
-                add_header Content-Type text/plain;
-              }
-            }
-          }
-        dest: /opt/webserver/config/nginx.conf
-        mode: '0644'
-      when: ansible_local is not defined or ansible_local.nginx is not defined
-    
-    - name: Create webserver docker-compose.yml
+        src: "{{ playbook_dir }}/../../demo-web/database/"
+        dest: /tmp/bank-core-src/database/
+        mode: preserve
+      become: no
+
+    - name: Install backend source
+      shell: |
+        cp -a /tmp/bank-core-src/backend/. /opt/bank-core/backend/
+        cp -a /tmp/bank-core-src/database/. /opt/bank-core/database/
+        chown -R ec2-user:ec2-user /opt/bank-core
+      become: yes
+      become_user: root
+
+    - name: Create backend docker-compose.yml
       copy:
         content: |
           version: '3.8'
           services:
-            nginx:
-              image: nginx:latest
-              container_name: webserver
-              ports:
-                - "80:80"
-                - "443:443"
-              volumes:
-                - /opt/webserver/config/nginx.conf:/etc/nginx/nginx.conf:ro
-              networks:
-                - aiops-network
-              restart: unless-stopped
-              depends_on:
-                - db
-                - cache
-            
             db:
-              image: postgres:13-alpine
+              image: postgres:14-alpine
               container_name: postgres
               environment:
-                POSTGRES_USER: postgres
-                POSTGRES_PASSWORD: postgres
+                POSTGRES_USER: aiops_user
+                POSTGRES_PASSWORD: aiops_pass
                 POSTGRES_DB: aiops_db
               ports:
                 - "5432:5432"
               volumes:
                 - postgres_data:/var/lib/postgresql/data
+                - /opt/bank-core/database/init.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
+                - /opt/bank-core/database/seed.sql:/docker-entrypoint-initdb.d/02-seed.sql:ro
               networks:
                 - aiops-network
               restart: unless-stopped
               healthcheck:
-                test: ["CMD-SHELL", "pg_isready -U postgres"]
+                test: ["CMD-SHELL", "pg_isready -U aiops_user -d aiops_db"]
                 interval: 10s
                 timeout: 5s
                 retries: 5
-            
+
+            api:
+              image: bank-core-api:latest
+              container_name: aiops-api
+              environment:
+                DATABASE_URL: postgresql://aiops_user:aiops_pass@db:5432/aiops_db
+                ENVIRONMENT: production
+                NODE_EXPORTER_URL: http://host.docker.internal:9100/metrics
+              extra_hosts:
+                - "host.docker.internal:host-gateway"
+              ports:
+                - "8000:8000"
+              depends_on:
+                db:
+                  condition: service_healthy
+              networks:
+                - aiops-network
+              restart: unless-stopped
+              healthcheck:
+                test: ["CMD-SHELL", "python -c 'import urllib.request; urllib.request.urlopen(\"http://localhost:8000/api/health\").read()'"]
+                interval: 10s
+                timeout: 5s
+                retries: 5
+                start_period: 20s
+
             cache:
               image: redis:7-alpine
               container_name: redis
@@ -486,72 +558,186 @@
                 interval: 10s
                 timeout: 5s
                 retries: 5
-          
+
           volumes:
             postgres_data:
             redis_data:
-          
+
           networks:
             aiops-network:
               driver: bridge
+        dest: /opt/bank-core/docker-compose.yml
+        mode: '0644'
+
+    - name: Build backend Docker image
+      shell: |
+        cd /opt/bank-core/backend
+        docker build -t bank-core-api:latest .
+      register: backend_build
+      changed_when: "'Successfully built' in backend_build.stdout or 'Successfully tagged' in backend_build.stdout or 'naming to docker.io/library/bank-core-api:latest' in backend_build.stderr"
+
+    - name: Start backend, database and cache services
+      shell: |
+        cd /opt/bank-core
+        docker-compose up -d
+      register: backend_start
+      changed_when: "'Started' in backend_start.stderr or 'Creating' in backend_start.stderr"
+
+    - name: Wait for backend API to be ready
+      wait_for:
+        port: "{{ backend_port }}"
+        delay: 3
+        timeout: 90
+
+    - name: Wait for PostgreSQL container to be ready
+      wait_for:
+        port: "{{ postgresql_port }}"
+        delay: 2
+        timeout: 30
+
+    - name: Wait for Redis container to be ready
+      wait_for:
+        port: "{{ redis_port }}"
+        delay: 2
+        timeout: 30
+
+    - name: Verify backend API is responding
+      shell: curl -s http://localhost:8000/api/health
+      changed_when: false
+
+    - name: Verify PostgreSQL is responding
+      shell: docker exec postgres psql -U aiops_user -d aiops_db -c "SELECT 1"
+      changed_when: false
+
+    - name: Verify Redis is responding
+      shell: docker exec redis redis-cli ping | grep -q PONG && echo "Redis is healthy"
+      changed_when: false
+
+# ========== PHASE 4B: Deploy Web Gateway ==========
+- name: "PHASE 4B: Deploy Web Gateway"
+  hosts: web
+  become: yes
+  gather_facts: yes
+
+  tasks:
+    - name: Create webserver directories
+      file:
+        path: "{{ item }}"
+        state: directory
+        owner: ec2-user
+        group: ec2-user
+        mode: '0755'
+      loop:
+        - /opt/webserver
+        - /opt/webserver/config
+
+    - name: Create nginx gateway configuration
+      copy:
+        content: |
+          worker_processes auto;
+
+          events {
+            worker_connections 1024;
+          }
+
+          http {
+            upstream backend_api {
+              server {{ hostvars[groups["core"][0]].ansible_default_ipv4.address }}:8000;
+            }
+
+            server {
+              listen 80 default_server;
+              server_name _;
+
+              location /health {
+                return 200 "OK\n";
+                add_header Content-Type text/plain;
+              }
+
+              location /api/ {
+                proxy_pass http://backend_api;
+                proxy_set_header Host $host;
+                proxy_set_header X-Real-IP $remote_addr;
+                proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+              }
+
+              location /docs {
+                proxy_pass http://backend_api;
+                proxy_set_header Host $host;
+                proxy_set_header X-Real-IP $remote_addr;
+              }
+
+              location /redoc {
+                proxy_pass http://backend_api;
+                proxy_set_header Host $host;
+                proxy_set_header X-Real-IP $remote_addr;
+              }
+
+              location /openapi.json {
+                proxy_pass http://backend_api;
+                proxy_set_header Host $host;
+                proxy_set_header X-Real-IP $remote_addr;
+              }
+
+              location / {
+                return 200 "AIOps web gateway is running. Backend API is proxied under /api/ and /docs.\n";
+                add_header Content-Type text/plain;
+              }
+            }
+          }
+        dest: /opt/webserver/config/nginx.conf
+        owner: ec2-user
+        group: ec2-user
+        mode: '0644'
+
+    - name: Create web gateway docker-compose.yml
+      copy:
+        content: |
+          version: '3.8'
+          services:
+            nginx:
+              image: nginx:latest
+              container_name: webserver
+              ports:
+                - "80:80"
+                - "443:443"
+              volumes:
+                - /opt/webserver/config/nginx.conf:/etc/nginx/nginx.conf:ro
+              restart: unless-stopped
         dest: /opt/webserver/docker-compose.yml
         mode: '0644'
-    
-    - name: Start webserver and database services
+
+    - name: Start web gateway
       shell: |
         cd /opt/webserver
-        docker-compose up -d
+        docker-compose up -d --force-recreate --remove-orphans
       register: webserver_start
-      changed_when: "'Started' in webserver_start.stderr or 'Creating' in webserver_start.stderr"
-      ignore_errors: yes
-    
-    - name: Wait for webserver to be ready
+      changed_when: "'Started' in webserver_start.stderr or 'Creating' in webserver_start.stderr or 'Recreated' in webserver_start.stderr"
+
+    - name: Wait for web gateway to be ready
       wait_for:
         port: 80
         delay: 3
         timeout: 30
-      ignore_errors: yes
-    
-    - name: Wait for PostgreSQL container to be ready
-      wait_for:
-        port: 5432
-        delay: 2
-        timeout: 30
-      ignore_errors: yes
-    
-    - name: Wait for Redis container to be ready
-      wait_for:
-        port: 6379
-        delay: 2
-        timeout: 30
-      ignore_errors: yes
-    
-    - name: Verify webserver is responding
+
+    - name: Verify web gateway is responding
       shell: curl -s http://localhost/health
-      register: webserver_health
       changed_when: false
-      ignore_errors: yes
-    
-    - name: Verify PostgreSQL is responding
-      shell: docker exec postgres psql -U postgres -d aiops_db -c "SELECT 1" 2>/dev/null || echo "PostgreSQL not ready yet"
+
+    - name: Verify web gateway can reach backend API
+      shell: curl -s http://localhost/api/health
       changed_when: false
-      ignore_errors: yes
-    
-    - name: Verify Redis is responding
-      shell: docker exec redis redis-cli ping | grep -q PONG && echo "Redis is healthy" || echo "Redis not ready yet"
-      changed_when: false
-      ignore_errors: yes
 # ========== PHASE 5: Deploy AI Agent (Monitor Server) ==========
 - name: "PHASE 5: Deploy AI Agent"
   hosts: monitor
   become: yes
   gather_facts: yes
-  
+
   vars:
     gemini_api_key: "{{ lookup('env', 'GEMINI_API_KEY') | default('') }}"
     telegram_token: "{{ lookup('env', 'TELEGRAM_TOKEN') | default('') }}"
     telegram_chat_id: "{{ lookup('env', 'TELEGRAM_CHAT_ID') | default('') }}"
-  
+
   pre_tasks:
     - name: Validate AI Agent environment variables
       fail:
@@ -563,7 +749,7 @@
         - telegram_chat_id
       tags:
         - validate
-    
+
     - name: Display AI Agent deployment information
       debug:
         msg:
@@ -576,7 +762,7 @@
           - "=========================================="
       tags:
         - always
-  
+
   tasks:
     - name: Create AI Agent directories
       file:
@@ -588,15 +774,27 @@
       loop:
         - /opt/ai-agent
         - /opt/ai-agent/logs
-    
-    - name: Copy AI Agent files from workspace
+
+    - name: Reset temporary AI Agent source directory
+      file:
+        path: /tmp/ai-agent-src
+        state: absent
+      become: no
+
+    - name: Copy AI Agent files to temporary directory
+      copy:
+        src: "{{ playbook_dir }}/../../agent_src/"
+        dest: /tmp/ai-agent-src/
+        mode: preserve
+      become: no
+
+    - name: Install AI Agent files
       shell: |
-        cp -r /home/hoang_viet/aws-hybrid/agent_src/* /opt/ai-agent/ 2>/dev/null || true
+        cp -a /tmp/ai-agent-src/. /opt/ai-agent/
+        chown -R ec2-user:ec2-user /opt/ai-agent
       become: yes
       become_user: root
-      register: copy_result
-      changed_when: true
-    
+
     - name: Create or update AI Agent docker-compose.yml
       copy:
         content: |
@@ -611,8 +809,13 @@
                 - GEMINI_API_KEY={{ gemini_api_key }}
                 - TELEGRAM_TOKEN={{ telegram_token }}
                 - TELEGRAM_CHAT_ID={{ telegram_chat_id }}
+                - REDIS_HOST=ai-agent-redis
+                - REDIS_PORT=6379
+                - REDIS_DB=0
                 - LOG_LEVEL=INFO
                 - DEBUG=false
+              depends_on:
+                - ai-agent-redis
               volumes:
                 - /opt/ai-agent/logs:/app/logs
               networks:
@@ -624,15 +827,33 @@
                 timeout: 10s
                 retries: 3
                 start_period: 40s
-          
+
+            ai-agent-redis:
+              image: redis:7-alpine
+              container_name: ai-agent-redis
+              command: redis-server --appendonly yes
+              volumes:
+                - ai_agent_redis_data:/data
+              networks:
+                - aiops-network
+              restart: unless-stopped
+              healthcheck:
+                test: ["CMD", "redis-cli", "ping"]
+                interval: 30s
+                timeout: 10s
+                retries: 3
+
           networks:
             aiops-network:
               driver: bridge
+
+          volumes:
+            ai_agent_redis_data:
         dest: /opt/ai-agent/docker-compose.yml
         owner: ec2-user
         group: ec2-user
         mode: '0644'
-    
+
     - name: Build AI Agent Docker image
       shell: |
         cd /opt/ai-agent
@@ -643,25 +864,25 @@
       become_user: root
       retries: 3
       delay: 10
-    
+
     - name: Start AI Agent
       shell: |
         cd /opt/ai-agent
-        docker-compose up -d
+        docker-compose up -d --force-recreate
       register: ai_agent_start
       changed_when: "'Started' in ai_agent_start.stderr or 'Creating' in ai_agent_start.stderr"
       become: yes
       become_user: root
       retries: 3
       delay: 5
-    
+
     - name: Wait for AI Agent to be ready
       wait_for:
         port: 8000
         delay: 5
         timeout: 60
         host: localhost
-    
+
     - name: Verify AI Agent is responding
       uri:
         url: "http://localhost:8000/health"
@@ -671,7 +892,7 @@
       delay: 5
       register: ai_agent_health
       until: ai_agent_health.status == 200
-    
+
     - name: Display AI Agent deployment status
       debug:
         msg:
@@ -688,14 +909,23 @@
 - name: "PHASE 6: Configure Firewall Rules"
   hosts: all
   become: yes
-  
+
   tasks:
     - name: Configure firewall for monitor server
-      firewalld:
-        port: "{{ item }}/tcp"
-        permanent: yes
-        state: enabled
-        immediate: yes
+      shell: |
+        if ! command -v firewall-cmd >/dev/null 2>&1; then
+          echo "firewall-cmd not installed; skipping"
+          exit 0
+        fi
+        systemctl is-active --quiet firewalld || systemctl start firewalld
+        if firewall-cmd --permanent --query-port={{ item }}/tcp >/dev/null 2>&1; then
+          echo "port {{ item }}/tcp already enabled"
+        else
+          firewall-cmd --permanent --add-port={{ item }}/tcp
+          echo "enabled {{ item }}/tcp"
+        fi
+      changed_when: "'enabled ' in firewall_monitor.stdout"
+      register: firewall_monitor
       loop:
         - 9090  # Prometheus
         - 9093  # AlertManager
@@ -703,37 +933,59 @@
         - 8000  # AI Agent
         - 9100  # Node Exporter
       when: inventory_hostname == 'monitor-ai-01'
-    
+
     - name: Configure firewall for web server
-      firewalld:
-        port: "{{ item }}/tcp"
-        permanent: yes
-        state: enabled
-        immediate: yes
+      shell: |
+        if ! command -v firewall-cmd >/dev/null 2>&1; then
+          echo "firewall-cmd not installed; skipping"
+          exit 0
+        fi
+        systemctl is-active --quiet firewalld || systemctl start firewalld
+        if firewall-cmd --permanent --query-port={{ item }}/tcp >/dev/null 2>&1; then
+          echo "port {{ item }}/tcp already enabled"
+        else
+          firewall-cmd --permanent --add-port={{ item }}/tcp
+          echo "enabled {{ item }}/tcp"
+        fi
+      changed_when: "'enabled ' in firewall_web.stdout"
+      register: firewall_web
       loop:
         - 80    # HTTP
         - 443   # HTTPS
         - 9100  # Node Exporter
       when: "'web' in group_names"
-    
+
     - name: Configure firewall for core server
-      firewalld:
-        port: 9100/tcp
-        permanent: yes
-        state: enabled
-        immediate: yes
+      shell: |
+        if ! command -v firewall-cmd >/dev/null 2>&1; then
+          echo "firewall-cmd not installed; skipping"
+          exit 0
+        fi
+        systemctl is-active --quiet firewalld || systemctl start firewalld
+        if firewall-cmd --permanent --query-port=9100/tcp >/dev/null 2>&1; then
+          echo "port 9100/tcp already enabled"
+        else
+          firewall-cmd --permanent --add-port=9100/tcp
+          echo "enabled 9100/tcp"
+        fi
+      changed_when: "'enabled ' in firewall_core.stdout"
+      register: firewall_core
       when: "'core' in group_names"
-    
+
     - name: Reload firewall
-      systemd:
-        name: firewalld
-        state: reloaded
+      shell: |
+        if command -v firewall-cmd >/dev/null 2>&1 && systemctl is-active --quiet firewalld; then
+          firewall-cmd --reload
+        else
+          echo "firewalld not active; skipping reload"
+        fi
+      changed_when: false
 
 # ========== PHASE 7: Summary and Verification ==========
 - name: "PHASE 7: Summary and Health Check"
   hosts: localhost
   gather_facts: no
-  
+
   tasks:
     - name: Display deployment summary
       debug:
