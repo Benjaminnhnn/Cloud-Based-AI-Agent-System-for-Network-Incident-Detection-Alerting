@@ -1,65 +1,72 @@
-# Huong Dan Deploy Ha Tang AWS Hybrid
+# AWS Hybrid Infrastructure Deployment Guide
 
-Guide nay ghi lai luong deploy thuc te da chay thanh cong cho repo `aws-hybrid`.
-No tap trung vao Terraform + Ansible, bo cac chi dan CI/CD, staging/production release va cac buoc khong can thiet cho viec dung ha tang hien tai.
+Guide nay danh cho dev dung may khac clone repo va deploy ha tang AWS Hybrid bang Terraform + Ansible, sau do cap nhat GitHub Secrets de CI/CD tro vao dung server.
 
-## Kien Truc Hien Tai
+## 1. Tong Quan
 
-He thong gom 3 EC2 instances trong AWS region `ap-southeast-1`:
+Ha tang gom 3 EC2 instances trong region `ap-southeast-1`:
 
 | Nhom | Host | Vai tro | Dich vu |
 |------|------|---------|---------|
-| monitor | `monitor-ai-01` | Monitoring va AI Agent | Prometheus `9090`, Alertmanager `9093`, Grafana `3000`, AI Agent `8000`, Redis rieng cho AI Agent |
-| web | `bank-web-01` | Public web gateway | Nginx `80/443`, proxy `/api`, `/docs`, `/openapi.json` sang core backend |
-| core | `bank-core-01` | Backend va data services | FastAPI backend `8000`, PostgreSQL `5432`, Redis `6379` |
+| `monitor` | `monitor-ai-01` | Monitoring va AI Agent | Prometheus `9090`, Alertmanager `9093`, Grafana `3000`, AI Agent `8000` |
+| `web` | `bank-web-01` | Public web gateway | Nginx `80/443`, proxy API/docs sang core |
+| `core` | `bank-core-01` | Backend va data | FastAPI `8000`, PostgreSQL `5432`, Redis `6379` |
 
-Security group dang dung:
+Luong chay chinh:
 
-- SSH `22` chi nen mo cho IP local hien tai va/hoac CIDR CI neu that su can.
-- Web `80/443` mo public tren node web.
-- Monitor `3000/9090/9093/8000` mo theo `my_ip_cidr`.
-- Core `8000` chi cho web/monitor security group truy cap.
-- Node Exporter `9100` chi cho monitor truy cap.
+```text
+Clone repo
+  -> cau hinh AWS profile target-account
+  -> cau hinh SSH key
+  -> sua terraform/terraform.tfvars theo may moi
+  -> terraform apply
+  -> cap nhat ansible/inventory.ini
+  -> tao agent_src/.env
+  -> bash automation/ansible-deploy.sh
+  -> cap nhat GitHub Secrets truoc khi chay CI/CD
+```
 
-## File Quan Trong
+## 2. File Can Chinh
 
 | File | Muc dich |
 |------|----------|
-| `terraform/terraform.tfvars` | Region, IP cho security group, SSH key path, instance type |
-| `terraform/security.tf` | Security groups |
-| `ansible/inventory.ini` | Public IP va SSH user cua 3 EC2 |
-| `ansible.cfg` | Cau hinh Ansible SSH, timeout, host key checking |
-| `agent_src/.env` | Gemini/Telegram credentials cho AI Agent, khong commit |
-| `automation/update-infrastructure.sh` | Cap nhat IP local, `terraform apply`, sync inventory |
-| `automation/ansible-deploy.sh` | Bootstrap server va deploy full stack |
-| `ansible/playbooks/deploy-complete-infrastructure.yml` | Playbook deploy monitoring, web gateway, core backend/db/cache, AI Agent |
+| `terraform/terraform.tfvars` | IP may dev, SSH key path, instance type |
+| `ansible/inventory.ini` | Public IP va SSH private key path cho Ansible |
+| `agent_src/.env` | Gemini/Telegram credentials cho Ansible deploy |
+| GitHub Actions Secrets | Credentials cho CD staging/production |
 
-## Dieu Kien Truoc Khi Chay
+## 3. Dieu Kien Truoc Khi Chay
 
-Chay cac lenh tu root repo:
+Dev moi can co:
+
+- AWS access key/secret key co quyen tao/cap nhat EC2, VPC, EIP, Security Group, Key Pair.
+- SSH private key de vao EC2, hoac quyen tao key moi.
+- `GEMINI_API_KEY`, `TELEGRAM_TOKEN`, `TELEGRAM_CHAT_ID`.
+- Tool local: `terraform`, `aws`, `ansible`, `curl`, `git`.
+
+Chay tu root repo:
 
 ```bash
-cd /home/hoang_viet/aws-hybrid
+cd /path/to/aws-hybrid
 ```
 
-Kiem tra tool local:
+Kiem tra tool:
 
 ```bash
 terraform version
-ansible --version
 aws --version
-docker --version
+ansible --version
 ```
 
-## Buoc 1: Cap Nhat AWS Credentials Cho Profile `target-account`
+## 4. Cau Hinh AWS Profile
 
-Terraform provider dung AWS profile `target-account`, nen can cau hinh profile nay truoc.
+Terraform provider dang dung profile `target-account`, nen may moi phai cau hinh profile nay:
 
 ```bash
 aws configure --profile target-account
 ```
 
-Nhap cac gia tri:
+Nhap:
 
 ```text
 AWS Access Key ID: <access-key>
@@ -68,47 +75,55 @@ Default region name: ap-southeast-1
 Default output format: json
 ```
 
-Kiem tra profile:
+Kiem tra:
 
 ```bash
 aws sts get-caller-identity --profile target-account
 ```
 
-Neu lenh nay tra ve `Account`, `Arn`, `UserId` thi credentials OK.
+Lenh dung se tra ve `Account`, `Arn`, `UserId`.
 
-## Buoc 2: Chuan Bi SSH Key
+## 5. Cau Hinh SSH Key
 
-Repo dang dung SSH key:
+Neu tao key moi:
+
+```bash
+ssh-keygen -t rsa -b 4096 -f ~/.ssh/aws-hybrid -N ""
+chmod 600 ~/.ssh/aws-hybrid
+```
+
+Neu dung key duoc ban giao, copy private key vao may moi, vi du:
 
 ```text
-/home/hoang_viet/.ssh/aws-hybrid
-/home/hoang_viet/.ssh/aws-hybrid.pub
+~/.ssh/aws-hybrid
 ```
 
-Neu chua co key:
+Sau do:
 
 ```bash
-ssh-keygen -t rsa -b 4096 -f /home/hoang_viet/.ssh/aws-hybrid -N ""
-chmod 600 /home/hoang_viet/.ssh/aws-hybrid
+chmod 600 ~/.ssh/aws-hybrid
 ```
 
-Kiem tra file key:
+Khong commit private key vao repo.
+
+## 6. Sua `terraform/terraform.tfvars`
+
+Lay public IP cua may dev:
 
 ```bash
-ls -l /home/hoang_viet/.ssh/aws-hybrid /home/hoang_viet/.ssh/aws-hybrid.pub
+curl -s https://api.ipify.org
 ```
 
-## Buoc 3: Kiem Tra `terraform.tfvars`
-
-Mo `terraform/terraform.tfvars` va dam bao cac gia tri chinh dung:
+Sua `terraform/terraform.tfvars`:
 
 ```hcl
-aws_region       = "ap-southeast-1"
-my_ip_cidr       = "<your-public-ip>/32"
+aws_region = "ap-southeast-1"
+my_ip_cidr = "<your-public-ip>/32"
 ci_cd_ssh_cidr_blocks = []
 
-public_key_path  = "/home/hoang_viet/.ssh/aws-hybrid.pub"
-private_key_path = "/home/hoang_viet/.ssh/aws-hybrid"
+public_key_path  = "/home/<user>/.ssh/aws-hybrid.pub"
+private_key_path = "/home/<user>/.ssh/aws-hybrid"
+ssh_user         = "ec2-user"
 
 monitor_instance_type = "t3.small"
 web_instance_type     = "t3.micro"
@@ -116,17 +131,11 @@ core_instance_type    = "t3.micro"
 root_volume_size      = 30
 ```
 
-Lay public IP hien tai:
+`my_ip_cidr` phai dung IP public hien tai cua may dev, vi security group dung gia tri nay de mo SSH va cac cong monitoring.
 
-```bash
-curl -s https://api.ipify.org
-```
+## 7. Chay Terraform Va Cap Nhat Inventory
 
-Sau do cap nhat `my_ip_cidr = "<ip>/32"` neu IP da thay doi.
-
-Luu y: `terraform.tfvars`, private key va `.env` la secrets/local config, khong commit len GitHub.
-
-## Buoc 4: Chay Terraform
+Chay:
 
 ```bash
 cd terraform
@@ -134,32 +143,17 @@ terraform init
 terraform validate
 terraform plan -out=tfplan
 terraform apply tfplan
+terraform output -raw ansible_inventory > ../ansible/inventory.ini
 cd ..
 ```
 
-Sau khi apply, lay IP tu Terraform:
-
-```bash
-cd terraform
-terraform output
-cd ..
-```
-
-## Buoc 5: Cap Nhat Lai Ha Tang Va Inventory
-
-Script nay da duoc dung de cap nhat IP local vao `terraform.tfvars`, chay `terraform apply`, va ghi lai `ansible/inventory.ini` tu Terraform output.
-
-```bash
-bash automation/update-infrastructure.sh
-```
-
-Sau buoc nay, kiem tra inventory:
+Kiem tra inventory:
 
 ```bash
 cat ansible/inventory.ini
 ```
 
-Dang ky vong inventory co dang:
+Dang dung:
 
 ```ini
 [monitor]
@@ -171,12 +165,24 @@ bank-web-01 ansible_host=<web-public-ip> ansible_user=ec2-user
 [core]
 bank-core-01 ansible_host=<core-public-ip> ansible_user=ec2-user
 
+[app:children]
+web
+core
+
 [all:vars]
 ansible_python_interpreter=/usr/bin/python3
-ansible_ssh_private_key_file=/home/hoang_viet/.ssh/aws-hybrid
+ansible_ssh_private_key_file=/home/<user>/.ssh/aws-hybrid
 ```
 
-## Buoc 6: Kiem Tra Ket Noi Ansible
+Neu may dev doi IP sau nay, chay:
+
+```bash
+bash automation/update-infrastructure.sh
+```
+
+Script nay se cap nhat `my_ip_cidr`, apply Terraform va ghi lai `ansible/inventory.ini`.
+
+## 8. Kiem Tra SSH/Ansible
 
 ```bash
 ansible all -i ansible/inventory.ini -m ping
@@ -190,23 +196,22 @@ bank-web-01   | SUCCESS
 bank-core-01  | SUCCESS
 ```
 
-Neu loi SSH:
+Neu `UNREACHABLE`, kiem tra lai:
 
-- Kiem tra `ansible_ssh_private_key_file` trong `ansible/inventory.ini`.
-- Kiem tra `my_ip_cidr` da dung public IP hien tai.
-- Chay lai `bash automation/update-infrastructure.sh`.
-- Dam bao file private key co permission `600`.
+- `my_ip_cidr` co dung public IP hien tai khong.
+- `ansible_ssh_private_key_file` co dung duong dan tren may moi khong.
+- Private key da `chmod 600` chua.
+- EC2 moi tao co the can cho 1-2 phut de SSH san sang.
 
-## Buoc 7: Chuan Bi Credentials Cho AI Agent
+## 9. Tao `agent_src/.env`
 
-Tao hoac cap nhat file `agent_src/.env`:
+Tao file:
 
 ```bash
 touch agent_src/.env
-nano agent_src/.env
 ```
 
-Noi dung can co:
+Noi dung:
 
 ```env
 AI_AGENT_PORT=8000
@@ -215,37 +220,25 @@ TELEGRAM_TOKEN=<your-telegram-bot-token>
 TELEGRAM_CHAT_ID=<your-telegram-chat-id>
 ```
 
-`automation/ansible-deploy.sh` se source file nay va export credentials cho playbook.
+File nay chi dung local cho Ansible deploy. Khong commit.
 
-## Buoc 8: Deploy Full Stack Bang Ansible
-
-Chay:
+## 10. Deploy Bang Ansible
 
 ```bash
 bash automation/ansible-deploy.sh
 ```
 
-Script se thuc hien:
+Script se:
 
-1. Doc IP tu `ansible/inventory.ini`.
-2. Load credentials tu `agent_src/.env`.
-3. Kiem tra Ansible connectivity.
-4. Bootstrap cac EC2 instances.
-5. Deploy Node Exporter tren tat ca instances.
-6. Deploy Prometheus, Alertmanager, Grafana tren monitor.
-7. Deploy core backend stack tren `bank-core-01`:
-   - `aiops-api`
-   - `postgres`
-   - `redis`
-8. Deploy web gateway tren `bank-web-01`:
-   - `webserver` Nginx
-   - proxy `/api`, `/docs`, `/redoc`, `/openapi.json` sang core backend
-9. Deploy AI Agent tren `monitor-ai-01`:
-   - `ai-agent`
-   - `ai-agent-redis`
-10. Kiem tra health va in access URLs.
+1. Load credentials tu `agent_src/.env`.
+2. Test Ansible connectivity.
+3. Bootstrap 3 EC2.
+4. Deploy monitoring tren `monitor-ai-01`.
+5. Deploy backend/db/cache tren `bank-core-01`.
+6. Deploy Nginx gateway tren `bank-web-01`.
+7. Deploy AI Agent tren `monitor-ai-01`.
 
-Ket qua dung o cuoi lenh:
+Ket qua dung:
 
 ```text
 DEPLOYMENT COMPLETED SUCCESSFULLY
@@ -253,213 +246,240 @@ failed=0
 unreachable=0
 ```
 
-## Buoc 9: Kiem Tra Sau Deploy
+## 11. Kiem Tra Sau Deploy
 
-### Kiem tra containers tren tat ca instances
-
-Dung lenh nay khi chay qua Ansible ad-hoc. Can boc Docker Go template bang `{% raw %}` de Ansible khong parse `{{ }}` nhu Jinja:
-
-```bash
-ansible all -i ansible/inventory.ini -m shell -a "docker ps --format '{% raw %}table {{.Names}}\t{{.Status}}\t{{.Ports}}{% endraw %}'"
-```
-
-Ket qua mong doi:
-
-```text
-monitor-ai-01:
-ai-agent         Up ... (healthy)   0.0.0.0:8000->8000/tcp
-ai-agent-redis   Up ... (healthy)   6379/tcp
-alertmanager     Up ...
-prometheus       Up ...
-grafana          Up ...             0.0.0.0:3000->3000/tcp
-
-bank-web-01:
-webserver         Up ...             0.0.0.0:80->80/tcp, 0.0.0.0:443->443/tcp
-
-bank-core-01:
-aiops-api         Up ... (healthy)   0.0.0.0:8000->8000/tcp
-postgres          Up ... (healthy)   0.0.0.0:5432->5432/tcp
-redis             Up ... (healthy)   0.0.0.0:6379->6379/tcp
-```
-
-### Kiem tra service tren monitor
-
-```bash
-ansible monitor -i ansible/inventory.ini -m shell -a "curl -s http://localhost:9090/-/ready && curl -s http://localhost:3000/api/health && curl -s http://localhost:8000/health"
-```
-
-Ket qua mong doi:
-
-```text
-Prometheus Server is Ready.
-{
-  "database": "ok",
-  "version": "...",
-  "commit": "..."
-}
-{"status":"healthy","queue":"celery-redis","redis":"connected"}
-```
-
-### Kiem tra service tren web
-
-```bash
-ansible web -i ansible/inventory.ini -m shell -a "docker ps && curl -s http://localhost/health && curl -s http://localhost/api/health"
-```
-
-Ket qua mong doi:
-
-```text
-webserver Up ...
-OK
-{"status":"healthy","environment":"production","service":"AIOps Backend API"}
-```
-
-### Kiem tra service tren core
-
-```bash
-ansible core -i ansible/inventory.ini -m shell -a "docker ps && curl -s http://localhost:8000/api/health && docker exec postgres psql -U aiops_user -d aiops_db -c 'SELECT 1' && docker exec redis redis-cli ping"
-```
-
-Ket qua mong doi:
-
-```text
-aiops-api Up ... (healthy)
-postgres  Up ... (healthy)
-redis     Up ... (healthy)
-{"status":"healthy","environment":"production","service":"AIOps Backend API"}
- ?column?
-----------
-        1
-(1 row)
-PONG
-```
-
-## Access URLs
-
-Lay IP moi nhat tu inventory:
+Lay IP:
 
 ```bash
 cat ansible/inventory.ini
 ```
 
-Dang hien tai:
+Kiem tra nhanh:
 
-```text
-Webserver:    http://3.1.78.149
-Grafana:      http://54.151.146.219:3000
-Prometheus:   http://54.151.146.219:9090
-Alertmanager: http://54.151.146.219:9093
+```bash
+ansible all -i ansible/inventory.ini -m shell -a "docker ps --format '{% raw %}table {{.Names}}\t{{.Status}}\t{{.Ports}}{% endraw %}'"
+ansible monitor -i ansible/inventory.ini -m shell -a "curl -s http://localhost:9090/-/ready && curl -s http://localhost:3000/api/health && curl -s http://localhost:8000/health"
+ansible web -i ansible/inventory.ini -m shell -a "curl -s http://localhost/health && curl -s http://localhost/api/health"
+ansible core -i ansible/inventory.ini -m shell -a "curl -s http://localhost:8000/api/health"
 ```
 
-Grafana default credential:
+URLs:
+
+```text
+Webserver:    http://<web-public-ip>
+API health:   http://<web-public-ip>/api/health
+API docs:     http://<web-public-ip>/docs
+Grafana:      http://<monitor-public-ip>:3000
+Prometheus:   http://<monitor-public-ip>:9090
+Alertmanager: http://<monitor-public-ip>:9093
+AI Agent:     http://<monitor-public-ip>:8000/health
+```
+
+Grafana:
 
 ```text
 Username: admin
 Password: admin123
 ```
 
-Core API public IP co the khong truy cap duoc tu may local neu security group chi cho web/monitor. Cach dung khuyen nghi:
+## 12. Cap Nhat GitHub Secrets Truoc Khi Chay CI/CD
+
+Can cap nhat GitHub Secrets sau khi doi server/IP/key, truoc khi push `develop`, tao tag `v*`, hoac chay CD workflow thu cong.
+
+Workflow lien quan:
+
+- `.github/workflows/ci.yml`: lint/test/build, khong can deploy secret.
+- `.github/workflows/cd-staging.yml`: deploy khi push `develop` hoac `workflow_dispatch`.
+- `.github/workflows/cd-production.yml`: deploy khi push tag `v*` hoac `workflow_dispatch`.
+
+### Chinh Secrets Tren GitHub UI
+
+Vao repo tren GitHub:
 
 ```text
-http://<web-public-ip>/api/health
-http://<web-public-ip>/docs
+Settings -> Secrets and variables -> Actions -> Repository secrets
 ```
 
-## Troubleshooting Ngan Gon
+Tao secret moi:
 
-### `terraform plan -out=tfplan` loi credentials
+1. Bam `New repository secret`.
+2. Nhap `Name`, vi du `SSH_HOST`.
+3. Paste gia tri vao `Secret`.
+4. Bam `Add secret`.
 
-Kiem tra profile:
+Sua secret da co:
+
+1. Tim secret trong `Repository secrets`.
+2. Bam `Update`.
+3. Paste gia tri moi.
+4. Bam `Update secret`.
+
+GitHub se khong hien lai gia tri sau khi luu. Neu paste sai, update lai secret do.
+
+### Secrets Can Co
+
+| Secret | Gia tri |
+|--------|---------|
+| `GHCR_USERNAME` | GitHub username/org co quyen push GHCR |
+| `GHCR_TOKEN` | GitHub PAT co scope `write:packages`, them `read:packages` neu image private |
+| `SSH_HOST` | Public IP/DNS cua EC2 ma workflow SSH vao de deploy release |
+| `SSH_PORT` | `22` |
+| `SSH_PRIVATE_KEY` | Noi dung private key, khong phai duong dan file |
+| `GEMINI_API_KEY` | Gemini API key |
+| `TELEGRAM_TOKEN` | Telegram bot token |
+| `TELEGRAM_CHAT_ID` | Telegram chat ID |
+| `AI_AGENT_PUBLIC_URL` | `http://<monitor-public-ip>:8000` neu dung AI Agent public |
+| `DATABASE_URL` | Database URL cho release stack |
+| `SECRET_KEY` | Secret key cho backend/API |
+| `PROMETHEUS_URL` | `http://<monitor-public-ip>:9090` |
+
+Workflow hien tai SSH bang user `ec2-user`. Neu server dung user khac, phai sua workflow truoc khi chay CD.
+
+### Cach Paste `SSH_PRIVATE_KEY`
+
+Lay key tren may local:
+
+```bash
+cat ~/.ssh/aws-hybrid
+```
+
+Paste toan bo noi dung vao secret `SSH_PRIVATE_KEY`, bao gom:
+
+```text
+-----BEGIN OPENSSH PRIVATE KEY-----
+...
+-----END OPENSSH PRIVATE KEY-----
+```
+
+Khong paste file `.pub`, khong them dau ngoac kep, khong thay newline bang `\n`.
+
+### Cach Tao `GHCR_TOKEN`
+
+Tren GitHub:
+
+```text
+Avatar -> Settings -> Developer settings -> Personal access tokens -> Tokens (classic)
+```
+
+Tao token classic moi, tick:
+
+```text
+write:packages
+read:packages
+```
+
+Copy token ngay sau khi tao va luu vao secret `GHCR_TOKEN`.
+
+### Gia Tri Can Lay Tu Ha Tang Moi
+
+```text
+SSH_HOST=<public-ip-cua-node-chay-release-cicd>
+SSH_PORT=22
+AI_AGENT_PUBLIC_URL=http://<monitor-public-ip>:8000
+PROMETHEUS_URL=http://<monitor-public-ip>:9090
+```
+
+Luu y: CD workflow copy `release/` va `automation/` vao `/home/ec2-user/aws-hybrid` tren `SSH_HOST`, sau do chay `automation/app-release-deploy.sh`. Hay chon dung server release runtime, hoac sua workflow neu muon deploy theo mo hinh 3 node.
+
+### Kiem Tra Truoc Khi Trigger CD
+
+Test SSH tu may local:
+
+```bash
+ssh -i ~/.ssh/aws-hybrid -p 22 ec2-user@<SSH_HOST> 'echo auth-ok'
+```
+
+Test GHCR token:
+
+```bash
+echo "<GHCR_TOKEN>" | docker login ghcr.io -u "<GHCR_USERNAME>" --password-stdin
+```
+
+Trigger staging:
+
+```bash
+git push origin develop
+```
+
+Trigger production:
+
+```bash
+git tag v<version>
+git push origin v<version>
+```
+
+## 13. Lenh Nhanh
+
+Lan dau tren may moi:
+
+```bash
+cd /path/to/aws-hybrid
+aws configure --profile target-account
+ssh-keygen -t rsa -b 4096 -f ~/.ssh/aws-hybrid -N ""
+chmod 600 ~/.ssh/aws-hybrid
+curl -s https://api.ipify.org
+# sua terraform/terraform.tfvars
+cd terraform
+terraform init
+terraform validate
+terraform plan -out=tfplan
+terraform apply tfplan
+terraform output -raw ansible_inventory > ../ansible/inventory.ini
+cd ..
+ansible all -i ansible/inventory.ini -m ping
+# tao agent_src/.env
+bash automation/ansible-deploy.sh
+```
+
+Khi da co ha tang va chi can cap nhat IP/deploy lai:
+
+```bash
+cd /path/to/aws-hybrid
+bash automation/update-infrastructure.sh
+ansible all -i ansible/inventory.ini -m ping
+bash automation/ansible-deploy.sh
+```
+
+## 14. Troubleshooting Ngan
+
+Terraform loi credentials:
 
 ```bash
 aws sts get-caller-identity --profile target-account
 aws configure --profile target-account
 ```
 
-### `ansible all -m ping` loi unreachable
-
-Chay:
+Ansible `UNREACHABLE`:
 
 ```bash
+curl -s https://api.ipify.org
 bash automation/update-infrastructure.sh
+chmod 600 ~/.ssh/aws-hybrid
 ansible all -i ansible/inventory.ini -m ping
 ```
 
-Kiem tra them:
+`automation/ansible-deploy.sh` bao thieu credentials:
 
 ```bash
-chmod 600 /home/hoang_viet/.ssh/aws-hybrid
-cat ansible/inventory.ini
+cat agent_src/.env
 ```
 
-### `docker ps --format 'table {{.Names}}...'` bi loi `unexpected '.'`
+Docker format bi loi `unexpected '.'`: dung lenh da boc `{% raw %}` trong phan kiem tra, vi Ansible co the parse `{{.Names}}` nhu Jinja.
 
-Nguyen nhan: Ansible parse `{{.Names}}` thanh Jinja template.
+## 15. Bao Mat Va Ban Giao
 
-Dung ban escape:
+Khong commit:
 
-```bash
-ansible all -i ansible/inventory.ini -m shell -a "docker ps --format '{% raw %}table {{.Names}}\t{{.Status}}\t{{.Ports}}{% endraw %}'"
-```
+- AWS Access Key/Secret Access Key.
+- SSH private key.
+- `agent_src/.env`.
+- Telegram/Gemini token.
+- Terraform state neu state co secret.
 
-### Core khong co container Docker
+Khi ban giao cho dev khac, gui rieng:
 
-Core phai co:
-
-```text
-aiops-api
-postgres
-redis
-```
-
-Neu core trong, chay lai deploy:
-
-```bash
-bash automation/ansible-deploy.sh
-```
-
-Sau do kiem tra:
-
-```bash
-ansible core -i ansible/inventory.ini -m shell -a "docker ps"
-```
-
-### Web con `postgres` hoac `redis`
-
-Web chi nen co `webserver`. Neu web con container cu `postgres`/`redis`, don orphan:
-
-```bash
-ansible web -i ansible/inventory.ini -m shell -a "cd /opt/webserver && docker-compose up -d --remove-orphans"
-```
-
-Playbook hien tai da dung `--remove-orphans` cho lan deploy sau.
-
-### Warning `Found variable using reserved name 'environment'`
-
-Day la warning cua Ansible do `ansible/group_vars/all.yml` co bien ten `environment`.
-Warning nay khong lam deploy fail. Co the doi ten bien sau neu muon lam sach log.
-
-### Warning docker-compose `version is obsolete`
-
-Docker Compose moi khong can field `version`.
-Warning nay khong lam container fail. Co the xoa field `version` trong compose templates sau neu muon lam sach log.
-
-## Lenh Deploy Nhanh
-
-Khi ha tang da ton tai va chi can deploy lai:
-
-```bash
-cd /home/hoang_viet/aws-hybrid
-bash automation/update-infrastructure.sh
-ansible all -i ansible/inventory.ini -m ping
-bash automation/ansible-deploy.sh
-```
-
-Kiem tra sau deploy:
-
-```bash
-ansible all -i ansible/inventory.ini -m shell -a "docker ps --format '{% raw %}table {{.Names}}\t{{.Status}}\t{{.Ports}}{% endraw %}'"
-ansible monitor -i ansible/inventory.ini -m shell -a "curl -s http://localhost:9090/-/ready && curl -s http://localhost:3000/api/health"
-ansible web -i ansible/inventory.ini -m shell -a "docker ps"
-ansible core -i ansible/inventory.ini -m shell -a "docker ps"
-```
+- AWS account/profile/role duoc phep deploy.
+- SSH private key hoac cach tao key moi.
+- Gia tri cho `agent_src/.env`.
+- GitHub Secrets can update.
+- Public IP hien tai cua ha tang.
