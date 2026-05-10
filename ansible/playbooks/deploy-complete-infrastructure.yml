@@ -1,6 +1,6 @@
 ---
 # Complete Infrastructure Deployment Playbook
-# Deploys: Prometheus, Grafana, Webserver, AI Agent, and all monitoring components
+# Deploys: Prometheus, Grafana, Webserver, backend/core, and monitoring components
 # Usage: ansible-playbook -i inventory.ini playbooks/deploy-complete-infrastructure.yml
 #
 # This playbook imports bootstrap.yml first to install system dependencies and Docker
@@ -96,6 +96,7 @@
       loop:
         - /opt/prometheus
         - /opt/prometheus/data
+        - /opt/blackbox
         - /opt/alertmanager
         - /opt/alertmanager/data
 
@@ -197,6 +198,23 @@
         group: nobody
         mode: '0644'
 
+    - name: Create Blackbox Exporter configuration
+      copy:
+        content: |
+          modules:
+            http_2xx:
+              prober: http
+              timeout: 5s
+              http:
+                method: GET
+                preferred_ip_protocol: ip4
+                valid_status_codes: []
+                follow_redirects: true
+        dest: /opt/blackbox/blackbox.yml
+        owner: nobody
+        group: nobody
+        mode: '0644'
+
     - name: Create Prometheus docker-compose.yml
       copy:
         content: |
@@ -214,6 +232,18 @@
                 - '--config.file=/etc/prometheus/prometheus.yml'
                 - '--storage.tsdb.path=/prometheus'
                 - '--storage.tsdb.retention.time=30d'
+              restart: unless-stopped
+              depends_on:
+                - blackbox-exporter
+
+            blackbox-exporter:
+              image: prom/blackbox-exporter:latest
+              container_name: blackbox-exporter
+              network_mode: host
+              volumes:
+                - /opt/blackbox/blackbox.yml:/etc/blackbox_exporter/config.yml:ro
+              command:
+                - '--config.file=/etc/blackbox_exporter/config.yml'
               restart: unless-stopped
 
             alertmanager:
@@ -285,6 +315,7 @@
           apiVersion: 1
           datasources:
             - name: Prometheus
+              uid: prometheus
               type: prometheus
               access: proxy
               url: http://{{ ansible_default_ipv4.address }}:9090
@@ -362,6 +393,7 @@
         body: |
           {
             "name": "Prometheus",
+            "uid": "prometheus",
             "type": "prometheus",
             "access": "proxy",
             "url": "http://localhost:9090",
@@ -392,6 +424,28 @@
         - alert-monitoring
         - network-performance
       ignore_errors: yes
+
+    - name: Align dashboard datasource UID with Grafana Prometheus datasource
+      shell: |
+        prometheus_uid="$(curl -s "http://admin:admin123@localhost:3000/api/datasources/name/Prometheus" | python3 -c "import sys, json; print(json.load(sys.stdin)['uid'])")"
+        python3 - "$prometheus_uid" /tmp/system-overview-dashboard.json /tmp/alert-monitoring-dashboard.json /tmp/network-performance-dashboard.json <<'PY'
+        import json
+        import sys
+
+        prometheus_uid = sys.argv[1]
+        for path in sys.argv[2:]:
+            with open(path, "r", encoding="utf-8") as f:
+                payload = json.load(f)
+            dashboard = payload.get("dashboard", payload)
+            for panel in dashboard.get("panels", []):
+                for target in panel.get("targets", []):
+                    datasource = target.get("datasource")
+                    if isinstance(datasource, dict) and datasource.get("type") == "prometheus":
+                        datasource["uid"] = prometheus_uid
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump(payload, f)
+        PY
+      changed_when: false
 
     - name: Deploy 3 Grafana Dashboards from template files
       shell: |
@@ -630,6 +684,58 @@
       loop:
         - /opt/webserver
         - /opt/webserver/config
+        - /opt/webserver/html
+
+    - name: Reset local frontend build output
+      shell: |
+        docker run --rm \
+          -v /tmp:/host-tmp \
+          node:18-alpine \
+          sh -c "rm -rf /host-tmp/aws-hybrid-frontend-build"
+      delegate_to: localhost
+      become: no
+      changed_when: false
+
+    - name: Create local frontend build output directory
+      file:
+        path: /tmp/aws-hybrid-frontend-build
+        state: directory
+        mode: '0777'
+      delegate_to: localhost
+      become: no
+
+    - name: Build frontend static assets locally
+      shell: |
+        docker run --rm \
+          -v "{{ playbook_dir }}/../../demo-web/frontend:/src:ro" \
+          -v /tmp/aws-hybrid-frontend-build:/out \
+          node:18-alpine \
+          sh -c "cp -a /src/. /work && cd /work && npm install && CI=false REACT_APP_API_URL= npm run build && cp -a build/. /out/"
+      register: frontend_build
+      changed_when: "'Creating an optimized production build' in frontend_build.stdout or 'compiled successfully' in (frontend_build.stdout | lower)"
+      delegate_to: localhost
+      become: no
+
+    - name: Reset frontend static assets directory
+      file:
+        path: /opt/webserver/html
+        state: absent
+
+    - name: Recreate frontend static assets directory
+      file:
+        path: /opt/webserver/html
+        state: directory
+        owner: ec2-user
+        group: ec2-user
+        mode: '0755'
+
+    - name: Install frontend static assets
+      copy:
+        src: /tmp/aws-hybrid-frontend-build/
+        dest: /opt/webserver/html/
+        owner: ec2-user
+        group: ec2-user
+        mode: preserve
 
     - name: Create nginx gateway configuration
       copy:
@@ -641,6 +747,9 @@
           }
 
           http {
+            include /etc/nginx/mime.types;
+            default_type application/octet-stream;
+
             upstream backend_api {
               server {{ hostvars[groups["core"][0]].ansible_default_ipv4.address }}:8000;
             }
@@ -680,8 +789,9 @@
               }
 
               location / {
-                return 200 "AIOps web gateway is running. Backend API is proxied under /api/ and /docs.\n";
-                add_header Content-Type text/plain;
+                root /usr/share/nginx/html;
+                index index.html;
+                try_files $uri $uri/ /index.html;
               }
             }
           }
@@ -703,6 +813,7 @@
                 - "443:443"
               volumes:
                 - /opt/webserver/config/nginx.conf:/etc/nginx/nginx.conf:ro
+                - /opt/webserver/html:/usr/share/nginx/html:ro
               restart: unless-stopped
         dest: /opt/webserver/docker-compose.yml
         mode: '0644'
@@ -727,186 +838,12 @@
     - name: Verify web gateway can reach backend API
       shell: curl -s http://localhost/api/health
       changed_when: false
-# ========== PHASE 5: Deploy AI Agent (Monitor Server) ==========
-- name: "PHASE 5: Deploy AI Agent"
-  hosts: monitor
-  become: yes
-  gather_facts: yes
 
-  vars:
-    gemini_api_key: "{{ lookup('env', 'GEMINI_API_KEY') | default('') }}"
-    telegram_token: "{{ lookup('env', 'TELEGRAM_TOKEN') | default('') }}"
-    telegram_chat_id: "{{ lookup('env', 'TELEGRAM_CHAT_ID') | default('') }}"
-
-  pre_tasks:
-    - name: Validate AI Agent environment variables
-      fail:
-        msg: "ERROR: {{ item }} environment variable is not set. Please set it before deployment: export {{ item }}='your-value'"
-      when: vars[item] == ''
-      with_items:
-        - gemini_api_key
-        - telegram_token
-        - telegram_chat_id
-      tags:
-        - validate
-
-    - name: Display AI Agent deployment information
-      debug:
-        msg:
-          - "=========================================="
-          - "Deploying AI Agent"
-          - "=========================================="
-          - "Target Host: {{ inventory_hostname }}"
-          - "App Path: /opt/ai-agent"
-          - "Port: 8000"
-          - "=========================================="
-      tags:
-        - always
-
-  tasks:
-    - name: Create AI Agent directories
-      file:
-        path: "{{ item }}"
-        state: directory
-        owner: ec2-user
-        group: ec2-user
-        mode: '0755'
-      loop:
-        - /opt/ai-agent
-        - /opt/ai-agent/logs
-
-    - name: Reset temporary AI Agent source directory
-      file:
-        path: /tmp/ai-agent-src
-        state: absent
-      become: no
-
-    - name: Copy AI Agent files to temporary directory
-      copy:
-        src: "{{ playbook_dir }}/../../agent_src/"
-        dest: /tmp/ai-agent-src/
-        mode: preserve
-      become: no
-
-    - name: Install AI Agent files
-      shell: |
-        cp -a /tmp/ai-agent-src/. /opt/ai-agent/
-        chown -R ec2-user:ec2-user /opt/ai-agent
-      become: yes
-      become_user: root
-
-    - name: Create or update AI Agent docker-compose.yml
-      copy:
-        content: |
-          version: '3.8'
-          services:
-            ai-agent:
-              image: aws-hybrid_ai-agent:latest
-              container_name: ai-agent
-              ports:
-                - "8000:8000"
-              environment:
-                - GEMINI_API_KEY={{ gemini_api_key }}
-                - TELEGRAM_TOKEN={{ telegram_token }}
-                - TELEGRAM_CHAT_ID={{ telegram_chat_id }}
-                - REDIS_HOST=ai-agent-redis
-                - REDIS_PORT=6379
-                - REDIS_DB=0
-                - LOG_LEVEL=INFO
-                - DEBUG=false
-              depends_on:
-                - ai-agent-redis
-              volumes:
-                - /opt/ai-agent/logs:/app/logs
-              networks:
-                - aiops-network
-              restart: unless-stopped
-              healthcheck:
-                test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
-                interval: 30s
-                timeout: 10s
-                retries: 3
-                start_period: 40s
-
-            ai-agent-redis:
-              image: redis:7-alpine
-              container_name: ai-agent-redis
-              command: redis-server --appendonly yes
-              volumes:
-                - ai_agent_redis_data:/data
-              networks:
-                - aiops-network
-              restart: unless-stopped
-              healthcheck:
-                test: ["CMD", "redis-cli", "ping"]
-                interval: 30s
-                timeout: 10s
-                retries: 3
-
-          networks:
-            aiops-network:
-              driver: bridge
-
-          volumes:
-            ai_agent_redis_data:
-        dest: /opt/ai-agent/docker-compose.yml
-        owner: ec2-user
-        group: ec2-user
-        mode: '0644'
-
-    - name: Build AI Agent Docker image
-      shell: |
-        cd /opt/ai-agent
-        docker build -t aws-hybrid_ai-agent:latest .
-      register: ai_agent_build
-      changed_when: "'Successfully built' in ai_agent_build.stdout or 'Successfully tagged' in ai_agent_build.stdout"
-      become: yes
-      become_user: root
-      retries: 3
-      delay: 10
-
-    - name: Start AI Agent
-      shell: |
-        cd /opt/ai-agent
-        docker-compose up -d --force-recreate
-      register: ai_agent_start
-      changed_when: "'Started' in ai_agent_start.stderr or 'Creating' in ai_agent_start.stderr"
-      become: yes
-      become_user: root
-      retries: 3
-      delay: 5
-
-    - name: Wait for AI Agent to be ready
-      wait_for:
-        port: 8000
-        delay: 5
-        timeout: 60
-        host: localhost
-
-    - name: Verify AI Agent is responding
-      uri:
-        url: "http://localhost:8000/health"
-        method: GET
-        status_code: 200
-      retries: 5
-      delay: 5
-      register: ai_agent_health
-      until: ai_agent_health.status == 200
-
-    - name: Display AI Agent deployment status
-      debug:
-        msg:
-          - "=========================================="
-          - "✅ AI Agent deployed successfully"
-          - "=========================================="
-          - "Service: ai-agent"
-          - "Port: 8000"
-          - "Status: {{ ai_agent_health.status }}"
-          - "Access: http://{{ ansible_default_ipv4.address }}:8000"
-          - "=========================================="
-
-# ========== PHASE 6: Firewall Configuration ==========
-- name: "PHASE 6: Configure Firewall Rules"
+    - name: Verify frontend UI is being served
+      shell: curl -s http://localhost/ | grep -qi '<div id="root">'
+      changed_when: false
+# ========== PHASE 5: Firewall Configuration ==========
+- name: "PHASE 5: Configure Firewall Rules"
   hosts: all
   become: yes
 
@@ -981,8 +918,8 @@
         fi
       changed_when: false
 
-# ========== PHASE 7: Summary and Verification ==========
-- name: "PHASE 7: Summary and Health Check"
+# ========== PHASE 6: Summary and Verification ==========
+- name: "PHASE 6: Summary and Health Check"
   hosts: localhost
   gather_facts: no
 
@@ -1001,7 +938,7 @@
           - "  ✓ Grafana (Monitor: 3000)"
           - "  ✓ Node Exporter (All: 9100)"
           - "  ✓ Webserver (Web: 80)"
-          - "  ✓ AI Agent (Monitor: 8000)"
+          - "  ✓ AI Agent is deployed separately with ansible/playbooks/deploy-ai-agent.yml"
           - ""
           - "DEFAULT CREDENTIALS:"
           - "  Grafana: admin / admin123"
@@ -1012,7 +949,7 @@
           - "  Grafana: http://<monitor-ip>:3000"
           - "  Prometheus: http://<monitor-ip>:9090"
           - "  AlertManager: http://<monitor-ip>:9093"
-          - "  AI Agent: http://<monitor-ip>:8000"
+          - "  AI Agent: http://<monitor-ip>:8000 (after separate AI Agent deploy)"
           - "  Webserver: http://<web-ip>:80"
           - ""
           - "NEXT STEPS:"

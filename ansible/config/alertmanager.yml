@@ -56,13 +56,13 @@ inhibit_rules:
       severity: 'critical'
     target_match:
       severity: 'warning'
-    equal: ['alertname', 'instance', 'service']
+    equal: ['instance', 'service']
   
   - source_match:
       severity: 'critical'
     target_match:
       severity: 'info'
-    equal: ['alertname', 'instance', 'service']
+    equal: ['instance', 'service']
 
 receivers:
   - name: 'default'

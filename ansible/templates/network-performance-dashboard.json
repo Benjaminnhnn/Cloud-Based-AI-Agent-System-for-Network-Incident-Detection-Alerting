@@ -13,7 +13,7 @@
         "type": "timeseries",
         "gridPos": {"x": 0, "y": 0, "w": 12, "h": 8},
         "fieldConfig": {"defaults": {"unit": "Bps", "color": {"mode": "palette-classic"}}},
-        "targets": [{"refId": "A", "datasource": {"type": "prometheus", "uid": "bfijh14lltg5ce"}, "expr": "rate(node_network_receive_bytes_total{device!=\"lo\"}[5m])"}]
+        "targets": [{"refId": "A", "datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "rate(node_network_receive_bytes_total{device!=\"lo\"}[5m])"}]
       },
       {
         "id": 2,
@@ -21,7 +21,7 @@
         "type": "timeseries",
         "gridPos": {"x": 12, "y": 0, "w": 12, "h": 8},
         "fieldConfig": {"defaults": {"unit": "Bps", "color": {"mode": "palette-classic"}}},
-        "targets": [{"refId": "A", "datasource": {"type": "prometheus", "uid": "bfijh14lltg5ce"}, "expr": "rate(node_network_transmit_bytes_total{device!=\"lo\"}[5m])"}]
+        "targets": [{"refId": "A", "datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "rate(node_network_transmit_bytes_total{device!=\"lo\"}[5m])"}]
       },
       {
         "id": 3,
@@ -30,9 +30,9 @@
         "gridPos": {"x": 0, "y": 8, "w": 12, "h": 8},
         "fieldConfig": {"defaults": {"unit": "short", "color": {"mode": "palette-classic"}}},
         "targets": [
-          {"refId": "A", "datasource": {"type": "prometheus", "uid": "bfijh14lltg5ce"}, "expr": "node_load1"},
-          {"refId": "B", "datasource": {"type": "prometheus", "uid": "bfijh14lltg5ce"}, "expr": "node_load5"},
-          {"refId": "C", "datasource": {"type": "prometheus", "uid": "bfijh14lltg5ce"}, "expr": "node_load15"}
+          {"refId": "A", "datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "node_load1"},
+          {"refId": "B", "datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "node_load5"},
+          {"refId": "C", "datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "node_load15"}
         ]
       },
       {
@@ -41,7 +41,7 @@
         "type": "timeseries",
         "gridPos": {"x": 12, "y": 8, "w": 12, "h": 8},
         "fieldConfig": {"defaults": {"unit": "ops", "color": {"mode": "palette-classic"}}},
-        "targets": [{"refId": "A", "datasource": {"type": "prometheus", "uid": "bfijh14lltg5ce"}, "expr": "rate(node_disk_reads_completed_total[5m])"}]
+        "targets": [{"refId": "A", "datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "rate(node_disk_reads_completed_total[5m])"}]
       }
     ],
     "refresh": "5s",

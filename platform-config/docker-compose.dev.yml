@@ -103,6 +103,21 @@ services:
       - '--web.console.templates=/etc/prometheus/consoles'
     depends_on:
       - node_exporter
+      - blackbox-exporter
+    networks:
+      - aiops-network
+    restart: unless-stopped
+
+  # Blackbox Exporter - HTTP endpoint probing
+  blackbox-exporter:
+    image: prom/blackbox-exporter:latest
+    container_name: blackbox-exporter
+    ports:
+      - "9115:9115"
+    volumes:
+      - ./blackbox.yml:/etc/blackbox_exporter/config.yml:ro
+    command:
+      - '--config.file=/etc/blackbox_exporter/config.yml'
     networks:
       - aiops-network
     restart: unless-stopped
