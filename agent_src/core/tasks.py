@@ -40,6 +40,14 @@ def valid_env_value(value):
 
 
 GEMINI_API_KEY = valid_env_value(os.getenv("GEMINI_API_KEY"))
+GEMINI_MODEL = valid_env_value(os.getenv("GEMINI_MODEL")) or "gemini-2.5-flash"
+GEMINI_FALLBACK_MODELS = [
+    model.strip()
+    for model in os.getenv("GEMINI_FALLBACK_MODELS", "gemini-2.0-flash").split(",")
+    if model.strip()
+]
+GEMINI_MAX_ATTEMPTS = int(os.getenv("GEMINI_MAX_ATTEMPTS", "3"))
+GEMINI_RETRY_BASE_SECONDS = float(os.getenv("GEMINI_RETRY_BASE_SECONDS", "2"))
 VN_TZ = ZoneInfo("Asia/Ho_Chi_Minh")
 
 # Redis Configuration (để lưu incident context)
@@ -95,30 +103,91 @@ async def run_agent_workflow(incident_details: str):
         PROPOSAL_JSON: {{"action": "tên_hành_động", "host": "tên_máy_chủ"}}
     """
 
-    try:
-        response = await client.aio.models.generate_content(
-            model="gemini-2.5-flash",
-            contents=f"Phân tích sự cố: {incident_details}",
-            config=types.GenerateContentConfig(
-                system_instruction=system_instruction,
-                tools=AGENT_TOOLS,
-                automatic_function_calling=types.AutomaticFunctionCallingConfig(
-                    maximum_remote_calls=5
-                )
-            )
-        )
-        full_text = response.text or ""
-        proposal  = None
+    def parse_proposal(full_text: str):
         match = re.search(r"PROPOSAL_JSON:\s*(\{.*\})", full_text)
-        if match:
+        if not match:
+            return None
+        try:
+            return json.loads(match.group(1))
+        except json.JSONDecodeError:
+            logger.warning("Failed to parse PROPOSAL_JSON from AI response.")
+            return None
+
+    def is_retryable_gemini_error(exc: Exception) -> bool:
+        error_text = str(exc).lower()
+        retryable_markers = (
+            "429",
+            "500",
+            "502",
+            "503",
+            "504",
+            "deadline",
+            "rate limit",
+            "resource_exhausted",
+            "temporarily",
+            "timeout",
+            "unavailable",
+            "high demand",
+        )
+        return any(marker in error_text for marker in retryable_markers)
+
+    def fallback_analysis(last_error: Exception | None):
+        host_match = re.search(r"Host:\s*([^|]+)", incident_details)
+        host = host_match.group(1).strip() if host_match else "unknown"
+        error_text = str(last_error) if last_error else "Gemini không phản hồi."
+        analysis = (
+            "⚠️ *Gemini tạm thời không khả dụng, dùng phân tích dự phòng từ RAG/runbook.*\n\n"
+            f"*Sự cố:* {incident_details}\n\n"
+            f"*Lỗi Gemini gần nhất:* `{error_text}`\n\n"
+            "*Ngữ cảnh runbook/RAG liên quan:*\n"
+            f"{runbook_context}\n\n"
+            "*Biện pháp khắc phục đề xuất:*\n"
+            "1. Xác nhận alert còn firing trong Prometheus/Alertmanager.\n"
+            "2. Kiểm tra service/endpoint bị báo lỗi trên host liên quan.\n"
+            "3. Khôi phục service hoặc rollback release gần nhất nếu lỗi xuất hiện sau deploy.\n"
+            "4. Kiểm tra lại `/health` và chờ Prometheus resolve alert.\n"
+            "PROPOSAL_JSON: "
+            + json.dumps({"action": "fallback_runbook_recovery", "host": host}, ensure_ascii=False)
+        )
+        return analysis, {"action": "fallback_runbook_recovery", "host": host}
+
+    models = [GEMINI_MODEL]
+    models.extend(model for model in GEMINI_FALLBACK_MODELS if model not in models)
+    last_error = None
+
+    for model in models:
+        for attempt in range(1, max(GEMINI_MAX_ATTEMPTS, 1) + 1):
             try:
-                proposal = json.loads(match.group(1))
-            except json.JSONDecodeError:
-                logger.warning("Failed to parse PROPOSAL_JSON from AI response.")
-        return full_text if full_text else "AI không phản hồi.", proposal
-    except Exception as e:
-        logger.error(f"Gemini API error: {e}")
-        return f"❌ Lỗi AI: {e}", None
+                response = await client.aio.models.generate_content(
+                    model=model,
+                    contents=f"Phân tích sự cố: {incident_details}",
+                    config=types.GenerateContentConfig(
+                        system_instruction=system_instruction,
+                        tools=AGENT_TOOLS,
+                        automatic_function_calling=types.AutomaticFunctionCallingConfig(
+                            maximum_remote_calls=5
+                        )
+                    )
+                )
+                full_text = response.text or ""
+                return full_text if full_text else "AI không phản hồi.", parse_proposal(full_text)
+            except Exception as e:
+                last_error = e
+                retryable = is_retryable_gemini_error(e)
+                logger.warning(
+                    "Gemini call failed: model=%s attempt=%s/%s retryable=%s error=%s",
+                    model,
+                    attempt,
+                    GEMINI_MAX_ATTEMPTS,
+                    retryable,
+                    e,
+                )
+                if not retryable or attempt >= GEMINI_MAX_ATTEMPTS:
+                    break
+                await asyncio.sleep(GEMINI_RETRY_BASE_SECONDS * (2 ** (attempt - 1)))
+
+    logger.error("Gemini unavailable after retries/fallback models: %s", last_error)
+    return fallback_analysis(last_error)
 
 
 async def process_single_alert(alert: dict) -> None:
