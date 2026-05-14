@@ -120,6 +120,15 @@ jobs:
           chmod 600 ~/.ssh/deploy_key
           ssh-keygen -y -f ~/.ssh/deploy_key >/dev/null
 
+      - name: Validate staging SSH target
+        env:
+          SSH_HOST: ${{ secrets.SSH_HOST }}
+          SSH_PORT: ${{ secrets.SSH_PORT }}
+        run: |
+          set -euo pipefail
+          test "$SSH_HOST" = "52.76.92.112"
+          test "$SSH_PORT" = "22"
+
       - name: Preflight SSH TCP connectivity
         env:
           SSH_HOST: ${{ secrets.SSH_HOST }}
