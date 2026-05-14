@@ -1,6 +1,11 @@
 # AWS Hybrid Infrastructure Deployment Guide
 
-Guide nay danh cho dev dung may khac clone repo va deploy ha tang AWS Hybrid bang Terraform + Ansible, sau do cap nhat GitHub Secrets de CI/CD tro vao dung server.
+Guide nay danh cho dev dung may khac clone repo va van hanh he thong AWS Hybrid theo luong hien tai:
+
+- Terraform tao/cap nhat ha tang AWS.
+- Ansible bootstrap EC2, cai Docker, cau hinh firewall, Node Exporter, Prometheus, Alertmanager, Grafana va release runtime config.
+- GitHub Actions build/push image versioned cho AI Agent, backend va frontend.
+- EC2 pull image, chay health check va rollback ve tag cu neu release moi fail.
 
 ## 1. Tong Quan
 
@@ -9,8 +14,8 @@ Ha tang gom 3 EC2 instances trong region `ap-southeast-1`:
 | Nhom | Host | Vai tro | Dich vu |
 |------|------|---------|---------|
 | `monitor` | `monitor-ai-01` | Monitoring va AI Agent | Prometheus `9090`, Alertmanager `9093`, Grafana `3000`, AI Agent `8000` |
-| `web` | `bank-web-01` | Public web gateway | Nginx `80/443`, proxy API/docs sang core |
-| `core` | `bank-core-01` | Backend va data | FastAPI `8000`, PostgreSQL `5432`, Redis `6379` |
+| `web` | `bank-web-01` | Node duoc giu trong topology ha tang | Nhan Node Exporter va cau hinh firewall monitoring |
+| `core` | `bank-core-01` | Node duoc giu trong topology ha tang | Nhan Node Exporter va cau hinh firewall monitoring |
 
 Luong chay chinh:
 
@@ -21,12 +26,13 @@ Clone repo
   -> sua terraform/terraform.tfvars theo may moi
   -> terraform apply
   -> cap nhat ansible/inventory.ini
-  -> tao agent_src/.env
-  -> tao .env.deploy
-  -> deploy ha tang/service bang deploy-complete-infrastructure.yml
-  -> build/push AI Agent image tu agent_src/
-  -> deploy AI Agent bang deploy-ai-agent.yml de EC2 pull image va chay container
+  -> ansible bootstrap EC2 va monitoring/config layer
+  -> ansible cau hinh release runtime tren monitor host
   -> cap nhat GitHub Secrets truoc khi chay CI/CD
+  -> push develop hoac tag v* de GitHub Actions build/push image
+  -> EC2 pull image qua app-release-deploy.sh
+  -> health check AI Agent, backend, frontend
+  -> rollback tag cu neu release moi fail
 ```
 
 ## 2. File Can Chinh
@@ -35,9 +41,11 @@ Clone repo
 |------|----------|
 | `terraform/terraform.tfvars` | IP may dev, SSH key path, instance type |
 | `ansible/inventory.ini` | Public IP va SSH private key path cho Ansible |
-| `agent_src/.env` | Gemini/Telegram credentials cho AI Agent runtime |
-| `.env.deploy` | Docker registry/image config cho deploy bang image da build san |
-| `.env.deploy.example` | File mau de tao `.env.deploy`, khong chua secret that |
+| `release/.env.example` | Template runtime config cho release stack image-based |
+| `release/docker-compose.staging.yml` | Stack staging versioned image |
+| `release/docker-compose.production.yml` | Stack production versioned image |
+| `automation/app-release-deploy.sh` | Pull image, start stack, health check, rollback |
+| `ansible/playbooks/configure-release-runtime.yml` | Dat compose/env template/deploy script len EC2 release host |
 | GitHub Actions Secrets | Credentials cho CD staging/production |
 
 ## 3. Dieu Kien Truoc Khi Chay
@@ -47,7 +55,7 @@ Dev moi can co:
 - AWS access key/secret key co quyen tao/cap nhat EC2, VPC, EIP, Security Group, Key Pair.
 - SSH private key de vao EC2, hoac quyen tao key moi.
 - `GEMINI_API_KEY`, `TELEGRAM_TOKEN`, `TELEGRAM_CHAT_ID`.
-- Docker registry token de push/pull AI Agent image, vi du GHCR token.
+- Docker registry token de push/pull release images, vi du GHCR token.
 - Tool local: `terraform`, `aws`, `ansible`, `curl`, `git`, `docker`.
 
 Chay tu root repo:
@@ -209,145 +217,149 @@ Neu `UNREACHABLE`, kiem tra lai:
 - Private key da `chmod 600` chua.
 - EC2 moi tao co the can cho 1-2 phut de SSH san sang.
 
-## 9. Tao `agent_src/.env`
+## 9. Chay Ansible Dung Vai Tro Bootstrap/Config
 
-Tao file:
+### Buoc 9.1: Bootstrap EC2
+
+Playbook nay cai package nen, Docker, Docker Compose, SSH va cac thiet lap co ban:
 
 ```bash
-touch agent_src/.env
+ansible-playbook -i ansible/inventory.ini ansible/playbooks/bootstrap.yml
 ```
 
-Noi dung:
+### Buoc 9.2: Cau Hinh Monitoring Va Firewall
+
+Playbook `configure-monitoring-stack.yml` chuyen dung cho monitoring/config layer:
+
+- Node Exporter tren cac node.
+- Prometheus, Alertmanager, Grafana tren monitor node.
+- Firewall host-level.
+- Cac cau hinh monitoring va dashboard.
+
+```bash
+ansible-playbook -i ansible/inventory.ini ansible/playbooks/configure-monitoring-stack.yml
+```
+
+Playbook nay khong deploy backend, frontend hay app release production. Phan do duoc CI/CD xu ly bang release images va `automation/app-release-deploy.sh`.
+
+### Buoc 9.3: Dat Release Runtime Config Len EC2
+
+Playbook nay dat cac file can thiet cho release path image-based tren monitor host:
+
+- `release/docker-compose.staging.yml`
+- `release/docker-compose.production.yml`
+- `release/.env.example`
+- `automation/app-release-deploy.sh`
+- thu muc `release/.state`
+
+```bash
+ansible-playbook -i ansible/inventory.ini ansible/playbooks/configure-release-runtime.yml
+```
+
+## 10. Cau Hinh Release Runtime Bang GitHub Secrets
+
+Release `.env.staging` va `.env.production` duoc GitHub Actions tao tam tu `release/.env.example`, sau do nap gia tri tu repository secrets. Khong tao thu cong file secret trong repo.
+
+Template can biet:
 
 ```env
-AI_AGENT_PORT=8000
-GEMINI_API_KEY=<your-gemini-api-key>
-TELEGRAM_TOKEN=<your-telegram-bot-token>
-TELEGRAM_CHAT_ID=<your-telegram-chat-id>
+GHCR_OWNER=<github-user-or-org>
+IMAGE_TAG=<workflow-supplied-tag>
+GEMINI_API_KEY=<secret>
+TELEGRAM_TOKEN=<secret>
+TELEGRAM_CHAT_ID=<secret>
+AI_AGENT_PUBLIC_URL=<secret>
+DATABASE_URL=<secret>
+SECRET_KEY=<secret>
+PROMETHEUS_URL=<secret>
+ENVIRONMENT=staging-or-production
 ```
 
-File nay chua runtime credentials cho AI Agent. Script deploy se doc file nay va dua cac bien can thiet vao container. Khong commit.
+## 11. Duong Deploy Thong Nhat Cho Service Release
 
-## 10. Tao `.env.deploy`
-
-Tu luong moi, AI Agent khong copy `agent_src/` len EC2 va khong build image tren EC2 nua.
-May local/CI se build image tu `agent_src/`, push len registry, sau do EC2 chi pull image ve chay.
-
-Tao file deploy env local:
-
-```bash
-cp .env.deploy.example .env.deploy
-```
-
-Sua `.env.deploy`:
-
-```env
-GHCR_OWNER=<your-github-user-or-org>
-IMAGE_TAG=v1
-AI_AGENT_IMAGE=ghcr.io/<your-github-user-or-org>/aws-hybrid-ai-agent:v1
-AI_AGENT_REGISTRY=ghcr.io
-
-AI_AGENT_REGISTRY_USERNAME=<your-github-user>
-AI_AGENT_REGISTRY_PASSWORD=<github-classic-token>
-```
-
-File `.env.deploy` chi dung local va da nam trong `.gitignore`. Khong commit file nay.
-
-### Cach Tao `AI_AGENT_REGISTRY_PASSWORD` Cho GHCR
-
-`AI_AGENT_REGISTRY_PASSWORD` la GitHub Personal Access Token, khong phai password GitHub.
-
-Tren GitHub:
+Tu luong hien tai, production/staging release deu di qua mot duong duy nhat:
 
 ```text
-Avatar -> Settings -> Developer settings -> Personal access tokens -> Tokens (classic)
+GitHub Actions
+  -> lint/test
+  -> build AI Agent image
+  -> build Payment API image
+  -> build Frontend Nginx image
+  -> push GHCR voi cung IMAGE_TAG
+  -> SSH/SCP release config toi EC2
+  -> chay automation/app-release-deploy.sh
+  -> EC2 docker compose pull
+  -> health check AI Agent + backend + frontend
+  -> rollback tag cu neu release moi fail
 ```
 
-Tao token classic moi, tick:
+### Buoc 11.1: Deploy Staging
+
+Trigger:
+
+```bash
+git push origin develop
+```
+
+Workflow staging se build/push:
+
+- `aws-hybrid-ai-agent:staging-<commit-sha>`
+- `aws-hybrid-payment-api:staging-<commit-sha>`
+- `aws-hybrid-frontend:staging-<commit-sha>`
+
+Sau do workflow chay tren EC2:
+
+```bash
+./automation/app-release-deploy.sh staging staging-<commit-sha>
+```
+
+Health endpoints:
 
 ```text
-write:packages
-read:packages
+AI Agent: http://127.0.0.1:18000/health
+Backend:  http://127.0.0.1:18080/api/health
+Frontend: http://127.0.0.1:18081/health
 ```
 
-Neu package/repo private, them scope `repo`.
+### Buoc 11.2: Deploy Production
 
-Test login:
+Trigger:
 
 ```bash
-echo "$AI_AGENT_REGISTRY_PASSWORD" | docker login ghcr.io \
-  -u "$AI_AGENT_REGISTRY_USERNAME" \
-  --password-stdin
+git tag v1.0.0
+git push origin v1.0.0
 ```
 
-## 11. Deploy Ha Tang/Service, Build Image va Deploy AI Agent
+Workflow production se build/push:
 
-Quy trinh deploy duoc tach thanh 3 buoc.
+- `aws-hybrid-ai-agent:v1.0.0`
+- `aws-hybrid-payment-api:v1.0.0`
+- `aws-hybrid-frontend:v1.0.0`
 
-### Buoc 11.1: Deploy Ha Tang Va Service Nen
-
-Chay playbook tong de bootstrap EC2 va deploy cac service nen: Node Exporter, Prometheus, AlertManager, Grafana, backend/core, web gateway, firewall va summary.
+Sau do workflow chay tren EC2:
 
 ```bash
-ansible-playbook -i ansible/inventory.ini ansible/playbooks/deploy-complete-infrastructure.yml
+./automation/app-release-deploy.sh production v1.0.0
 ```
 
-### Buoc 11.2: Build Va Push AI Agent Image
-
-Sau khi service nen da co, build image AI Agent tu source trong `agent_src/` va push len registry:
-
-```bash
-bash automation/build-push-ai-agent-image.sh
-```
-
-Script nay tu doc `.env.deploy`, nen khong can export/source bien thu cong.
-
-Ket qua la registry co image, vi du:
+Health endpoints:
 
 ```text
-ghcr.io/<owner>/aws-hybrid-ai-agent:v1
+AI Agent: http://127.0.0.1:8000/health
+Backend:  http://127.0.0.1:8080/api/health
+Frontend: http://127.0.0.1:8081/health
 ```
 
-### Buoc 11.3: Deploy AI Agent Len EC2 Monitor
-
-Sau khi image da co tren registry, deploy AI Agent rieng:
-
-```bash
-ansible-playbook -i ansible/inventory.ini ansible/playbooks/deploy-ai-agent.yml
-```
-
-Playbook nay tu doc `.env.deploy` va `agent_src/.env`, nen khong can export/source bien thu cong.
-
-Playbook AI Agent se:
-
-1. Tao `/opt/ai-agent` va `/opt/ai-agent/logs`.
-2. Xoa source cu trong `/opt/ai-agent` neu truoc day tung deploy theo cach copy source.
-3. Tao `/opt/ai-agent/docker-compose.yml`.
-4. Docker login neu `.env.deploy` co registry credentials.
-5. `docker-compose pull` de EC2 pull image tu registry.
-6. `docker-compose up -d --force-recreate` de chay `ai-agent`, `ai-agent-redis` va `celery-worker`.
-7. Health check `http://localhost:8000/health`.
+Neu mot trong ba health check fail, script se quay ve tag truoc do da luu trong `release/.state/<environment>.tag`.
 
 Luu y: webhook cua AI Agent chi enqueue alert vao Redis. Container `celery-worker` moi la thanh phan xu ly task, goi Gemini va gui Telegram. Neu thieu `celery-worker`, Alertmanager van thay webhook `200 OK` nhung Telegram se khong nhan alert.
 
-Ket qua dung:
+Khi sua code AI Agent, backend hoac frontend:
 
-```text
-AI Agent deployed successfully
-Status: 200
-```
+- staging: push `develop`
+- production: tao tag `v*`
 
-### Khi Chi Update Code AI Agent Sau Nay
-
-Khi ha tang/service nen da chay on va ban chi sua code trong `agent_src/`, chi can lap lai Buoc 11.2 va Buoc 11.3:
-
-```bash
-# sua IMAGE_TAG/AI_AGENT_IMAGE trong .env.deploy
-bash automation/build-push-ai-agent-image.sh
-ansible-playbook -i ansible/inventory.ini ansible/playbooks/deploy-ai-agent.yml
-```
-
-Docker image la snapshot tai thoi diem build. Neu sua source trong `agent_src/`, EC2 se khong thay doi cho den khi ban build/push image moi va deploy AI Agent lai.
+Khong build image tren EC2, khong copy source release len EC2 de chay production.
 
 ## 12. Kiem Tra Sau Deploy
 
@@ -363,20 +375,18 @@ Kiem tra container:
 ansible all -i ansible/inventory.ini -m shell -a "docker ps --format '{% raw %}table {{.Names}}\t{{.Status}}\t{{.Ports}}{% endraw %}'"
 ```
 
-Kiem tra health noi bo cua ha tang/service nen:
+Kiem tra health noi bo cua monitoring/config layer va release runtime:
 
 ```bash
 ansible monitor -i ansible/inventory.ini -m shell -a "curl -s http://localhost:9090/-/ready && echo && curl -s http://localhost:9093/-/ready && echo && curl -s http://localhost:3000/api/health"
-ansible web -i ansible/inventory.ini -m shell -a "curl -s http://localhost/health && echo && curl -s http://localhost/api/health && echo && curl -s http://localhost/ | grep -qi '<div id=\"root\">' && echo frontend-ok"
-ansible core -i ansible/inventory.ini -m shell -a "curl -s http://localhost:8000/api/health"
+ansible monitor -i ansible/inventory.ini -m shell -a "curl -s http://localhost:8000/health && echo && curl -s http://localhost:8080/api/health && echo && curl -s http://localhost:8081/health"
 ```
 
-Kiem tra AI Agent sau khi da chay `deploy-ai-agent.yml`:
+Kiem tra release containers tren monitor host:
 
 ```bash
-ansible monitor -i ansible/inventory.ini -m shell -a "curl -s http://localhost:8000/health"
-ansible monitor -i ansible/inventory.ini -m shell -a "docker ps --format '{% raw %}table {{.Names}}\t{{.Status}}{% endraw %}' | egrep 'NAMES|ai-agent|ai-agent-redis|celery-worker'"
-ansible monitor -i ansible/inventory.ini -m shell -a "docker exec ai-agent-redis redis-cli llen celery"
+ansible monitor -i ansible/inventory.ini -m shell -a "docker ps --format '{% raw %}table {{.Names}}\t{{.Status}}{% endraw %}' | egrep 'NAMES|ai-agent-prod|redis-prod|celery-worker-prod|payment-api-prod|frontend-web-prod'"
+ansible monitor -i ansible/inventory.ini -m shell -a "docker exec redis-prod redis-cli llen celery || true"
 ```
 
 Kiem tra Prometheus co scrape du metric va Grafana co doc duoc data:
@@ -408,7 +418,8 @@ API docs:     http://<web-public-ip>/docs
 Grafana:      http://<monitor-public-ip>:3000
 Prometheus:   http://<monitor-public-ip>:9090
 Alertmanager: http://<monitor-public-ip>:9093
-AI Agent:     http://<monitor-public-ip>:8000/health  # chi sau khi chay deploy-ai-agent.yml
+AI Agent:     http://<monitor-public-ip>:8000/health  # sau khi release production da deploy thanh cong
+Frontend release health noi bo tren monitor host: http://127.0.0.1:8081/health
 ```
 
 URLs theo inventory hien tai:
@@ -588,12 +599,11 @@ terraform apply tfplan
 terraform output -raw ansible_inventory > ../ansible/inventory.ini
 cd ..
 ansible all -i ansible/inventory.ini -m ping
-# tao agent_src/.env
-cp .env.deploy.example .env.deploy
-# sua .env.deploy
-ansible-playbook -i ansible/inventory.ini ansible/playbooks/deploy-complete-infrastructure.yml
-bash automation/build-push-ai-agent-image.sh
-ansible-playbook -i ansible/inventory.ini ansible/playbooks/deploy-ai-agent.yml
+ansible-playbook -i ansible/inventory.ini ansible/playbooks/bootstrap.yml
+ansible-playbook -i ansible/inventory.ini ansible/playbooks/configure-monitoring-stack.yml
+ansible-playbook -i ansible/inventory.ini ansible/playbooks/configure-release-runtime.yml
+# cap nhat GitHub Secrets
+# push develop de deploy staging, hoac tao tag v* de deploy production
 ```
 
 Khi da co ha tang va chi can cap nhat IP/deploy lai:
@@ -602,17 +612,18 @@ Khi da co ha tang va chi can cap nhat IP/deploy lai:
 cd /path/to/aws-hybrid
 bash automation/update-infrastructure.sh
 ansible all -i ansible/inventory.ini -m ping
-ansible-playbook -i ansible/inventory.ini ansible/playbooks/deploy-complete-infrastructure.yml
-ansible-playbook -i ansible/inventory.ini ansible/playbooks/deploy-ai-agent.yml
+ansible-playbook -i ansible/inventory.ini ansible/playbooks/configure-monitoring-stack.yml
+ansible-playbook -i ansible/inventory.ini ansible/playbooks/configure-release-runtime.yml
 ```
 
-Khi chi cap nhat AI Agent:
+Khi chi cap nhat app release:
 
 ```bash
 cd /path/to/aws-hybrid
-# sua IMAGE_TAG/AI_AGENT_IMAGE trong .env.deploy
-bash automation/build-push-ai-agent-image.sh
-ansible-playbook -i ansible/inventory.ini ansible/playbooks/deploy-ai-agent.yml
+git push origin develop
+# hoac
+git tag v<version>
+git push origin v<version>
 ```
 
 ## 15. Troubleshooting
@@ -633,20 +644,15 @@ chmod 600 ~/.ssh/aws-hybrid
 ansible all -i ansible/inventory.ini -m ping
 ```
 
-Build/deploy AI Agent bao thieu credentials:
+Khong pull duoc release image:
 
 ```bash
-cat agent_src/.env
-cat .env.deploy
-```
-
-Khong pull duoc AI Agent image:
-
-```bash
-echo "$AI_AGENT_REGISTRY_PASSWORD" | docker login ghcr.io \
-  -u "$AI_AGENT_REGISTRY_USERNAME" \
+echo "<GHCR_TOKEN>" | docker login ghcr.io \
+  -u "<GHCR_USERNAME>" \
   --password-stdin
-docker pull "$AI_AGENT_IMAGE"
+docker pull ghcr.io/<owner>/aws-hybrid-ai-agent:<tag>
+docker pull ghcr.io/<owner>/aws-hybrid-payment-api:<tag>
+docker pull ghcr.io/<owner>/aws-hybrid-frontend:<tag>
 ```
 
 Docker format bi loi `unexpected '.'`: dung lenh da boc `{% raw %}` trong phan kiem tra, vi Ansible co the parse `{{.Names}}` nhu Jinja.
@@ -658,22 +664,22 @@ Dau hieu:
 - Alertmanager log co `Notify success` hoac AI Agent log co `POST /webhook HTTP/1.1" 200 OK`.
 - Telegram bot khong nhan alert.
 - Redis queue `celery` tang len hoac co task ton dong.
-- `docker ps` khong co container `celery-worker`.
+- `docker ps` khong co container `celery-worker-prod`.
 
 Nguyen nhan:
 
 - `core/main.py` chi nhan webhook va goi `process_alerts_task.delay(...)` de enqueue task vao Redis.
 - Task gui Telegram nam trong Celery worker (`process_alerts_task` trong `agent_src/core/tasks.py`).
-- Neu stack chi chay `ai-agent` va `ai-agent-redis`, alert se nam trong queue nhung khong co worker xu ly.
+- Neu release stack chi chay `ai-agent-prod` va `redis-prod`, alert se nam trong queue nhung khong co worker xu ly.
 
 Kiem tra nhanh tren monitor host:
 
 ```bash
-ansible monitor -i ansible/inventory.ini -m shell -a "docker ps --format '{% raw %}table {{.Names}}\t{{.Status}}{% endraw %}' | egrep 'NAMES|alertmanager|ai-agent|ai-agent-redis|celery-worker'"
-ansible monitor -i ansible/inventory.ini -m shell -a "docker exec ai-agent sh -c 'for v in TELEGRAM_TOKEN TELEGRAM_CHAT_ID GEMINI_API_KEY; do if [ -n \"\$(printenv \$v)\" ]; then echo \"\$v=set\"; else echo \"\$v=missing\"; fi; done'"
-ansible monitor -i ansible/inventory.ini -m shell -a "docker exec ai-agent-redis redis-cli --scan | head -50 && docker exec ai-agent-redis redis-cli llen celery"
-ansible monitor -i ansible/inventory.ini -m shell -a "docker logs --since 5m ai-agent 2>&1 | egrep 'POST /webhook|ERROR|WARNING' || true"
-ansible monitor -i ansible/inventory.ini -m shell -a "docker logs --since 5m celery-worker 2>&1 | egrep 'Task process_alerts_task|Message sent|All .* Telegram|ERROR|WARNING|succeeded|failed' || true"
+ansible monitor -i ansible/inventory.ini -m shell -a "docker ps --format '{% raw %}table {{.Names}}\t{{.Status}}{% endraw %}' | egrep 'NAMES|alertmanager|ai-agent-prod|redis-prod|celery-worker-prod'"
+ansible monitor -i ansible/inventory.ini -m shell -a "docker exec ai-agent-prod sh -c 'for v in TELEGRAM_TOKEN TELEGRAM_CHAT_ID GEMINI_API_KEY; do if [ -n \"\$(printenv \$v)\" ]; then echo \"\$v=set\"; else echo \"\$v=missing\"; fi; done'"
+ansible monitor -i ansible/inventory.ini -m shell -a "docker exec redis-prod redis-cli --scan | head -50 && docker exec redis-prod redis-cli llen celery"
+ansible monitor -i ansible/inventory.ini -m shell -a "docker logs --since 5m ai-agent-prod 2>&1 | egrep 'POST /webhook|ERROR|WARNING' || true"
+ansible monitor -i ansible/inventory.ini -m shell -a "docker logs --since 5m celery-worker-prod 2>&1 | egrep 'Task process_alerts_task|Message sent|All .* Telegram|ERROR|WARNING|succeeded|failed' || true"
 ```
 
 Kiem tra Telegram token/chat id truc tiep, khong in token ra output:
@@ -681,7 +687,7 @@ Kiem tra Telegram token/chat id truc tiep, khong in token ra output:
 ```bash
 ssh -i ~/.ssh/aws-hybrid ec2-user@<monitor-public-ip>
 
-docker exec ai-agent sh -c 'MSG="AIOps Telegram direct test at $(date -u +%Y-%m-%dT%H:%M:%SZ)"; curl -sS -X POST "https://api.telegram.org/bot${TELEGRAM_TOKEN}/sendMessage" -d chat_id="$TELEGRAM_CHAT_ID" -d text="$MSG" | python -c "import sys,json; d=json.load(sys.stdin); print({k:d.get(k) for k in (\"ok\",\"description\",\"error_code\")})"'
+docker exec ai-agent-prod sh -c 'MSG="AIOps Telegram direct test at $(date -u +%Y-%m-%dT%H:%M:%SZ)"; curl -sS -X POST "https://api.telegram.org/bot${TELEGRAM_TOKEN}/sendMessage" -d chat_id="$TELEGRAM_CHAT_ID" -d text="$MSG" | python -c "import sys,json; d=json.load(sys.stdin); print({k:d.get(k) for k in (\"ok\",\"description\",\"error_code\")})"'
 ```
 
 Ket qua dung:
@@ -702,9 +708,9 @@ curl -sS -X POST http://localhost:9093/api/v2/alerts \
   -d "[{\"labels\":{\"alertname\":\"TelegramPipelineWorkerTest\",\"severity\":\"warning\",\"service\":\"availability\",\"instance\":\"monitor-ai-01\"},\"annotations\":{\"summary\":\"Telegram worker pipeline test\",\"description\":\"Synthetic alert after celery-worker startup\"},\"startsAt\":\"$START\",\"endsAt\":\"$END\",\"generatorURL\":\"http://manual-test/telegram-worker-pipeline\"}]"
 
 sleep 20
-docker logs --since 1m ai-agent 2>&1 | egrep "POST /webhook|ERROR|WARNING" || true
-docker logs --since 1m celery-worker 2>&1 | egrep "TelegramPipelineWorkerTest|Task process_alerts_task|Message sent|All .* Telegram|succeeded|failed|ERROR|WARNING" || true
-docker exec ai-agent-redis redis-cli llen celery
+docker logs --since 1m ai-agent-prod 2>&1 | egrep "POST /webhook|ERROR|WARNING" || true
+docker logs --since 1m celery-worker-prod 2>&1 | egrep "TelegramPipelineWorkerTest|Task process_alerts_task|Message sent|All .* Telegram|succeeded|failed|ERROR|WARNING" || true
+docker exec redis-prod redis-cli llen celery
 ```
 
 Ket qua dung:
@@ -717,51 +723,9 @@ Task process_alerts_task[...] succeeded
 0
 ```
 
-Hotfix runtime neu thieu `celery-worker`:
-
-```bash
-ssh -i ~/.ssh/aws-hybrid ec2-user@<monitor-public-ip>
-cd /opt/ai-agent
-```
-
-Them service sau vao `/opt/ai-agent/docker-compose.yml`, dung cung image va environment voi `ai-agent`:
-
-```yaml
-  celery-worker:
-    image: "<same-ai-agent-image>"
-    container_name: celery-worker
-    command: ["celery", "-A", "core.celery_app.celery_app", "worker", "--loglevel=INFO", "--concurrency=1", "--prefetch-multiplier=1"]
-    environment:
-      - GEMINI_API_KEY=<same-as-ai-agent>
-      - TELEGRAM_TOKEN=<same-as-ai-agent>
-      - TELEGRAM_CHAT_ID=<same-as-ai-agent>
-      - REDIS_HOST=ai-agent-redis
-      - REDIS_PORT=6379
-      - REDIS_DB=0
-      - LOG_LEVEL=INFO
-      - DEBUG=false
-      - PYTHONUNBUFFERED=1
-    depends_on:
-      - ai-agent-redis
-    volumes:
-      - /opt/ai-agent/logs:/app/logs
-    networks:
-      - aiops-network
-    restart: unless-stopped
-```
-
-Start worker:
-
-```bash
-docker-compose up -d celery-worker
-docker ps --format "table {{.Names}}\t{{.Status}}" | egrep "NAMES|celery-worker|ai-agent|redis"
-docker logs --since 2m celery-worker
-docker exec ai-agent-redis redis-cli llen celery
-```
-
 Fix lau dai:
 
-- `ansible/playbooks/deploy-ai-agent.yml` phai tao service `celery-worker` trong `/opt/ai-agent/docker-compose.yml`.
+- `release/docker-compose.staging.yml` va `release/docker-compose.production.yml` phai co service `celery-worker`.
 - Worker nen dung command:
 
 ```yaml
@@ -770,11 +734,13 @@ command: ["celery", "-A", "core.celery_app.celery_app", "worker", "--loglevel=IN
 
 - `--concurrency=1` va `--prefetch-multiplier=1` giup tranh xu ly backlog qua nhanh lam Gemini bi quota `429 RESOURCE_EXHAUSTED`.
 - Neu log worker co `Gemini API error: 429 RESOURCE_EXHAUSTED`, Telegram van co the gui fallback message, nhung nen giam concurrency hoac nang quota Gemini de phan tich AI on dinh hon.
-- Sau khi sua playbook, chay:
+- Sau khi sua compose release, day code len GitHub de CI/CD build lai image va deploy release moi:
 
 ```bash
-ansible-playbook -i ansible/inventory.ini ansible/playbooks/deploy-ai-agent.yml --syntax-check
-ansible-playbook -i ansible/inventory.ini ansible/playbooks/deploy-ai-agent.yml
+git push origin develop
+# hoac
+git tag v<version>
+git push origin v<version>
 ```
 
 ### Prometheus khong scrape duoc metric / target `blackbox_http_web` down
@@ -864,7 +830,7 @@ probe_success 1
 
 Fix lau dai:
 
-- `ansible/playbooks/deploy-complete-infrastructure.yml` phai tao `/opt/blackbox/blackbox.yml`.
+- `ansible/playbooks/configure-monitoring-stack.yml` phai tao `/opt/blackbox/blackbox.yml`.
 - Docker compose Prometheus trong playbook phai co service `blackbox-exporter`.
 - `platform-config/docker-compose.dev.yml` cung nen co `blackbox-exporter` de moi truong dev khong bi lech.
 
@@ -946,7 +912,7 @@ ansible monitor -i ansible/inventory.ini -m shell -a "now=\$(date +%s000); from=
 
 Fix lau dai:
 
-- Datasource Prometheus trong `deploy-complete-infrastructure.yml` nen co UID co dinh, vi du `uid: prometheus`.
+- Datasource Prometheus trong `configure-monitoring-stack.yml` nen co UID co dinh, vi du `uid: prometheus`.
 - Dashboard templates trong `ansible/templates/*.json` va `ansible/playbooks/templates/*.json` khong nen giu UID cu sinh ngau nhien.
 - Truoc khi import dashboard, playbook nen lay UID datasource that tu Grafana API `/api/datasources/name/Prometheus` va patch dashboard JSON tam thoi de tranh lech UID khi datasource da ton tai tu deploy cu.
 
@@ -956,8 +922,6 @@ Khong commit:
 
 - AWS Access Key/Secret Access Key.
 - SSH private key.
-- `agent_src/.env`.
-- `.env.deploy`.
 - Telegram/Gemini token.
 - Docker registry token/GHCR token.
 - Terraform state neu state co secret.
@@ -966,7 +930,6 @@ Khi ban giao cho dev khac, gui rieng:
 
 - AWS account/profile/role duoc phep deploy.
 - SSH private key hoac cach tao key moi.
-- Gia tri cho `agent_src/.env`.
-- Gia tri registry/image cho `.env.deploy`.
+- Gia tri GitHub Secrets cho runtime release.
 - GitHub Secrets can update.
 - Public IP hien tai cua ha tang.

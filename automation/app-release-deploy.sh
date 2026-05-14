@@ -20,12 +20,14 @@ case "$ENVIRONMENT" in
     ENV_FILE="release/.env.staging"
     AI_HEALTH_URL="http://127.0.0.1:18000/health"
     API_HEALTH_URL="http://127.0.0.1:18080/api/health"
+    WEB_HEALTH_URL="http://127.0.0.1:18081/health"
     ;;
   production)
     COMPOSE_FILE="release/docker-compose.production.yml"
     ENV_FILE="release/.env.production"
     AI_HEALTH_URL="http://127.0.0.1:8000/health"
     API_HEALTH_URL="http://127.0.0.1:8080/api/health"
+    WEB_HEALTH_URL="http://127.0.0.1:8081/health"
     ;;
 esac
 
@@ -139,6 +141,7 @@ health_check() {
   for attempt in $(seq 1 "$retries"); do
     ai_ok=0
     api_ok=0
+    web_ok=0
 
     if curl -fsS "$AI_HEALTH_URL" >/dev/null; then
       ai_ok=1
@@ -148,7 +151,11 @@ health_check() {
       api_ok=1
     fi
 
-    if [[ "$ai_ok" -eq 1 && "$api_ok" -eq 1 ]]; then
+    if curl -fsS "$WEB_HEALTH_URL" >/dev/null; then
+      web_ok=1
+    fi
+
+    if [[ "$ai_ok" -eq 1 && "$api_ok" -eq 1 && "$web_ok" -eq 1 ]]; then
       return 0
     fi
 

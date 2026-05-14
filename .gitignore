@@ -28,6 +28,7 @@ terraform/awscliv2.zip
 id_rsa
 id_rsa.pub
 .env
+.env.deploy
 .env.staging
 .env.production
 .env.local

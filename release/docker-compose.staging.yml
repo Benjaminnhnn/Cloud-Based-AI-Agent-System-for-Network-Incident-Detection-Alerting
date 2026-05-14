@@ -99,6 +99,24 @@ services:
     networks:
       - aiops-network
 
+  frontend-web:
+    image: ghcr.io/${GHCR_OWNER:-your-org}/aws-hybrid-frontend:${IMAGE_TAG:-staging-latest}
+    container_name: frontend-web-staging
+    restart: unless-stopped
+    ports:
+      - "18081:80"
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    depends_on:
+      payment-api:
+        condition: service_healthy
+    networks:
+      - aiops-network
+
 networks:
   aiops-network:
     driver: bridge

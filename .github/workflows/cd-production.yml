@@ -63,6 +63,16 @@ jobs:
             ghcr.io/${{ steps.vars.outputs.owner_lc }}/aws-hybrid-payment-api:${{ github.sha }}
             ghcr.io/${{ steps.vars.outputs.owner_lc }}/aws-hybrid-payment-api:latest
 
+      - name: Build & push Frontend
+        uses: docker/build-push-action@v6
+        with:
+          context: ./demo-web/frontend
+          push: true
+          tags: |
+            ghcr.io/${{ steps.vars.outputs.owner_lc }}/aws-hybrid-frontend:${{ steps.vars.outputs.image_tag }}
+            ghcr.io/${{ steps.vars.outputs.owner_lc }}/aws-hybrid-frontend:${{ github.sha }}
+            ghcr.io/${{ steps.vars.outputs.owner_lc }}/aws-hybrid-frontend:latest
+
   deploy-production:
     runs-on: ubuntu-latest
     needs: build-and-push
