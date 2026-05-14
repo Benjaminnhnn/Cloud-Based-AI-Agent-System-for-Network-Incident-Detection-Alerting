@@ -70,6 +70,16 @@ fi
 
 export GHCR_OWNER="${GHCR_OWNER:-your-org}"
 export IMAGE_TAG="$NEW_TAG"
+COMPOSE_PROJECT_NAME="aws-hybrid-${ENVIRONMENT}"
+
+case "$ENVIRONMENT" in
+  staging)
+    CONTAINER_NAMES=(redis-staging ai-agent-staging celery-worker-staging log-watcher-staging payment-api-staging frontend-web-staging)
+    ;;
+  production)
+    CONTAINER_NAMES=(redis-prod ai-agent-prod celery-worker-prod log-watcher-prod payment-api-prod frontend-web-prod)
+    ;;
+esac
 
 load_env_file() {
   # Export key=value pairs from env file for docker-compose fallback.
@@ -92,18 +102,37 @@ load_env_file() {
 
 compose_cmd() {
   if docker compose version >/dev/null 2>&1; then
-    docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" "$@"
+    docker compose -p "$COMPOSE_PROJECT_NAME" --env-file "$ENV_FILE" -f "$COMPOSE_FILE" "$@"
     return
   fi
 
   if command -v docker-compose >/dev/null 2>&1; then
     load_env_file
-    docker-compose -f "$COMPOSE_FILE" "$@"
+    docker-compose -p "$COMPOSE_PROJECT_NAME" -f "$COMPOSE_FILE" "$@"
     return
   fi
 
   echo "No compose runtime found. Install Docker Compose plugin or docker-compose binary."
   exit 1
+}
+
+migrate_compose_project_containers() {
+  local container
+  local current_project
+
+  for container in "${CONTAINER_NAMES[@]}"; do
+    if ! docker container inspect "$container" >/dev/null 2>&1; then
+      continue
+    fi
+
+    current_project="$(docker inspect -f '{{ index .Config.Labels "com.docker.compose.project" }}' "$container" 2>/dev/null || true)"
+    if [[ "$current_project" == "$COMPOSE_PROJECT_NAME" ]]; then
+      continue
+    fi
+
+    echo "Migrating $container from compose project '${current_project:-none}' to '$COMPOSE_PROJECT_NAME'"
+    docker rm -f "$container"
+  done
 }
 
 available_disk_mb() {
@@ -172,6 +201,7 @@ health_check() {
 echo "Deploying $ENVIRONMENT with tag $NEW_TAG"
 ensure_docker_disk_space
 compose_cmd pull
+migrate_compose_project_containers
 compose_cmd up -d --remove-orphans
 
 if health_check; then
