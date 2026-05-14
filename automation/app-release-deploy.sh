@@ -111,7 +111,7 @@ available_disk_mb() {
 }
 
 ensure_docker_disk_space() {
-  local min_free_mb="${MIN_DOCKER_FREE_MB:-6144}"
+  local min_free_mb="${MIN_DOCKER_FREE_MB:-12288}"
   local free_mb
 
   free_mb="$(available_disk_mb)"
@@ -121,12 +121,15 @@ ensure_docker_disk_space() {
   fi
 
   echo "Disk preflight warning: only ${free_mb}MB free on /; need at least ${min_free_mb}MB"
-  echo "Pruning unused Docker images before pulling new release..."
+  docker system df || true
+  echo "Pruning unused Docker images and build cache before pulling new release..."
   docker image prune -af
+  docker builder prune -af || true
 
   free_mb="$(available_disk_mb)"
   if [[ "$free_mb" -lt "$min_free_mb" ]]; then
     echo "Still only ${free_mb}MB free after Docker image prune."
+    docker system df || true
     echo "Increase the EC2 root volume or remove unused Docker data before deploying."
     exit 1
   fi

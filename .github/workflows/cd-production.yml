@@ -239,8 +239,8 @@ jobs:
           mkdir -p ~/.ssh
           echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/deploy_key
           chmod 600 ~/.ssh/deploy_key
-          scp -o StrictHostKeyChecking=no -o ConnectTimeout=10 -i ~/.ssh/deploy_key -r release/ ec2-user@${{ secrets.SSH_HOST }}:/home/ec2-user/aws-hybrid/release/
-          scp -o StrictHostKeyChecking=no -o ConnectTimeout=10 -i ~/.ssh/deploy_key -r automation/ ec2-user@${{ secrets.SSH_HOST }}:/home/ec2-user/aws-hybrid/automation/
+          scp -o StrictHostKeyChecking=no -o ConnectTimeout=10 -i ~/.ssh/deploy_key -r release/ ec2-user@${{ secrets.SSH_HOST }}:/home/ec2-user/aws-hybrid/
+          scp -o StrictHostKeyChecking=no -o ConnectTimeout=10 -i ~/.ssh/deploy_key -r automation/ ec2-user@${{ secrets.SSH_HOST }}:/home/ec2-user/aws-hybrid/
           rm ~/.ssh/deploy_key
 
       - name: Run deploy script on EC2
@@ -252,11 +252,12 @@ jobs:
           port: ${{ secrets.SSH_PORT }}
           script_stop: true
           timeout: 300s
-          command_timeout: 600s
+          command_timeout: 1800s
           script: |
             cd /home/ec2-user/aws-hybrid
             chmod +x automation/app-release-deploy.sh
             export GHCR_USERNAME="${{ secrets.GHCR_USERNAME }}"
             export GHCR_TOKEN="${{ secrets.GHCR_TOKEN }}"
             export GHCR_OWNER="${{ needs.build-and-push.outputs.owner_lc }}"
+            export MIN_DOCKER_FREE_MB=12288
             ./automation/app-release-deploy.sh production "${{ needs.build-and-push.outputs.image_tag }}"
