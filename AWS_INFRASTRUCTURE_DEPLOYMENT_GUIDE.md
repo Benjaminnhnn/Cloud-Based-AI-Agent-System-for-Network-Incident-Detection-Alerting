@@ -14,8 +14,8 @@ Ha tang gom 3 EC2 instances trong region `ap-southeast-1`:
 | Nhom | Host | Vai tro | Dich vu |
 |------|------|---------|---------|
 | `monitor` | `monitor-ai-01` | Monitoring va AI Agent | Prometheus `9090`, Alertmanager `9093`, Grafana `3000`, AI Agent `8000` |
-| `web` | `bank-web-01` | Node duoc giu trong topology ha tang | Nhan Node Exporter va cau hinh firewall monitoring |
-| `core` | `bank-core-01` | Node duoc giu trong topology ha tang | Nhan Node Exporter va cau hinh firewall monitoring |
+| `web` | `bank-web-01` | Frontend/Nginx | Frontend production `80`, staging `18081`, Node Exporter |
+| `core` | `bank-core-01` | Backend/PostgreSQL | Payment API production `8080`, staging `18080`, PostgreSQL, Node Exporter |
 
 Luong chay chinh:
 
@@ -27,10 +27,10 @@ Clone repo
   -> terraform apply
   -> cap nhat ansible/inventory.ini
   -> ansible bootstrap EC2 va monitoring/config layer
-  -> ansible cau hinh release runtime tren monitor host
-  -> cap nhat GitHub Secrets truoc khi chay CI/CD
+  -> cap nhat GitHub Secrets cho 3 SSH host va runtime secrets
   -> push develop hoac tag v* de GitHub Actions build/push image
-  -> EC2 pull image qua app-release-deploy.sh
+  -> GitHub Actions SSH vao dung role: monitor/core/web
+  -> moi EC2 pull image theo role qua app-release-deploy.sh
   -> health check AI Agent, backend, frontend
   -> rollback tag cu neu release moi fail
 ```
@@ -41,11 +41,17 @@ Clone repo
 |------|----------|
 | `terraform/terraform.tfvars` | IP may dev, SSH key path, instance type |
 | `ansible/inventory.ini` | Public IP va SSH private key path cho Ansible |
+| `ansible/playbooks/bootstrap.yml` | Cai package co ban, Docker/Docker Compose, SSH runtime cho EC2 |
+| `ansible/playbooks/configure-monitoring-stack.yml` | Cai Node Exporter tren cac node; Prometheus/Alertmanager/Grafana/blackbox tren monitor |
+| `.github/workflows/ci.yml` | Lint/test/build local image de validate code, khong deploy EC2 |
+| `.github/workflows/cd-staging.yml` | CD staging khi push `develop`; detect file thay doi, chi build/deploy role lien quan |
+| `.github/workflows/cd-production.yml` | CD production khi push tag `v*`; build 3 image song song va deploy 3 role |
 | `release/.env.example` | Template runtime config cho release stack image-based |
-| `release/docker-compose.staging.yml` | Stack staging versioned image |
-| `release/docker-compose.production.yml` | Stack production versioned image |
-| `automation/app-release-deploy.sh` | Pull image, start stack, health check, rollback |
-| `ansible/playbooks/configure-release-runtime.yml` | Dat compose/env template/deploy script len EC2 release host |
+| `release/docker-compose.staging.yml` | Compose staging chua ca 3 role; deploy script chi start service cua role hien tai |
+| `release/docker-compose.production.yml` | Compose production chua ca 3 role; deploy script chi start service cua role hien tai |
+| `automation/github-deploy-role.sh` | Chay trong GitHub Actions: tao SSH key tam, SCP `release/` + `automation/`, goi deploy script tren EC2 |
+| `automation/app-release-deploy.sh` | Chay tren EC2: docker login, pull image, start service theo role, health check, rollback |
+| `demo-web/database/*.sql` | Source of truth cua SQL; CI copy vao `release/database/`, khong duplicate SQL trong release |
 | GitHub Actions Secrets | Credentials cho CD staging/production |
 
 ## 3. Dieu Kien Truoc Khi Chay
@@ -242,9 +248,11 @@ ansible-playbook -i ansible/inventory.ini ansible/playbooks/configure-monitoring
 
 Playbook nay khong deploy backend, frontend hay app release production. Phan do duoc CI/CD xu ly bang release images va `automation/app-release-deploy.sh`.
 
-### Buoc 9.3: Dat Release Runtime Config Len EC2
+### Buoc 9.3: Release Runtime Config
 
-Playbook nay dat cac file can thiet cho release path image-based tren monitor host:
+Luong hien tai khong can dat san release runtime bang Ansible cho moi lan deploy. GitHub Actions se dung `automation/github-deploy-role.sh` de copy `release/` va `automation/` vao dung EC2 role truoc khi deploy.
+
+Playbook `configure-release-runtime.yml` la cach bootstrap/compatibility cu de dat file release len monitor host:
 
 - `release/docker-compose.staging.yml`
 - `release/docker-compose.production.yml`
@@ -255,6 +263,8 @@ Playbook nay dat cac file can thiet cho release path image-based tren monitor ho
 ```bash
 ansible-playbook -i ansible/inventory.ini ansible/playbooks/configure-release-runtime.yml
 ```
+
+Neu deploy qua GitHub Actions, workflow se tu copy cac file nay vao `/home/ec2-user/aws-hybrid` tren `MONITOR_SSH_HOST`, `CORE_SSH_HOST` hoac `WEB_SSH_HOST`.
 
 ## 10. Cau Hinh Release Runtime Bang GitHub Secrets
 
@@ -273,25 +283,32 @@ DATABASE_URL=<secret>
 SECRET_KEY=<secret>
 PROMETHEUS_URL=<secret>
 ENVIRONMENT=staging-or-production
+PAYMENT_API_UPSTREAM=http://<core-private-ip>:8080-or-18080
 ```
 
 ## 11. Duong Deploy Thong Nhat Cho Service Release
 
-Tu luong hien tai, production/staging release deu di qua mot duong duy nhat:
+Tu luong hien tai, production/staging release deu di qua mot duong duy nhat. GitHub Actions build image len GHCR, sau do SSH vao tung EC2 theo role:
 
 ```text
 GitHub Actions
   -> lint/test
-  -> build AI Agent image
-  -> build Payment API image
-  -> build Frontend Nginx image
-  -> push GHCR voi cung IMAGE_TAG
-  -> SSH/SCP release config toi EC2
-  -> chay automation/app-release-deploy.sh
-  -> EC2 docker compose pull
-  -> health check AI Agent + backend + frontend
+  -> detect changed role (staging) hoac release full tag (production)
+  -> build/push image len GHCR bang Docker Buildx cache
+  -> SSH/SCP release config toi dung EC2 role
+  -> chay automation/app-release-deploy.sh <env> <tag> <role>
+  -> EC2 docker compose pull va up service cua role do
+  -> health check role vua deploy
   -> rollback tag cu neu release moi fail
 ```
+
+Role mapping khi deploy:
+
+| Role | EC2 secret | Service duoc start |
+|------|------------|--------------------|
+| `monitor` | `MONITOR_SSH_HOST` | `redis`, `ai-agent`, `celery-worker`, `log-watcher` |
+| `core` | `CORE_SSH_HOST` | `postgres`, `payment-api` |
+| `web` | `WEB_SSH_HOST` | `frontend-web` |
 
 ### Buoc 11.1: Deploy Staging
 
@@ -301,16 +318,25 @@ Trigger:
 git push origin develop
 ```
 
-Workflow staging se build/push:
+Workflow staging detect file thay doi:
 
-- `aws-hybrid-ai-agent:staging-<commit-sha>`
-- `aws-hybrid-payment-api:staging-<commit-sha>`
-- `aws-hybrid-frontend:staging-<commit-sha>`
+- Sua `agent_src/` -> build/push AI Agent va deploy role `monitor`.
+- Sua `demo-web/backend/` hoac `demo-web/database/` -> build/push Payment API va deploy role `core`.
+- Sua `demo-web/frontend/` -> build/push Frontend va deploy role `web`.
+- Sua `release/` hoac `automation/` -> build/push va deploy ca 3 role.
+- Chay `workflow_dispatch` -> build/push va deploy ca 3 role.
+
+Image tag staging co dang:
+
+```text
+staging-<commit-sha>
+staging-latest
+```
 
 Sau do workflow chay tren EC2:
 
 ```bash
-./automation/app-release-deploy.sh staging staging-<commit-sha>
+./automation/app-release-deploy.sh staging staging-<commit-sha> <monitor|core|web>
 ```
 
 Health endpoints:
@@ -330,7 +356,7 @@ git tag v1.0.0
 git push origin v1.0.0
 ```
 
-Workflow production se build/push:
+Workflow production build/push ca 3 image song song de release tag luon day du:
 
 - `aws-hybrid-ai-agent:v1.0.0`
 - `aws-hybrid-payment-api:v1.0.0`
@@ -339,7 +365,7 @@ Workflow production se build/push:
 Sau do workflow chay tren EC2:
 
 ```bash
-./automation/app-release-deploy.sh production v1.0.0
+./automation/app-release-deploy.sh production v1.0.0 <monitor|core|web>
 ```
 
 Health endpoints:
@@ -347,7 +373,7 @@ Health endpoints:
 ```text
 AI Agent: http://127.0.0.1:8000/health
 Backend:  http://127.0.0.1:8080/api/health
-Frontend: http://127.0.0.1:8081/health
+Frontend: http://127.0.0.1/health
 ```
 
 Neu mot trong ba health check fail, script se quay ve tag truoc do da luu trong `release/.state/<environment>.tag`.
@@ -379,13 +405,17 @@ Kiem tra health noi bo cua monitoring/config layer va release runtime:
 
 ```bash
 ansible monitor -i ansible/inventory.ini -m shell -a "curl -s http://localhost:9090/-/ready && echo && curl -s http://localhost:9093/-/ready && echo && curl -s http://localhost:3000/api/health"
-ansible monitor -i ansible/inventory.ini -m shell -a "curl -s http://localhost:8000/health && echo && curl -s http://localhost:8080/api/health && echo && curl -s http://localhost:8081/health"
+ansible monitor -i ansible/inventory.ini -m shell -a "curl -s http://localhost:8000/health"
+ansible core -i ansible/inventory.ini -m shell -a "curl -s http://localhost:8080/api/health"
+ansible web -i ansible/inventory.ini -m shell -a "curl -s http://localhost/health && echo && curl -s http://localhost/api/health"
 ```
 
-Kiem tra release containers tren monitor host:
+Kiem tra release containers theo role:
 
 ```bash
-ansible monitor -i ansible/inventory.ini -m shell -a "docker ps --format '{% raw %}table {{.Names}}\t{{.Status}}{% endraw %}' | egrep 'NAMES|ai-agent-prod|redis-prod|celery-worker-prod|payment-api-prod|frontend-web-prod'"
+ansible monitor -i ansible/inventory.ini -m shell -a "docker ps --format '{% raw %}table {{.Names}}\t{{.Status}}{% endraw %}' | egrep 'NAMES|ai-agent-prod|redis-prod|celery-worker-prod|log-watcher-prod'"
+ansible core -i ansible/inventory.ini -m shell -a "docker ps --format '{% raw %}table {{.Names}}\t{{.Status}}{% endraw %}' | egrep 'NAMES|payment-api-prod|postgres-prod'"
+ansible web -i ansible/inventory.ini -m shell -a "docker ps --format '{% raw %}table {{.Names}}\t{{.Status}}{% endraw %}' | egrep 'NAMES|frontend-web-prod'"
 ansible monitor -i ansible/inventory.ini -m shell -a "docker exec redis-prod redis-cli llen celery || true"
 ```
 
@@ -418,8 +448,9 @@ API docs:     http://<web-public-ip>/docs
 Grafana:      http://<monitor-public-ip>:3000
 Prometheus:   http://<monitor-public-ip>:9090
 Alertmanager: http://<monitor-public-ip>:9093
-AI Agent:     http://<monitor-public-ip>:8000/health  # sau khi release production da deploy thanh cong
-Frontend release health noi bo tren monitor host: http://127.0.0.1:8081/health
+AI Agent:     http://<monitor-public-ip>:8000/health  # neu security group cho phep public access
+Frontend release health noi bo tren web host: http://127.0.0.1/health
+Backend release health noi bo tren core host: http://127.0.0.1:8080/api/health
 ```
 
 URLs theo inventory hien tai:
@@ -475,7 +506,7 @@ Settings -> Secrets and variables -> Actions -> Repository secrets
 Tao secret moi:
 
 1. Bam `New repository secret`.
-2. Nhap `Name`, vi du `SSH_HOST`.
+2. Nhap `Name`, vi du `MONITOR_SSH_HOST`, `CORE_SSH_HOST` hoac `WEB_SSH_HOST`.
 3. Paste gia tri vao `Secret`.
 4. Bam `Add secret`.
 
@@ -494,7 +525,9 @@ GitHub se khong hien lai gia tri sau khi luu. Neu paste sai, update lai secret d
 |--------|---------|
 | `GHCR_USERNAME` | GitHub username/org co quyen push GHCR |
 | `GHCR_TOKEN` | GitHub PAT co scope `write:packages`, them `read:packages` neu image private |
-| `SSH_HOST` | Public IP/DNS cua EC2 ma workflow SSH vao de deploy release |
+| `MONITOR_SSH_HOST` | Public IP/DNS cua `monitor-ai-01` |
+| `CORE_SSH_HOST` | Public IP/DNS cua `bank-core-01` |
+| `WEB_SSH_HOST` | Public IP/DNS cua `bank-web-01` |
 | `SSH_PORT` | `22` |
 | `SSH_PRIVATE_KEY` | Noi dung private key, khong phai duong dan file |
 | `GEMINI_API_KEY` | Gemini API key |
@@ -504,6 +537,7 @@ GitHub se khong hien lai gia tri sau khi luu. Neu paste sai, update lai secret d
 | `DATABASE_URL` | Database URL cho release stack |
 | `SECRET_KEY` | Secret key cho backend/API |
 | `PROMETHEUS_URL` | `http://<monitor-public-ip>:9090` |
+| `PAYMENT_API_UPSTREAM` | Frontend upstream toi core API, vi du production `http://<core-private-ip>:8080`, staging `http://<core-private-ip>:18080` |
 
 Workflow hien tai SSH bang user `ec2-user`. Neu server dung user khac, phai sua workflow truoc khi chay CD.
 
@@ -545,20 +579,25 @@ Copy token ngay sau khi tao va luu vao secret `GHCR_TOKEN`.
 ### Gia Tri Can Lay Tu Ha Tang Moi
 
 ```text
-SSH_HOST=<public-ip-cua-node-chay-release-cicd>
+MONITOR_SSH_HOST=<monitor-public-ip>
+CORE_SSH_HOST=<core-public-ip>
+WEB_SSH_HOST=<web-public-ip>
 SSH_PORT=22
 AI_AGENT_PUBLIC_URL=http://<monitor-public-ip>:8000
 PROMETHEUS_URL=http://<monitor-public-ip>:9090
+PAYMENT_API_UPSTREAM=http://<core-private-ip>:8080
 ```
 
-Luu y: CD workflow copy `release/` va `automation/` vao `/home/ec2-user/aws-hybrid` tren `SSH_HOST`, sau do chay `automation/app-release-deploy.sh`. Hay chon dung server release runtime, hoac sua workflow neu muon deploy theo mo hinh 3 node.
+Luu y: CD workflow copy `release/` va `automation/` vao `/home/ec2-user/aws-hybrid` tren tung host theo role, sau do chay `automation/app-release-deploy.sh <environment> <image-tag> <role>`.
 
 ### Kiem Tra Truoc Khi Trigger CD
 
 Test SSH tu may local:
 
 ```bash
-ssh -i ~/.ssh/aws-hybrid -p 22 ec2-user@<SSH_HOST> 'echo auth-ok'
+ssh -i ~/.ssh/aws-hybrid -p 22 ec2-user@<monitor-public-ip> 'echo auth-ok'
+ssh -i ~/.ssh/aws-hybrid -p 22 ec2-user@<core-public-ip> 'echo auth-ok'
+ssh -i ~/.ssh/aws-hybrid -p 22 ec2-user@<web-public-ip> 'echo auth-ok'
 ```
 
 Test GHCR token:
