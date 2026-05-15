@@ -55,7 +55,7 @@ scrape_configs:
     params:
       module: [http_2xx]
     static_configs:
-      - targets: ['http://18.136.112.28/health']
+      - targets: ['http://52.220.34.44/health']
         labels:
           instance: 'bank-web-01'
           service: 'web-endpoint'

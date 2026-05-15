@@ -3,14 +3,20 @@ set -euo pipefail
 
 ENVIRONMENT="${1:-}"
 NEW_TAG="${2:-}"
+DEPLOY_ROLE="${3:-}"
 
 if [[ -z "$ENVIRONMENT" || -z "$NEW_TAG" ]]; then
-  echo "Usage: $0 <staging|production> <image-tag>"
+  echo "Usage: $0 <staging|production> <image-tag> <monitor|web|core>"
   exit 2
 fi
 
 if [[ "$ENVIRONMENT" != "staging" && "$ENVIRONMENT" != "production" ]]; then
   echo "Invalid environment: $ENVIRONMENT"
+  exit 2
+fi
+
+if [[ "$DEPLOY_ROLE" != "monitor" && "$DEPLOY_ROLE" != "web" && "$DEPLOY_ROLE" != "core" ]]; then
+  echo "Invalid deploy role: $DEPLOY_ROLE"
   exit 2
 fi
 
@@ -27,7 +33,7 @@ case "$ENVIRONMENT" in
     ENV_FILE="release/.env.production"
     AI_HEALTH_URL="http://127.0.0.1:8000/health"
     API_HEALTH_URL="http://127.0.0.1:8080/api/health"
-    WEB_HEALTH_URL="http://127.0.0.1:8081/health"
+    WEB_HEALTH_URL="http://127.0.0.1/health"
     ;;
 esac
 
@@ -70,14 +76,39 @@ fi
 
 export GHCR_OWNER="${GHCR_OWNER:-your-org}"
 export IMAGE_TAG="$NEW_TAG"
-COMPOSE_PROJECT_NAME="aws-hybrid-${ENVIRONMENT}"
+COMPOSE_PROJECT_NAME="aws-hybrid-${ENVIRONMENT}-${DEPLOY_ROLE}"
+STALE_CONTAINER_NAMES=()
 
-case "$ENVIRONMENT" in
-  staging)
-    CONTAINER_NAMES=(redis-staging ai-agent-staging celery-worker-staging log-watcher-staging payment-api-staging frontend-web-staging)
+case "$DEPLOY_ROLE:$ENVIRONMENT" in
+  monitor:staging)
+    CONTAINER_NAMES=(redis-staging ai-agent-staging celery-worker-staging log-watcher-staging)
+    STALE_CONTAINER_NAMES=(payment-api-staging postgres-staging frontend-web-staging payment-api-prod postgres-prod frontend-web-prod)
+    SERVICE_NAMES=(redis ai-agent celery-worker log-watcher)
     ;;
-  production)
-    CONTAINER_NAMES=(redis-prod ai-agent-prod celery-worker-prod log-watcher-prod payment-api-prod frontend-web-prod)
+  monitor:production)
+    CONTAINER_NAMES=(redis-prod ai-agent-prod celery-worker-prod log-watcher-prod)
+    STALE_CONTAINER_NAMES=(payment-api-staging postgres-staging frontend-web-staging payment-api-prod postgres-prod frontend-web-prod)
+    SERVICE_NAMES=(redis ai-agent celery-worker log-watcher)
+    ;;
+  web:staging)
+    CONTAINER_NAMES=(frontend-web-staging)
+    STALE_CONTAINER_NAMES=(redis-staging ai-agent-staging celery-worker-staging log-watcher-staging payment-api-staging postgres-staging redis-prod ai-agent-prod celery-worker-prod log-watcher-prod payment-api-prod postgres-prod)
+    SERVICE_NAMES=(frontend-web)
+    ;;
+  web:production)
+    CONTAINER_NAMES=(frontend-web-prod)
+    STALE_CONTAINER_NAMES=(redis-staging ai-agent-staging celery-worker-staging log-watcher-staging payment-api-staging postgres-staging redis-prod ai-agent-prod celery-worker-prod log-watcher-prod payment-api-prod postgres-prod)
+    SERVICE_NAMES=(frontend-web)
+    ;;
+  core:staging)
+    CONTAINER_NAMES=(postgres-staging payment-api-staging)
+    STALE_CONTAINER_NAMES=(redis-staging ai-agent-staging celery-worker-staging log-watcher-staging frontend-web-staging redis-prod ai-agent-prod celery-worker-prod log-watcher-prod frontend-web-prod)
+    SERVICE_NAMES=(postgres payment-api)
+    ;;
+  core:production)
+    CONTAINER_NAMES=(postgres-prod payment-api-prod)
+    STALE_CONTAINER_NAMES=(redis-staging ai-agent-staging celery-worker-staging log-watcher-staging frontend-web-staging redis-prod ai-agent-prod celery-worker-prod log-watcher-prod frontend-web-prod)
+    SERVICE_NAMES=(postgres payment-api)
     ;;
 esac
 
@@ -135,6 +166,17 @@ migrate_compose_project_containers() {
   done
 }
 
+remove_out_of_role_containers() {
+  local container
+
+  for container in "${STALE_CONTAINER_NAMES[@]}"; do
+    if docker container inspect "$container" >/dev/null 2>&1; then
+      echo "Removing out-of-role container from this host: $container"
+      docker rm -f "$container"
+    fi
+  done
+}
+
 available_disk_mb() {
   df -Pm / | awk 'NR == 2 {print $4}'
 }
@@ -171,20 +213,29 @@ health_check() {
   local wait_seconds=10
 
   for attempt in $(seq 1 "$retries"); do
-    ai_ok=0
-    api_ok=0
-    web_ok=0
+    ai_ok=1
+    api_ok=1
+    web_ok=1
 
-    if curl -fsS "$AI_HEALTH_URL" >/dev/null; then
-      ai_ok=1
+    if [[ "$DEPLOY_ROLE" == "monitor" ]]; then
+      ai_ok=0
+      if curl -fsS "$AI_HEALTH_URL" >/dev/null; then
+        ai_ok=1
+      fi
     fi
 
-    if curl -fsS "$API_HEALTH_URL" >/dev/null; then
-      api_ok=1
+    if [[ "$DEPLOY_ROLE" == "core" ]]; then
+      api_ok=0
+      if curl -fsS "$API_HEALTH_URL" >/dev/null; then
+        api_ok=1
+      fi
     fi
 
-    if curl -fsS "$WEB_HEALTH_URL" >/dev/null; then
-      web_ok=1
+    if [[ "$DEPLOY_ROLE" == "web" ]]; then
+      web_ok=0
+      if curl -fsS "$WEB_HEALTH_URL" >/dev/null; then
+        web_ok=1
+      fi
     fi
 
     if [[ "$ai_ok" -eq 1 && "$api_ok" -eq 1 && "$web_ok" -eq 1 ]]; then
@@ -198,11 +249,12 @@ health_check() {
   return 1
 }
 
-echo "Deploying $ENVIRONMENT with tag $NEW_TAG"
+echo "Deploying $ENVIRONMENT role $DEPLOY_ROLE with tag $NEW_TAG"
 ensure_docker_disk_space
-compose_cmd pull
+compose_cmd pull "${SERVICE_NAMES[@]}"
+remove_out_of_role_containers
 migrate_compose_project_containers
-compose_cmd up -d --remove-orphans
+compose_cmd up -d --remove-orphans "${SERVICE_NAMES[@]}"
 
 if health_check; then
   echo "$NEW_TAG" > "$STATE_FILE"
@@ -216,8 +268,8 @@ echo "Health check failed for tag: $NEW_TAG"
 if [[ -n "$PREVIOUS_TAG" && "$PREVIOUS_TAG" != "$NEW_TAG" ]]; then
   echo "Rolling back to previous tag: $PREVIOUS_TAG"
   export IMAGE_TAG="$PREVIOUS_TAG"
-  compose_cmd pull
-  compose_cmd up -d --remove-orphans
+  compose_cmd pull "${SERVICE_NAMES[@]}"
+  compose_cmd up -d --remove-orphans "${SERVICE_NAMES[@]}"
 
   if health_check; then
     echo "Rollback successful to tag: $PREVIOUS_TAG"

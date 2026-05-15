@@ -88,8 +88,9 @@ services:
       - .env.production
     environment:
       ENVIRONMENT: production
+      DATABASE_URL: postgresql://aiops_user:aiops_pass@postgres:5432/aiops_db
     ports:
-      - "127.0.0.1:8080:8000"
+      - "8080:8000"
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/health').read()"]
       interval: 30s
@@ -98,22 +99,44 @@ services:
       start_period: 20s
     networks:
       - aiops-network
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  postgres:
+    image: postgres:16-alpine
+    container_name: postgres-prod
+    restart: always
+    environment:
+      POSTGRES_USER: aiops_user
+      POSTGRES_PASSWORD: aiops_pass
+      POSTGRES_DB: aiops_db
+    volumes:
+      - postgres-data-prod:/var/lib/postgresql/data
+      - ./database/init.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
+      - ./database/seed.sql:/docker-entrypoint-initdb.d/02-seed.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U aiops_user -d aiops_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - aiops-network
 
   frontend-web:
     image: ghcr.io/${GHCR_OWNER:-your-org}/aws-hybrid-frontend:${IMAGE_TAG:-latest}
     container_name: frontend-web-prod
     restart: always
     ports:
-      - "127.0.0.1:8081:80"
+      - "80:80"
+    environment:
+      PAYMENT_API_UPSTREAM: ${PAYMENT_API_UPSTREAM:-http://10.10.1.118:8080}
     healthcheck:
       test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost/health"]
       interval: 30s
       timeout: 10s
       retries: 3
       start_period: 10s
-    depends_on:
-      payment-api:
-        condition: service_healthy
     networks:
       - aiops-network
 
@@ -123,3 +146,4 @@ networks:
 
 volumes:
   redis-data-prod:
+  postgres-data-prod:
