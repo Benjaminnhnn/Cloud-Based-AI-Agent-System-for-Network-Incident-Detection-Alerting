@@ -7,7 +7,7 @@ import time
 ALERTS_PROCESSED_TOTAL = Counter(
     'aiops_alerts_processed_total', 
     'Tổng số alerts đã được xử lý bởi AI Agent',
-    ['status'] # 'success' hoặc 'failure'
+    ['status'] # success, failure, resolved, deduped
 )
 
 AI_WORKFLOW_LATENCY_SECONDS = Histogram(

@@ -10,20 +10,113 @@ permissions:
   packages: write
 
 jobs:
-  build-and-push:
+  detect-changes:
     runs-on: ubuntu-latest
     outputs:
       owner_lc: ${{ steps.vars.outputs.owner_lc }}
       image_tag: ${{ steps.vars.outputs.image_tag }}
+      build_matrix: ${{ steps.changes.outputs.build_matrix }}
+      deploy_matrix: ${{ steps.changes.outputs.deploy_matrix }}
+      has_builds: ${{ steps.changes.outputs.has_builds }}
+      has_deploys: ${{ steps.changes.outputs.has_deploys }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Prepare image variables
         id: vars
         run: |
           echo "owner_lc=${GITHUB_REPOSITORY_OWNER,,}" >> "$GITHUB_OUTPUT"
           echo "image_tag=staging-${GITHUB_SHA}" >> "$GITHUB_OUTPUT"
+
+      - name: Detect changed deploy roles
+        id: changes
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BEFORE_SHA: ${{ github.event.before }}
+        run: |
+          set -euo pipefail
+          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            git ls-files > /tmp/changed_files
+          elif [ -n "${BEFORE_SHA:-}" ] && [ "$BEFORE_SHA" != "0000000000000000000000000000000000000000" ]; then
+            git diff --name-only "$BEFORE_SHA" "$GITHUB_SHA" > /tmp/changed_files
+          else
+            git ls-files > /tmp/changed_files
+          fi
+
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          changed = Path("/tmp/changed_files").read_text().splitlines()
+          event_name = os.environ["EVENT_NAME"]
+
+          roles = {
+              "monitor": {
+                  "role": "monitor",
+                  "image": "aws-hybrid-ai-agent",
+                  "context": "./agent_src",
+                  "latest": "staging-latest",
+                  "paths": ("agent_src/",),
+              },
+              "core": {
+                  "role": "core",
+                  "image": "aws-hybrid-payment-api",
+                  "context": "./demo-web/backend",
+                  "latest": "staging-latest",
+                  "paths": ("demo-web/backend/", "demo-web/database/"),
+              },
+              "web": {
+                  "role": "web",
+                  "image": "aws-hybrid-frontend",
+                  "context": "./demo-web/frontend",
+                  "latest": "staging-latest",
+                  "paths": ("demo-web/frontend/",),
+              },
+          }
+          shared_paths = ("release/", "automation/")
+
+          build_all = event_name == "workflow_dispatch" or any(
+              path.startswith(shared_paths) for path in changed
+          )
+
+          selected = []
+          for role, spec in roles.items():
+              if build_all or any(path.startswith(spec["paths"]) for path in changed):
+                  selected.append({key: spec[key] for key in ("role", "image", "context", "latest")})
+
+          build_matrix = {"include": selected}
+          deploy_matrix = {"include": [{"role": item["role"]} for item in selected]}
+
+          output_path = Path(os.environ["GITHUB_OUTPUT"])
+          with output_path.open("a") as fh:
+              fh.write(f"build_matrix={json.dumps(build_matrix, separators=(',', ':'))}\n")
+              fh.write(f"deploy_matrix={json.dumps(deploy_matrix, separators=(',', ':'))}\n")
+              fh.write(f"has_builds={'true' if selected else 'false'}\n")
+              fh.write(f"has_deploys={'true' if selected else 'false'}\n")
+
+          print("Changed files:")
+          for path in changed:
+              print(f"  {path}")
+          print("Selected roles:", ", ".join(item["role"] for item in selected) or "none")
+          PY
+
+  build-and-push:
+    runs-on: ubuntu-latest
+    needs: detect-changes
+    if: needs.detect-changes.outputs.has_builds == 'true'
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJson(needs.detect-changes.outputs.build_matrix) }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
 
       - name: Login to GHCR
         uses: docker/login-action@v3
@@ -32,37 +125,25 @@ jobs:
           username: ${{ secrets.GHCR_USERNAME }}
           password: ${{ secrets.GHCR_TOKEN }}
 
-      - name: Build & push AI Agent
+      - name: Build & push ${{ matrix.role }}
         uses: docker/build-push-action@v6
         with:
-          context: ./agent_src
+          context: ${{ matrix.context }}
           push: true
           tags: |
-            ghcr.io/${{ steps.vars.outputs.owner_lc }}/aws-hybrid-ai-agent:${{ steps.vars.outputs.image_tag }}
-            ghcr.io/${{ steps.vars.outputs.owner_lc }}/aws-hybrid-ai-agent:staging-latest
-
-      - name: Build & push Payment API
-        uses: docker/build-push-action@v6
-        with:
-          context: ./demo-web/backend
-          push: true
-          tags: |
-            ghcr.io/${{ steps.vars.outputs.owner_lc }}/aws-hybrid-payment-api:${{ steps.vars.outputs.image_tag }}
-            ghcr.io/${{ steps.vars.outputs.owner_lc }}/aws-hybrid-payment-api:staging-latest
-
-      - name: Build & push Frontend
-        uses: docker/build-push-action@v6
-        with:
-          context: ./demo-web/frontend
-          push: true
-          tags: |
-            ghcr.io/${{ steps.vars.outputs.owner_lc }}/aws-hybrid-frontend:${{ steps.vars.outputs.image_tag }}
-            ghcr.io/${{ steps.vars.outputs.owner_lc }}/aws-hybrid-frontend:staging-latest
+            ghcr.io/${{ needs.detect-changes.outputs.owner_lc }}/${{ matrix.image }}:${{ needs.detect-changes.outputs.image_tag }}
+            ghcr.io/${{ needs.detect-changes.outputs.owner_lc }}/${{ matrix.image }}:${{ matrix.latest }}
+          cache-from: type=gha,scope=${{ matrix.image }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.image }}
 
   deploy-staging:
     runs-on: ubuntu-latest
-    needs: build-and-push
+    needs: [detect-changes, build-and-push]
+    if: needs.detect-changes.outputs.has_deploys == 'true' && needs.build-and-push.result == 'success'
     environment: staging
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJson(needs.detect-changes.outputs.deploy_matrix) }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -74,17 +155,19 @@ jobs:
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           AI_AGENT_PUBLIC_URL: ${{ secrets.AI_AGENT_PUBLIC_URL }}
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          PAYMENT_API_UPSTREAM: ${{ secrets.PAYMENT_API_UPSTREAM }}
           SECRET_KEY: ${{ secrets.SECRET_KEY }}
         run: |
           cp release/.env.example release/.env.staging
-          cp release/.env.example release/.env.production
-          sed -i "s/^GHCR_OWNER=.*/GHCR_OWNER=${{ needs.build-and-push.outputs.owner_lc }}/" release/.env.staging
-          sed -i "s/^GHCR_OWNER=.*/GHCR_OWNER=${{ needs.build-and-push.outputs.owner_lc }}/" release/.env.production
+          sed -i "s/^GHCR_OWNER=.*/GHCR_OWNER=${{ needs.detect-changes.outputs.owner_lc }}/" release/.env.staging
           python - <<'PY'
           import os
           from pathlib import Path
 
-          values = {"ENVIRONMENT": "staging"}
+          values = {
+              "ENVIRONMENT": "staging",
+              "PAYMENT_API_UPSTREAM": os.environ.get("PAYMENT_API_UPSTREAM") or "http://10.10.1.118:18080",
+          }
           for key in (
               "GEMINI_API_KEY",
               "TELEGRAM_TOKEN",
@@ -97,150 +180,50 @@ jobs:
               if value:
                   values[key] = value
 
-          for env_file in (Path("release/.env.staging"), Path("release/.env.production")):
-              lines = env_file.read_text().splitlines()
-              existing = {line.split("=", 1)[0] for line in lines if "=" in line and not line.startswith("#")}
-              updated = []
-              for line in lines:
-                  key = line.split("=", 1)[0] if "=" in line and not line.startswith("#") else None
-                  updated.append(f"{key}={values[key]}" if key in values else line)
-              for key, value in values.items():
-                  if key not in existing:
-                      updated.append(f"{key}={value}")
-              env_file.write_text("\n".join(updated) + "\n")
+          env_file = Path("release/.env.staging")
+          lines = env_file.read_text().splitlines()
+          existing = {line.split("=", 1)[0] for line in lines if "=" in line and not line.startswith("#")}
+          updated = []
+          for line in lines:
+              key = line.split("=", 1)[0] if "=" in line and not line.startswith("#") else None
+              updated.append(f"{key}={values[key]}" if key in values else line)
+          for key, value in values.items():
+              if key not in existing:
+                  updated.append(f"{key}={value}")
+          env_file.write_text("\n".join(updated) + "\n")
           PY
 
-      - name: Preflight SSH authentication
+      - name: Package database init scripts
+        run: |
+          mkdir -p release/database
+          cp demo-web/database/*.sql release/database/
+
+      - name: Resolve deploy host
+        id: deploy-host
         env:
-          SSH_HOST: ${{ secrets.SSH_HOST }}
-          SSH_PORT: ${{ secrets.SSH_PORT }}
-          SSH_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+          MONITOR_SSH_HOST: ${{ secrets.MONITOR_SSH_HOST }}
+          CORE_SSH_HOST: ${{ secrets.CORE_SSH_HOST }}
+          WEB_SSH_HOST: ${{ secrets.WEB_SSH_HOST }}
+          DEPLOY_ROLE: ${{ matrix.role }}
         run: |
           set -euo pipefail
-          mkdir -p ~/.ssh
-          printf '%s\n' "$SSH_KEY" > ~/.ssh/deploy_key
-          chmod 600 ~/.ssh/deploy_key
-          ssh -o BatchMode=yes -o StrictHostKeyChecking=no -o ConnectTimeout=10 -i ~/.ssh/deploy_key -p "$SSH_PORT" ec2-user@"$SSH_HOST" 'echo auth-ok'
-          rm -f ~/.ssh/deploy_key
+          case "$DEPLOY_ROLE" in
+            monitor) host="$MONITOR_SSH_HOST" ;;
+            core) host="$CORE_SSH_HOST" ;;
+            web) host="$WEB_SSH_HOST" ;;
+          esac
+          test -n "$host"
+          echo "host=$host" >> "$GITHUB_OUTPUT"
 
-      - name: Setup EC2 directory and install Docker
-        uses: appleboy/ssh-action@v1.0.3
-        with:
-          host: ${{ secrets.SSH_HOST }}
-          username: ec2-user
-          key: ${{ secrets.SSH_PRIVATE_KEY }}
-          port: ${{ secrets.SSH_PORT }}
-          script_stop: true
-          timeout: 120s
-          command_timeout: 120s
-          script: |
-            mkdir -p /home/ec2-user/aws-hybrid/{release,automation}
-            echo "Directories created"
-
-      - name: Install Docker
-        uses: appleboy/ssh-action@v1.0.3
-        with:
-          host: ${{ secrets.SSH_HOST }}
-          username: ec2-user
-          key: ${{ secrets.SSH_PRIVATE_KEY }}
-          port: ${{ secrets.SSH_PORT }}
-          script_stop: true
-          timeout: 180s
-          command_timeout: 180s
-          script: |
-            set -euo pipefail
-            if command -v docker >/dev/null 2>&1; then
-              echo "Docker already installed: $(docker --version)"
-              exit 0
-            fi
-
-            echo "Installing Docker..."
-            if command -v dnf >/dev/null 2>&1; then
-              sudo dnf -y install docker
-            elif command -v yum >/dev/null 2>&1; then
-              sudo yum -y install docker
-            elif command -v apt-get >/dev/null 2>&1; then
-              sudo apt-get update -y
-              sudo apt-get install -y docker.io
-            else
-              echo "Unsupported package manager. Cannot install Docker."
-              exit 1
-            fi
-
-            sudo systemctl enable --now docker
-            sudo groupadd -f docker || true
-            if id -u ec2-user >/dev/null 2>&1; then
-              sudo usermod -aG docker ec2-user || true
-            fi
-            echo "Docker installed: $(docker --version)"
-
-      - name: Install Docker Compose 
-        uses: appleboy/ssh-action@v1.0.3
-        with:
-          host: ${{ secrets.SSH_HOST }}
-          username: ec2-user
-          key: ${{ secrets.SSH_PRIVATE_KEY }}
-          port: ${{ secrets.SSH_PORT }}
-          script_stop: true
-          timeout: 120s
-          command_timeout: 120s
-          script: |
-            set -euo pipefail
-            if docker compose version >/dev/null 2>&1 || command -v docker-compose >/dev/null 2>&1; then
-              echo "Docker Compose already available"
-              exit 0
-            fi
-
-            echo "Installing Docker Compose..."
-            if command -v dnf >/dev/null 2>&1; then
-              sudo dnf -y install docker-compose-plugin || true
-            elif command -v yum >/dev/null 2>&1; then
-              sudo yum -y install docker-compose-plugin || sudo yum -y install docker-compose || true
-            elif command -v apt-get >/dev/null 2>&1; then
-              sudo apt-get update -y
-              sudo apt-get install -y docker-compose-plugin || sudo apt-get install -y docker-compose || true
-            fi
-
-            if ! docker compose version >/dev/null 2>&1 && ! command -v docker-compose >/dev/null 2>&1; then
-              if command -v curl >/dev/null 2>&1; then
-                sudo curl -fsSL "https://github.com/docker/compose/releases/latest/download/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
-                sudo chmod +x /usr/local/bin/docker-compose
-              fi
-            fi
-
-            if docker compose version >/dev/null 2>&1 || command -v docker-compose >/dev/null 2>&1; then
-              echo "Docker Compose installed successfully"
-            else
-              echo "Docker Compose installation failed"
-              docker --version || true
-              command -v docker-compose || true
-              docker compose version || true
-              exit 1
-            fi
-
-      - name: Copy files to EC2 using SCP
-        run: |
-          mkdir -p ~/.ssh
-          echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/deploy_key
-          chmod 600 ~/.ssh/deploy_key
-          scp -o StrictHostKeyChecking=no -o ConnectTimeout=10 -i ~/.ssh/deploy_key -r release/ ec2-user@${{ secrets.SSH_HOST }}:/home/ec2-user/aws-hybrid/
-          scp -o StrictHostKeyChecking=no -o ConnectTimeout=10 -i ~/.ssh/deploy_key -r automation/ ec2-user@${{ secrets.SSH_HOST }}:/home/ec2-user/aws-hybrid/
-          rm ~/.ssh/deploy_key
-
-      - name: Run deploy script on EC2
-        uses: appleboy/ssh-action@v1.0.3
-        with:
-          host: ${{ secrets.SSH_HOST }}
-          username: ec2-user
-          key: ${{ secrets.SSH_PRIVATE_KEY }}
-          port: ${{ secrets.SSH_PORT }}
-          script_stop: true
-          timeout: 300s
-          command_timeout: 600s
-          script: |
-            cd /home/ec2-user/aws-hybrid
-            chmod +x automation/app-release-deploy.sh
-            export GHCR_USERNAME="${{ secrets.GHCR_USERNAME }}"
-            export GHCR_TOKEN="${{ secrets.GHCR_TOKEN }}"
-            export GHCR_OWNER="${{ needs.build-and-push.outputs.owner_lc }}"
-            ./automation/app-release-deploy.sh staging "${{ needs.build-and-push.outputs.image_tag }}"
+      - name: Deploy ${{ matrix.role }} to EC2
+        env:
+          TARGET_HOST: ${{ steps.deploy-host.outputs.host }}
+          SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+          SSH_PORT: ${{ secrets.SSH_PORT }}
+          DEPLOY_ENVIRONMENT: staging
+          DEPLOY_ROLE: ${{ matrix.role }}
+          IMAGE_TAG: ${{ needs.detect-changes.outputs.image_tag }}
+          GHCR_OWNER: ${{ needs.detect-changes.outputs.owner_lc }}
+          GHCR_USERNAME: ${{ secrets.GHCR_USERNAME }}
+          GHCR_TOKEN: ${{ secrets.GHCR_TOKEN }}
+        run: bash automation/github-deploy-role.sh

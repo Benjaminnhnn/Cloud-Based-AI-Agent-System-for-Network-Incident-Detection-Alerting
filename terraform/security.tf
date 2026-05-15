@@ -168,9 +168,25 @@ resource "aws_security_group" "core_sg" {
   }
 
   ingress {
+    description     = "Staging API access from web node"
+    from_port       = 18080
+    to_port         = 18080
+    protocol        = "tcp"
+    security_groups = [aws_security_group.web_sg.id]
+  }
+
+  ingress {
     description     = "API or app access from monitor node"
     from_port       = 8080
     to_port         = 8080
+    protocol        = "tcp"
+    security_groups = [aws_security_group.monitor_sg.id]
+  }
+
+  ingress {
+    description     = "Staging API access from monitor node"
+    from_port       = 18080
+    to_port         = 18080
     protocol        = "tcp"
     security_groups = [aws_security_group.monitor_sg.id]
   }
