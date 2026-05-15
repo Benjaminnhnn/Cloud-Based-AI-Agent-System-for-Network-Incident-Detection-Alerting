@@ -19,6 +19,7 @@ from core.celery_app import celery_app
 from core.metrics import ACTIVE_TASKS, AI_WORKFLOW_LATENCY_SECONDS, ALERTS_PROCESSED_TOTAL
 from core.rag_engine import get_rag_instance
 from tools.diag_tools import AGENT_TOOLS
+from tools.prometheus_check import get_prometheus_checker
 from utils.telegram_bot import send_telegram_message
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -26,7 +27,19 @@ logger = logging.getLogger(__name__)
 
 load_dotenv()
 
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+def valid_env_value(value):
+    if not value:
+        return None
+
+    value = value.strip()
+    placeholders = ("your_", "change_me", "_here")
+    if not value or any(marker in value for marker in placeholders):
+        return None
+
+    return value
+
+
+GEMINI_API_KEY = valid_env_value(os.getenv("GEMINI_API_KEY"))
 VN_TZ = ZoneInfo("Asia/Ho_Chi_Minh")
 
 # Redis Configuration (để lưu incident context)
@@ -109,7 +122,15 @@ async def run_agent_workflow(incident_details: str):
 
 
 async def process_single_alert(alert: dict) -> None:
-    """Xử lý logic cho một alert đơn lẻ (async)."""
+    """
+    Xử lý logic cho một alert đơn lẻ (async).
+    
+    NEW WORKFLOW (Phase 7):
+    - AI phân tích sự cố
+    - Gửi hướng dẫn xử lí chi tiết cho Admin (không có buttons)
+    - Lưu context vào Redis để verify sau
+    - Kích hoạt task verification sau 5-10 phút
+    """
     ACTIVE_TASKS.inc()
     start_time = time.time()
     try:
@@ -142,21 +163,30 @@ async def process_single_alert(alert: dict) -> None:
         }
         save_incident_to_redis(incident_id, incident_context)
 
-        reply_markup = None
-        if proposal:
-            action_name = proposal.get("action") or "fix"
-            reply_markup = {"inline_keyboard": [[
-                {"text": f"✅ Thực thi: {action_name[:20]}", "callback_data": f"ok|{incident_id}"},
-                {"text": "❌ Bỏ qua", "callback_data": f"ignore|{incident_id}"}
-            ]]}
-
+        # PHASE 7: Format resolution guide (NO approval buttons)
+        action_name = proposal.get("action", "fix") if proposal else "xử lí"
+        
         report = (
-            f"*SỰ CỐ:* {alert_name}\n"
-            f" Server: `{instance}`\n"
-            f" ID: `{incident_id}`\n\n"
-            f" *Phân tích :*\n{ai_analysis}"
+            f"*🚨 SỰ CỐ:* {alert_name}\n"
+            f"📊 *Server:* `{instance}`\n"
+            f"🆔 *ID:* `{incident_id}`\n\n"
+            f"🔍 *NGUYÊN NHÂN & PHÂN TÍCH:*\n"
+            f"{ai_analysis}\n\n"
+            f"🛠️ *HƯỚNG DẪN XỬ LÍ:*\n"
+            f"Thực hiện hành động: *{action_name}*\n\n"
+            f"⏱️ Agent sẽ tự động kiểm lại trong 5-10 phút."
         )
-        send_telegram_message(report, reply_markup=reply_markup)
+        
+        # Gửi hướng dẫn cho admin (NO buttons)
+        send_telegram_message(report)
+        
+        # PHASE 9: Schedule verification task sau 5-10 phút (300-600 seconds)
+        verification_countdown = 300  # 5 minutes (có thể điều chỉnh)
+        verify_resolution_task.apply_async(
+            args=[incident_id, alert_name, instance],
+            countdown=verification_countdown
+        )
+        logger.info(f"📋 Scheduled verification for incident {incident_id} in {verification_countdown}s")
 
     except Exception as e:
         ALERTS_PROCESSED_TOTAL.labels(status='failure').inc()
@@ -166,7 +196,145 @@ async def process_single_alert(alert: dict) -> None:
         ACTIVE_TASKS.dec()
 
 
-# FIX #2 + #1 (Critical):
+# PHASE 9: Automatic Verification Task
+# ─────────────────────────────────────────────────────────────────────
+async def verify_resolution(incident_id: str, alert_name: str, instance: str):
+    """
+    PHASE 9: Automatic Verification - kiểm lại sau 5-10 phút
+    
+    1. Query Prometheus để lấy metrics hiện tại
+    2. So sánh với alert threshold
+    3. Gửi báo cáo về kết quả (resolved/failed)
+    4. Lưu vào ChromaDB với outcome
+    """
+    logger.info(f"🔍 Starting verification for incident {incident_id} ({alert_name} on {instance})")
+    
+    try:
+        # Retrieve incident context từ Redis
+        try:
+            ctx_raw = redis_client.get(f"incident:{incident_id}")
+        except redis.RedisError as e:
+            logger.error(f"Redis read error during verification: {e}")
+            send_telegram_message(f"⚠️ Không thể xác nhận kết quả vì Redis unavailable")
+            return
+        
+        if not ctx_raw:
+            logger.warning(f"Incident context expired for {incident_id}")
+            send_telegram_message(f"⚠️ Context hết hạn cho sự cố `{incident_id}`")
+            return
+        
+        ctx = json.loads(ctx_raw)
+        
+        # Query Prometheus metrics để kiểm lại
+        # Cách 1: Gọi các diagnostic tools tương tự như AI analysis
+        # Cách 2: Query trực tiếp Prometheus API (nếu cấu hình public)
+        logger.info(f"📊 Checking current metrics for {instance}...")
+        
+        # Simulate health check (thực tế sẽ call Prometheus API hoặc diagnostic tools)
+        is_resolved = await check_alert_resolved(alert_name, instance)
+        
+        if is_resolved:
+            # Issue RESOLVED ✅
+            outcome = "resolved_by_human"
+            message = (
+                f"✅ *SỰ CỐ ĐÃ ĐƯỢC KHÔI PHỤC*\n"
+                f"Alert: {alert_name}\n"
+                f"Server: {instance}\n"
+                f"ID: {incident_id}\n\n"
+                f"Metrics hiện tại đã trở lại bình thường."
+            )
+        else:
+            # Issue STILL FAILING ❌
+            outcome = "failed_to_resolve"
+            message = (
+                f"❌ *SỰ CỐ VẪN TỒN TẠI*\n"
+                f"Alert: {alert_name}\n"
+                f"Server: {instance}\n"
+                f"ID: {incident_id}\n\n"
+                f"⚠️ Các metrics vẫn còn cao.\n"
+                f"💡 Gợi ý: Hãy thử giải pháp thay thế hoặc escalate."
+            )
+        
+        # Send verification report
+        send_telegram_message(message)
+        
+        # Save to ChromaDB with outcome
+        rag = get_rag_instance()
+        if rag:
+            rag.save_incident(
+                alert_name=ctx["alert_name"],
+                description=ctx["incident_details"],
+                ai_analysis=ctx["ai_analysis"],
+                resolution=ctx.get("proposal", {}).get("action", "manual_fix"),
+                outcome=outcome
+            )
+            logger.info(f"✅ Saved incident to ChromaDB with outcome: {outcome}")
+        
+        # Cleanup Redis
+        try:
+            redis_client.delete(f"incident:{incident_id}")
+        except redis.RedisError as e:
+            logger.warning(f"Error deleting incident from Redis: {e}")
+    
+    except Exception as e:
+        logger.error(f"Error during verification: {e}")
+        send_telegram_message(f"⚠️ Lỗi kiểm tra kết quả: {str(e)}")
+
+
+async def check_alert_resolved(alert_name: str, instance: str) -> bool:
+    """
+    Check nếu alert đã được resolve bằng cách query Prometheus.
+    
+    Thực hiện:
+    1. Query Prometheus API để lấy current metrics
+    2. Compare với alert threshold
+    3. Return True nếu metrics < threshold
+    
+    Example:
+    - alert_name: "node_cpu_high"
+    - instance: "10.10.1.68:9100"
+    - Return: True nếu CPU < 80%
+    """
+    try:
+        logger.info(f"Checking if {alert_name} is resolved on {instance}...")
+        
+        checker = get_prometheus_checker()
+        is_resolved = checker.is_alert_resolved(alert_name, instance)
+        
+        if is_resolved:
+            logger.info(f"✅ Alert {alert_name} is RESOLVED")
+        else:
+            logger.warning(f"❌ Alert {alert_name} is STILL FAILING")
+        
+        # Log metrics for debugging
+        metrics = checker.get_alert_metrics(instance)
+        logger.info(f"📊 Current metrics: {metrics}")
+        
+        return is_resolved
+    
+    except Exception as e:
+        logger.error(f"Error checking alert resolution: {e}")
+        # Default to failed if can't determine
+        return False
+
+
+@celery_app.task(name="verify_resolution_task", bind=True, max_retries=2)
+def verify_resolution_task(self, incident_id: str, alert_name: str, instance: str):
+    """
+    Celery task để verify resolution (chạy sau 5-10 phút)
+    
+    Parameters:
+    - incident_id: ID của incident
+    - alert_name: Tên alert (e.g., node_cpu_high)
+    - instance: Instance bị ảnh hưởng (e.g., 10.10.1.68)
+    """
+    try:
+        logger.info(f"🔄 Running verification for {incident_id}")
+        asyncio.run(verify_resolution(incident_id, alert_name, instance))
+    except Exception as e:
+        logger.error(f"Verification task failed: {e}")
+        # Retry 1 lần sau 1 phút
+        raise self.retry(exc=e, countdown=60)
 # - FIX #2: Chạy TẤT CẢ alerts trong một lần asyncio.run() duy nhất với gather()
 #   thay vì gọi asyncio.run() lặp lại trong vòng for → tốn tài nguyên tạo/hủy event loop
 # - FIX #1: Tách xử lý lỗi per-alert ra khỏi retry của toàn bộ task.

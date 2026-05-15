@@ -1,3 +1,8 @@
+# Documentation (only keep README and AIops_CICD)
+*.md
+!README.md
+!AIops_CICD.md
+
 # Terraform (NEVER commit state files)
 *.tfstate
 *.tfstate.*
@@ -14,6 +19,7 @@ terraform/awscliv2.zip
 # Ansible
 *.retry
 .ansible-vault
+.ansible/
 
 # AWS & Credentials
 .aws/
@@ -21,17 +27,14 @@ terraform/awscliv2.zip
 *.pub
 id_rsa
 id_rsa.pub
-**/.env
 .env
-.env.*
+.env.deploy
+.env.staging
+.env.production
+.env.local
 
 # Documentation (local only)
 docs/
-.env.local
-
-# Track only root README markdown on GitHub
-*.md
-!README.md
 
 # Python
 __pycache__/

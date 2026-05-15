@@ -31,6 +31,33 @@
           - docker
         state: present
       when: ansible_os_family == "RedHat"
+
+    - name: Install Docker Compose plugin or standalone binary
+      shell: |
+        set -e
+        if docker compose version >/dev/null 2>&1 || command -v docker-compose >/dev/null 2>&1; then
+          exit 0
+        fi
+
+        if command -v dnf >/dev/null 2>&1; then
+          dnf -y install docker-compose-plugin || true
+        elif command -v yum >/dev/null 2>&1; then
+          yum -y install docker-compose-plugin || yum -y install docker-compose || true
+        fi
+
+        if docker compose version >/dev/null 2>&1; then
+          printf '%s\n' '#!/bin/sh' 'exec docker compose "$@"' > /usr/local/bin/docker-compose
+          chmod +x /usr/local/bin/docker-compose
+          exit 0
+        fi
+
+        if ! command -v docker-compose >/dev/null 2>&1; then
+          curl -fsSL "https://github.com/docker/compose/releases/latest/download/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
+          chmod +x /usr/local/bin/docker-compose
+        fi
+      args:
+        creates: /usr/local/bin/docker-compose
+      when: ansible_os_family == "RedHat"
     
     - name: Install Python modules
       pip:

@@ -5,7 +5,9 @@ ai_agent:
   enabled: yes
   service_name: ai-agent
   port: 8000
-  docker_image: "aws-hybrid_ai-agent:latest"
+  # Registry image default kept for compatibility with older references.
+  #   AI_AGENT_IMAGE=ghcr.io/<owner>/aws-hybrid-ai-agent:<tag>
+  docker_image: "{{ lookup('env', 'AI_AGENT_IMAGE') | default('ghcr.io/your-org/aws-hybrid-ai-agent:latest', true) }}"
 
 # Default values (can be overridden by environment variables)
 # These MUST be set before deployment:

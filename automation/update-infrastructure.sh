@@ -10,8 +10,9 @@ NC='\033[0m' # No Color
 
 # Đường dẫn
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-TF_DIR="$SCRIPT_DIR/terraform"
-ANSIBLE_DIR="$SCRIPT_DIR/ansible"
+REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+TF_DIR="$REPO_ROOT/terraform"
+ANSIBLE_DIR="$REPO_ROOT/ansible"
 TF_VARS="$TF_DIR/terraform.tfvars"
 INVENTORY="$ANSIBLE_DIR/inventory.ini"
 
@@ -47,31 +48,16 @@ echo -e "${YELLOW}[4/5] Cập nhật Ansible inventory...${NC}"
 MONITOR_IP=$(terraform output -raw monitor_public_ip 2>/dev/null || echo "")
 WEB_IP=$(terraform output -raw web_public_ip 2>/dev/null || echo "")
 CORE_IP=$(terraform output -raw core_public_ip 2>/dev/null || echo "")
+ANSIBLE_INVENTORY=$(terraform output -raw ansible_inventory 2>/dev/null || echo "")
 
-if [ -z "$MONITOR_IP" ] || [ -z "$WEB_IP" ] || [ -z "$CORE_IP" ]; then
+if [ -z "$MONITOR_IP" ] || [ -z "$WEB_IP" ] || [ -z "$CORE_IP" ] || [ -z "$ANSIBLE_INVENTORY" ]; then
     echo -e "${RED}Không thể lấy IPs từ Terraform output.${NC}"
     exit 1
 fi
 
-# Cập nhật inventory.ini
-cat > "$INVENTORY" << EOF
-[monitor]
-monitor-ai-01 ansible_host=$MONITOR_IP ansible_user=ec2-user
-
-[web]
-bank-web-01 ansible_host=$WEB_IP ansible_user=ec2-user
-
-[core]
-bank-core-01 ansible_host=$CORE_IP ansible_user=ec2-user
-
-[app:children]
-web
-core
-
-[all:vars]
-ansible_python_interpreter=/usr/bin/python3
-ansible_ssh_private_key_file=/home/hoang_viet/.ssh/id_rsa
-EOF
+# Cập nhật inventory.ini từ Terraform output để giữ đúng ssh_user/private_key_path
+# trong terraform.tfvars của từng máy dev.
+printf "%s\n" "$ANSIBLE_INVENTORY" > "$INVENTORY"
 
 echo -e "${GREEN}Cập nhật Ansible inventory:${NC}"
 echo -e "  monitor-ai-01: $MONITOR_IP"

@@ -13,7 +13,7 @@
         "type": "stat",
         "gridPos": {"x": 0, "y": 0, "w": 6, "h": 8},
         "fieldConfig": {"defaults": {"unit": "short", "color": {"mode": "thresholds"}, "thresholds": {"mode": "absolute", "steps": [{"color": "red", "value": null}, {"color": "yellow", "value": 1}, {"color": "green", "value": 3}]}}},
-        "targets": [{"refId": "A", "datasource": {"type": "prometheus", "uid": "bfijh14lltg5ce"}, "expr": "count(up == 1)"}]
+        "targets": [{"refId": "A", "datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "count(up == 1)"}]
       },
       {
         "id": 2,
@@ -21,21 +21,21 @@
         "type": "stat",
         "gridPos": {"x": 6, "y": 0, "w": 6, "h": 8},
         "fieldConfig": {"defaults": {"unit": "short", "color": {"mode": "thresholds"}, "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "red", "value": 1}]}}},
-        "targets": [{"refId": "A", "datasource": {"type": "prometheus", "uid": "bfijh14lltg5ce"}, "expr": "count(up == 0)"}]
+        "targets": [{"refId": "A", "datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "count(up == 0)"}]
       },
       {
         "id": 3,
         "title": "Service Status (Up Services)",
         "type": "table",
         "gridPos": {"x": 0, "y": 8, "w": 24, "h": 10},
-        "targets": [{"refId": "A", "datasource": {"type": "prometheus", "uid": "bfijh14lltg5ce"}, "expr": "up{job!=\"\"}"}]
+        "targets": [{"refId": "A", "datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "up{job!=\"\"}"}]
       },
       {
         "id": 4,
         "title": "Service Uptime Timeline",
         "type": "timeseries",
         "gridPos": {"x": 0, "y": 18, "w": 24, "h": 8},
-        "targets": [{"refId": "A", "datasource": {"type": "prometheus", "uid": "bfijh14lltg5ce"}, "expr": "up{job!=\"\"}"}]
+        "targets": [{"refId": "A", "datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "up{job!=\"\"}"}]
       }
     ],
     "refresh": "10s",

@@ -20,28 +20,18 @@ CMD ["npm", "start"]
 FROM base as build
 
 # Accept build args
-ARG REACT_APP_API_URL=http://localhost:8000
+ARG REACT_APP_API_URL=
 
 # Build application
 RUN REACT_APP_API_URL=${REACT_APP_API_URL} npm run build
 
 # Production image
-FROM node:18-alpine
+FROM nginx:1.27-alpine
 
-WORKDIR /app
+COPY nginx.conf /etc/nginx/conf.d/default.conf
+COPY --from=build /app/build /usr/share/nginx/html
 
-# Install serve to run the React app
-RUN npm install -g serve
+EXPOSE 80
 
-# Copy built app from build stage
-COPY --from=build /app/build ./build
-
-# Expose port
-EXPOSE 3000
-
-# Health check
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-    CMD wget --no-verbose --tries=1 --spider http://localhost:3000 || exit 1
-
-# Run application
-CMD ["serve", "-s", "build", "-l", "3000"]
+    CMD wget --no-verbose --tries=1 --spider http://localhost/health || exit 1

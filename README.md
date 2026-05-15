@@ -1,113 +1,272 @@
-# Cloud-Based AI Agent System for Network Incident Detection & Alerting
+# Hệ thống AIOps Hybrid Cloud phát hiện sự cố và cảnh báo thông minh
 
-Hệ thống AIOps toàn diện kết hợp sức mạnh của hạ tầng Cloud, Monitoring hiện đại và Trí tuệ nhân tạo (Generative AI) để tự động hóa việc phát hiện, phân tích và hỗ trợ xử lý sự cố mạng/dịch vụ.
-
----
-
-## Kiến trúc hệ thống (System Architecture)
-
-Dự án được thiết kế theo mô hình Hybrid-Cloud, triển khai tự động hóa hoàn toàn:
-
-1.  **Infrastructure Layer (Terraform)**: Triển khai trên AWS VPC, bao gồm các EC2 Instances cho các vai trò khác nhau (Monitor, Web, Core).
-2.  **Configuration Layer (Ansible)**: Tự động hóa việc cài đặt Docker, cấu hình Security, Firewall và triển khai các dịch vụ.
-3.  **Monitoring Layer (Prometheus & Grafana)**: 
-    *   **Prometheus**: Thu thập metrics từ Node Exporter và các dịch vụ.
-    *   **AlertManager**: Quản lý và gửi cảnh báo về AI Agent qua Webhook.
-    *   **Grafana**: Dashboard trực quan hóa hiệu suất hệ thống và mạng.
-4.  **AI Ops Layer (AI Agent)**: 
-    *   **FastAPI**: Tiếp nhận Webhook từ AlertManager.
-    *   **RAG (Retrieval-Augmented Generation)**: Sử dụng ChromaDB để truy xuất Runbook và lịch sử sự cố.
-    *   **Gemini AI**: Phân tích lỗi, thực hiện chẩn đoán (Function Calling) và đề xuất xử lý.
-    *   **Telegram Bot**: Giao tiếp với người vận hành (Human-in-the-Loop).
+Dự án xây dựng một hệ thống AIOps chạy trên AWS EC2, kết hợp hạ tầng cloud, giám sát dịch vụ, AI Agent và quy trình phát hành có healthcheck, rollback tự động.
 
 ---
 
-## Cấu trúc dự án
+## 1. Tổng quan kiến trúc
+
+Hệ thống hiện tại được tách thành bốn lớp rõ ràng:
+
+1. **Hạ tầng AWS bằng Terraform**
+   - Tạo VPC, subnet, route, security group, Elastic IP.
+   - Tạo ba EC2:
+     - `monitor-ai-01`
+     - `bank-web-01`
+     - `bank-core-01`
+
+2. **Bootstrap và cấu hình máy chủ bằng Ansible**
+   - Cài package nền, Docker, Docker Compose.
+   - Cấu hình SSH, firewall host-level.
+   - Triển khai Node Exporter.
+   - Cấu hình Prometheus, Alertmanager, Grafana và dashboard.
+   - Đặt release compose, file mẫu môi trường và deploy script lên EC2 release host.
+
+3. **Release ứng dụng bằng image versioned**
+   - AI Agent được build thành Docker image.
+   - Backend được build thành Docker image.
+   - Frontend được build thành image Nginx phục vụ static assets và reverse proxy `/api`.
+
+4. **CI/CD bằng GitHub Actions**
+   - Build, test, đóng gói image.
+   - Push image lên GHCR.
+   - SSH vào EC2 để chạy release script.
+   - Health check toàn bộ stack.
+   - Rollback về tag trước nếu release mới lỗi.
+
+---
+
+## 2. Các thành phần chính
+
+| Thành phần | Vai trò |
+|---|---|
+| Terraform | Provision hạ tầng AWS |
+| Ansible | Bootstrap EC2, cấu hình monitoring và release runtime |
+| Prometheus | Thu thập metrics |
+| Alertmanager | Gửi cảnh báo tới AI Agent |
+| Grafana | Dashboard giám sát |
+| AI Agent | Nhận webhook, phân tích sự cố, phối hợp worker |
+| Celery + Redis | Xử lý tác vụ nền |
+| Payment API | Backend FastAPI mẫu |
+| Frontend Nginx | Giao diện web image-based |
+| GitHub Actions | CI/CD và release orchestration |
+
+---
+
+## 3. Cấu trúc thư mục
 
 ```text
 aws-hybrid/
-|- terraform/              # AWS infrastructure as code (VPC, EC2, SG, v.v.)
-|- ansible/                # Triển khai phần mềm & cấu hình dịch vụ
-|- platform-config/        # Cấu hình Docker Compose và Monitoring
-|- release/                # Production deployment manifests & configs
-|- agent_src/              # Mã nguồn AI Agent (Python/FastAPI)
-│   ├── core/              # Logic chính (RAG Engine, Workflow)
-│   ├── monitoring/        # Script giám sát (Log Watcher, Service Monitor)
-│   ├── tools/             # Công cụ chẩn đoán (Ping, Metrics, Logs)
-│   └── utils/             # Tiện ích (Telegram Bot)
-|- demo-web/               # Ứng dụng web mẫu (Full-stack React + FastAPI)
-|- automation/             # Script tự động hóa triển khai & vận hành
-|- diagram/                # Sơ đồ kiến trúc, CI/CD và luồng hoạt động
+|- terraform/                         # Hạ tầng AWS bằng Terraform
+|- ansible/                           # Bootstrap, monitoring, release runtime config
+|  `- playbooks/
+|     |- bootstrap.yml
+|     |- configure-monitoring-stack.yml
+|     `- configure-release-runtime.yml
+|- automation/
+|  |- app-release-deploy.sh           # Pull image, start stack, health check, rollback
+|  `- update-infrastructure.sh        # Cập nhật IP và inventory khi IP máy dev thay đổi
+|- release/
+|  |- .env.example
+|  |- docker-compose.staging.yml
+|  `- docker-compose.production.yml
+|- agent_src/                         # AI Agent
+|- demo-web/
+|  |- backend/                        # Payment API
+|  `- frontend/                       # React frontend, đóng gói thành Nginx image
+|- platform-config/                  # Compose và cấu hình phục vụ local/dev
+|- diagram/                          # Tài liệu sơ đồ
+|- AWS_INFRASTRUCTURE_DEPLOYMENT_GUIDE.md
+|- AIops_CICD.md
 `- README.md
 ```
 
-### Key Automation Scripts
+---
 
-- `automation/deploy.sh` - Script triển khai chính (xử lý pull image, check health, rollback)
-- `automation/deploy-infrastructure.sh` - Khởi tạo hạ tầng AWS và chạy Ansible
-- `automation/ansible-deploy.sh` - Wrapper cho Ansible (load credentials, bootstrap)
-- `automation/update-infrastructure.sh` - Cập nhật hạ tầng và đồng bộ IP
+## 4. Luồng phát hiện và xử lý sự cố
+
+1. Prometheus, Blackbox Exporter hoặc service monitor phát hiện bất thường.
+2. Alertmanager gửi webhook tới AI Agent.
+3. AI Agent ghi nhận alert và đẩy tác vụ vào Redis queue.
+4. Celery worker xử lý alert, gọi công cụ chẩn đoán và mô hình AI khi cần.
+5. Kết quả được gửi tới Telegram để người vận hành theo dõi hoặc phê duyệt.
 
 ---
 
-## Luồng hoạt động (Incident Workflow)
+## 5. Luồng triển khai chuẩn hiện tại
 
-1.  **Phát hiện (Detection)**: `service_monitor.py` hoặc Prometheus phát hiện Port chết, Network lỗi (Packet loss, High Latency).
-2.  **Cảnh báo (Alerting)**: AlertManager gửi Webhook chứa chi tiết sự cố đến AI Agent.
-3.  **Phân tích (AI Analysis)**: 
-    *   AI Agent truy vấn **ChromaDB** để tìm Runbook và các sự cố tương tự.
-    *   AI tự động gọi các **Diag Tools** (Ping, DNS Check, Log Read) để thu thập thêm bằng chứng.
-4.  **Tương tác (HITL)**: AI gửi báo cáo phân tích và nút bấm "Phê duyệt xử lý" lên **Telegram**.
-5.  **Hành động & Học tập**: Sau khi quản trị viên phê duyệt, AI thực hiện lệnh sửa lỗi và lưu toàn bộ diễn biến vào bộ nhớ để học tập cho lần sau.
+```text
+Developer push code
+  -> GitHub Actions chạy lint, test, build
+  -> Build 3 Docker images:
+       - aws-hybrid-ai-agent
+       - aws-hybrid-payment-api
+       - aws-hybrid-frontend
+  -> Push image lên GHCR với cùng tag
+  -> Workflow SSH vào EC2 release host
+  -> Chạy automation/app-release-deploy.sh
+  -> EC2 pull image
+  -> docker compose up -d
+  -> Health check AI Agent, backend, frontend
+  -> Thành công hoặc rollback về tag cũ
+```
 
 ---
 
-## Hướng dẫn triển khai nhanh (Quick Start)
+## 6. Các playbook Ansible đang dùng
 
-### Thiết lập biến môi trường
-Tạo file `.env` trong `agent_src/` hoặc export các biến:
+### Bootstrap EC2
+
 ```bash
-export GEMINI_API_KEY="your-gemini-api-key"
-export TELEGRAM_TOKEN="your-telegram-bot-token"
-export TELEGRAM_CHAT_ID="your-chat-id"
+ansible-playbook -i ansible/inventory.ini ansible/playbooks/bootstrap.yml
 ```
 
-### Cách 1: Triển khai tự động (Khuyên dùng)
-```bash
-bash automation/deploy-infrastructure.sh
-```
-Script này sẽ tự động kiểm tra hạ tầng, cài đặt môi trường và triển khai toàn bộ stack.
+### Cấu hình monitoring và host services
 
-### Cách 2: Chạy local với Docker Compose
+```bash
+ansible-playbook -i ansible/inventory.ini ansible/playbooks/configure-monitoring-stack.yml
+```
+
+Playbook này chỉ đảm nhiệm lớp monitoring/config:
+- Node Exporter
+- Prometheus
+- Blackbox Exporter
+- Alertmanager
+- Grafana
+- firewall host-level
+
+Nó không deploy backend hoặc frontend production.
+
+### Đặt release runtime trên EC2
+
+```bash
+ansible-playbook -i ansible/inventory.ini ansible/playbooks/configure-release-runtime.yml
+```
+
+Playbook này chép:
+- `release/docker-compose.staging.yml`
+- `release/docker-compose.production.yml`
+- `release/.env.example`
+- `automation/app-release-deploy.sh`
+
+---
+
+## 7. Deploy staging và production
+
+### Staging
+
+```bash
+git push origin develop
+```
+
+Workflow staging sẽ phát hành image tag dạng:
+
+```text
+staging-<commit-sha>
+```
+
+Script chạy trên EC2:
+
+```bash
+./automation/app-release-deploy.sh staging staging-<commit-sha>
+```
+
+Health check:
+
+```text
+AI Agent: http://127.0.0.1:18000/health
+Backend:  http://127.0.0.1:18080/api/health
+Frontend: http://127.0.0.1:18081/health
+```
+
+### Production
+
+```bash
+git tag v1.0.0
+git push origin v1.0.0
+```
+
+Workflow production sẽ phát hành image tag dạng:
+
+```text
+v1.0.0
+```
+
+Script chạy trên EC2:
+
+```bash
+./automation/app-release-deploy.sh production v1.0.0
+```
+
+Health check:
+
+```text
+AI Agent: http://127.0.0.1:8000/health
+Backend:  http://127.0.0.1:8080/api/health
+Frontend: http://127.0.0.1:8081/health
+```
+
+Nếu bất kỳ health check nào thất bại, script sẽ tự rollback về tag đã lưu trước đó.
+
+---
+
+## 8. Chạy local cho phát triển
+
+Môi trường local vẫn dùng Docker Compose riêng:
+
 ```bash
 docker-compose -f platform-config/docker-compose.dev.yml up -d
 ```
 
----
-
-## Truy cập các dịch vụ (Service Endpoints)
-
-### AWS Deployment (Ví dụ IP thực tế)
-*   **Grafana**: `http://<Monitor-IP>:3000` (admin/admin123)
-*   **Prometheus**: `http://<Monitor-IP>:9090`
-*   **AI Agent API**: `http://<Monitor-IP>:8000/health`
-*   **Web Server (Frontend)**: `http://<Web-IP>:3000`
-*   **API Backend Docs**: `http://<Core-IP>:8000/docs`
+Compose local phục vụ mục đích phát triển và kiểm thử thủ công, không phải đường production release.
 
 ---
 
-## CI/CD Pipeline
-Dự án sử dụng GitHub Actions để tự động hóa quy trình Build, Test và Deploy:
-- **CI Workflow**: Kiểm tra lỗi (Lint), chạy Tests và Build Docker images.
-- **CD Staging**: Tự động triển khai lên môi trường Staging khi push vào branch `develop`.
-- **CD Production**: Triển khai lên Production khi tạo tag trên branch `main`.
+## 9. Các secret CI/CD cần cấu hình
+
+Repository secrets trên GitHub cần có:
+
+| Secret | Mục đích |
+|---|---|
+| `GHCR_USERNAME` | Tài khoản push image lên GHCR |
+| `GHCR_TOKEN` | Token registry |
+| `SSH_HOST` | EC2 release host |
+| `SSH_PORT` | Cổng SSH |
+| `SSH_PRIVATE_KEY` | Private key dùng bởi workflow |
+| `GEMINI_API_KEY` | Khóa API AI |
+| `TELEGRAM_TOKEN` | Token bot Telegram |
+| `TELEGRAM_CHAT_ID` | Kênh nhận cảnh báo |
+| `AI_AGENT_PUBLIC_URL` | URL public của Agent khi cần |
+| `DATABASE_URL` | Kết nối backend |
+| `SECRET_KEY` | Secret backend |
+| `PROMETHEUS_URL` | URL Prometheus |
 
 ---
 
-## Tài liệu tham khảo
-Xem thêm chi tiết tại thư mục `diagram/` và các file hướng dẫn:
-- `ANSIBLE_DEPLOYMENT_GUIDE.md`: Hướng dẫn chi tiết về Ansible.
-- `diagram/ARCHITECTURE_DIAGRAMS.md`: Sơ đồ hạ tầng AWS.
-- `diagram/CI_CD_DEPLOYMENT_DIAGRAM.md`: Sơ đồ luồng CI/CD.
+## 10. Endpoint tham khảo
 
+| Dịch vụ | Endpoint |
+|---|---|
+| Grafana | `http://<monitor-ip>:3000` |
+| Prometheus | `http://<monitor-ip>:9090` |
+| Alertmanager | `http://<monitor-ip>:9093` |
+| AI Agent production | `http://<monitor-ip>:8000/health` |
+| Frontend release internal | `http://127.0.0.1:8081/health` |
 
+---
+
+## 11. Tài liệu liên quan
+
+- [AWS_INFRASTRUCTURE_DEPLOYMENT_GUIDE.md](/home/hoang_viet/aws-hybrid/AWS_INFRASTRUCTURE_DEPLOYMENT_GUIDE.md)
+- [AIops_CICD.md](/home/hoang_viet/aws-hybrid/AIops_CICD.md)
+- [diagram/CI_CD_DEPLOYMENT_DIAGRAM.md](/home/hoang_viet/aws-hybrid/diagram/CI_CD_DEPLOYMENT_DIAGRAM.md)
+
+---
+
+## 12. Ghi chú vận hành
+
+- Không build production image trực tiếp trên EC2.
+- Không copy source application lên EC2 để phát hành production.
+- EC2 chỉ nên pull artifact đã được CI tạo.
+- Terraform quản lý cloud resource; Ansible quản lý bootstrap và cấu hình host.
+- `automation/app-release-deploy.sh` là cửa release thống nhất cho staging và production.
