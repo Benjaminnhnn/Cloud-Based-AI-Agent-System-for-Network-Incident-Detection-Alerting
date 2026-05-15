@@ -73,6 +73,7 @@ class Alert(BaseModel):
     startsAt: str
     endsAt: Optional[str] = None
     generatorURL: str
+    fingerprint: Optional[str] = None
 
 class AlertmanagerPayload(BaseModel):
     alerts: List[Alert]

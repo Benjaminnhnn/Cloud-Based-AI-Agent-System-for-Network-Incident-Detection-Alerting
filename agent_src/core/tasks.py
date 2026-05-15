@@ -1,6 +1,7 @@
 # tasks.py
 # FIX #5: Sắp xếp lại imports — stdlib trước, third-party sau, local cuối cùng
 import asyncio
+import hashlib
 import json
 import logging
 import os
@@ -43,11 +44,14 @@ GEMINI_API_KEY = valid_env_value(os.getenv("GEMINI_API_KEY"))
 GEMINI_MODEL = valid_env_value(os.getenv("GEMINI_MODEL")) or "gemini-2.5-flash"
 GEMINI_FALLBACK_MODELS = [
     model.strip()
-    for model in os.getenv("GEMINI_FALLBACK_MODELS", "gemini-2.0-flash").split(",")
+    for model in os.getenv("GEMINI_FALLBACK_MODELS", "").split(",")
     if model.strip()
 ]
-GEMINI_MAX_ATTEMPTS = int(os.getenv("GEMINI_MAX_ATTEMPTS", "3"))
+GEMINI_MAX_ATTEMPTS = int(os.getenv("GEMINI_MAX_ATTEMPTS", "1"))
+GEMINI_MAX_REMOTE_CALLS = int(os.getenv("GEMINI_MAX_REMOTE_CALLS", "1"))
 GEMINI_RETRY_BASE_SECONDS = float(os.getenv("GEMINI_RETRY_BASE_SECONDS", "2"))
+ALERT_AI_COOLDOWN_SECONDS = int(os.getenv("ALERT_AI_COOLDOWN_SECONDS", "900"))
+ALERT_DEDUP_ENABLED = os.getenv("ALERT_DEDUP_ENABLED", "true").lower() not in {"0", "false", "no"}
 VN_TZ = ZoneInfo("Asia/Ho_Chi_Minh")
 
 # Redis Configuration (để lưu incident context)
@@ -70,6 +74,65 @@ try:
 except redis.RedisError as e:
     logger.error(f"❌ Redis connection failed: {e}")
     redis_client = None  # type: ignore
+
+_local_alert_cooldowns: dict[str, float] = {}
+
+
+def _truncate_text(value: str, max_chars: int = 1500) -> str:
+    if len(value) <= max_chars:
+        return value
+    return value[:max_chars].rstrip() + "\n...[truncated]"
+
+
+def _alert_identity(alert: dict) -> str:
+    fingerprint = alert.get("fingerprint")
+    if fingerprint:
+        return str(fingerprint)
+
+    labels = alert.get("labels", {})
+    identity = {
+        "alertname": labels.get("alertname", "Unknown"),
+        "instance": labels.get("instance", "Unknown"),
+        "job": labels.get("job", ""),
+        "service": labels.get("service", ""),
+        "target": labels.get("target", ""),
+    }
+    identity_json = json.dumps(identity, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(identity_json.encode("utf-8")).hexdigest()[:16]
+
+
+def _alert_cooldown_key(alert: dict) -> str:
+    return f"alert-ai-cooldown:{_alert_identity(alert)}"
+
+
+def _reserve_alert_processing(alert: dict) -> bool:
+    if not ALERT_DEDUP_ENABLED or ALERT_AI_COOLDOWN_SECONDS <= 0:
+        return True
+
+    key = _alert_cooldown_key(alert)
+    if redis_client is not None:
+        try:
+            return bool(redis_client.set(key, "processing", ex=ALERT_AI_COOLDOWN_SECONDS, nx=True))
+        except redis.RedisError as e:
+            logger.warning("Redis cooldown check failed, using in-memory fallback: %s", e)
+
+    now = time.time()
+    expires_at = _local_alert_cooldowns.get(key, 0)
+    if expires_at > now:
+        return False
+    _local_alert_cooldowns[key] = now + ALERT_AI_COOLDOWN_SECONDS
+    return True
+
+
+def _clear_alert_cooldown(alert: dict) -> None:
+    key = _alert_cooldown_key(alert)
+    _local_alert_cooldowns.pop(key, None)
+    if redis_client is None:
+        return
+    try:
+        redis_client.delete(key)
+    except redis.RedisError as e:
+        logger.warning("Redis cooldown cleanup failed: %s", e)
 
 
 def save_incident_to_redis(incident_id: str, context: dict, ttl: int = 86400):
@@ -134,13 +197,13 @@ async def run_agent_workflow(incident_details: str):
     def fallback_analysis(last_error: Exception | None):
         host_match = re.search(r"Host:\s*([^|]+)", incident_details)
         host = host_match.group(1).strip() if host_match else "unknown"
-        error_text = str(last_error) if last_error else "Gemini không phản hồi."
+        error_text = _truncate_text(str(last_error), 500) if last_error else "Gemini không phản hồi."
         analysis = (
             "⚠️ *Gemini tạm thời không khả dụng, dùng phân tích dự phòng từ RAG/runbook.*\n\n"
             f"*Sự cố:* {incident_details}\n\n"
             f"*Lỗi Gemini gần nhất:* `{error_text}`\n\n"
             "*Ngữ cảnh runbook/RAG liên quan:*\n"
-            f"{runbook_context}\n\n"
+            f"{_truncate_text(runbook_context, 1200)}\n\n"
             "*Biện pháp khắc phục đề xuất:*\n"
             "1. Xác nhận alert còn firing trong Prometheus/Alertmanager.\n"
             "2. Kiểm tra service/endpoint bị báo lỗi trên host liên quan.\n"
@@ -165,7 +228,7 @@ async def run_agent_workflow(incident_details: str):
                         system_instruction=system_instruction,
                         tools=AGENT_TOOLS,
                         automatic_function_calling=types.AutomaticFunctionCallingConfig(
-                            maximum_remote_calls=5
+                            maximum_remote_calls=max(GEMINI_MAX_REMOTE_CALLS, 0)
                         )
                     )
                 )
@@ -209,8 +272,19 @@ async def process_single_alert(alert: dict) -> None:
         description = alert["annotations"].get("description", "")
 
         if alert.get("status") == "resolved":
+            _clear_alert_cooldown(alert)
             send_telegram_message(f"✅ *ĐÃ KHÔI PHỤC:* {alert_name} trên `{instance}`")
             ALERTS_PROCESSED_TOTAL.labels(status='resolved').inc()
+            return
+
+        if not _reserve_alert_processing(alert):
+            logger.info(
+                "Skipping duplicate alert within cooldown: alert=%s instance=%s cooldown=%ss",
+                alert_name,
+                instance,
+                ALERT_AI_COOLDOWN_SECONDS,
+            )
+            ALERTS_PROCESSED_TOTAL.labels(status='deduped').inc()
             return
 
         incident_details = f"Alert: {alert_name} | Host: {instance} | Summary: {summary}"
