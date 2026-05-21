@@ -184,7 +184,7 @@
 
     - name: Copy Prometheus alert rules
       copy:
-        src: /home/hoang_viet/aws-hybrid/ansible/config/alert_rules.yml
+        src: ../config/alert_rules.yml
         dest: /opt/prometheus/alert_rules.yml
         owner: nobody
         group: nobody
@@ -192,7 +192,7 @@
 
     - name: Copy AlertManager configuration
       copy:
-        src: /home/hoang_viet/aws-hybrid/ansible/config/alertmanager.yml
+        src: ../config/alertmanager.yml
         dest: /opt/alertmanager/alertmanager.yml
         owner: nobody
         group: nobody
