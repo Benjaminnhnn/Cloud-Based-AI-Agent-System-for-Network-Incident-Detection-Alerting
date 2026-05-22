@@ -257,9 +257,9 @@ Repository secrets trên GitHub cần có:
 
 ## 11. Tài liệu liên quan
 
-- [AWS_INFRASTRUCTURE_DEPLOYMENT_GUIDE.md](/home/hoang_viet/aws-hybrid/AWS_INFRASTRUCTURE_DEPLOYMENT_GUIDE.md)
-- [AIops_CICD.md](/home/hoang_viet/aws-hybrid/AIops_CICD.md)
-- [diagram/CI_CD_DEPLOYMENT_DIAGRAM.md](/home/hoang_viet/aws-hybrid/diagram/CI_CD_DEPLOYMENT_DIAGRAM.md)
+- [AWS_INFRASTRUCTURE_DEPLOYMENT_GUIDE.md](AWS_INFRASTRUCTURE_DEPLOYMENT_GUIDE.md)
+- [AIops_CICD.md](AIops_CICD.md)
+- [diagram/CI_CD_DEPLOYMENT_DIAGRAM.md](diagram/CI_CD_DEPLOYMENT_DIAGRAM.md)
 
 ---
 

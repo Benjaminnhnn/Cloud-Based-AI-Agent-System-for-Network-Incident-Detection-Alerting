@@ -1,6 +1,6 @@
 resource "aws_key_pair" "deployer" {
   key_name   = "${var.project_name}-${var.environment}-key"
-  public_key = file(var.public_key_path)
+  public_key = file(pathexpand(var.public_key_path))
 
   tags = merge(local.common_tags, {
     Name = "${var.project_name}-${var.environment}-key"

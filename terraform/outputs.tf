@@ -1,15 +1,15 @@
 output "monitor_public_ip" {
-  value = aws_eip.monitor.public_ip
+  value       = aws_eip.monitor.public_ip
   description = "Elastic IP of monitor instance (static)"
 }
 
 output "web_public_ip" {
-  value = aws_eip.web.public_ip
+  value       = aws_eip.web.public_ip
   description = "Elastic IP of web instance (static)"
 }
 
 output "core_public_ip" {
-  value = aws_eip.core.public_ip
+  value       = aws_eip.core.public_ip
   description = "Elastic IP of core instance (static)"
 }
 
@@ -28,13 +28,13 @@ output "core_private_ip" {
 output "ssh_commands" {
   value = <<-EOT
   SSH monitor:
-  ssh -i "${var.private_key_path}" ${var.ssh_user}@${aws_eip.monitor.public_ip}
+  ssh -i ${var.private_key_path} ${var.ssh_user}@${aws_eip.monitor.public_ip}
 
   SSH web:
-  ssh -i "${var.private_key_path}" ${var.ssh_user}@${aws_eip.web.public_ip}
+  ssh -i ${var.private_key_path} ${var.ssh_user}@${aws_eip.web.public_ip}
 
   SSH core:
-  ssh -i "${var.private_key_path}" ${var.ssh_user}@${aws_eip.core.public_ip}
+  ssh -i ${var.private_key_path} ${var.ssh_user}@${aws_eip.core.public_ip}
   EOT
 }
 
@@ -55,7 +55,7 @@ output "ansible_inventory" {
 
   [all:vars]
   ansible_python_interpreter=/usr/bin/python3
-  ansible_ssh_private_key_file=${var.private_key_path}
+  ansible_ssh_private_key_file=~/.ssh/aws-hybrid
   EOT
 }
 
@@ -71,11 +71,11 @@ output "elastic_ips" {
 output "elastic_ips_info" {
   value = <<-EOT
   ✓ Elastic IPs have been allocated (Static Public IPs)
-  
+
   Monitor: ${aws_eip.monitor.public_ip} (Allocation ID: ${aws_eip.monitor.id})
   Web:     ${aws_eip.web.public_ip} (Allocation ID: ${aws_eip.web.id})
   Core:    ${aws_eip.core.public_ip} (Allocation ID: ${aws_eip.core.id})
-  
+
   Note: These IPs will NOT change when instances are stopped/started!
   EOT
 }

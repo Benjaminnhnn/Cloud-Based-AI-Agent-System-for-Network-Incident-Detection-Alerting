@@ -184,7 +184,7 @@
 
     - name: Copy Prometheus alert rules
       copy:
-        src: ../config/alert_rules.yml
+        src: "{{ playbook_dir }}/../config/alert_rules.yml"
         dest: /opt/prometheus/alert_rules.yml
         owner: nobody
         group: nobody
@@ -192,7 +192,7 @@
 
     - name: Copy AlertManager configuration
       copy:
-        src: ../config/alertmanager.yml
+        src: "{{ playbook_dir }}/../config/alertmanager.yml"
         dest: /opt/alertmanager/alertmanager.yml
         owner: nobody
         group: nobody

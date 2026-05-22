@@ -141,8 +141,8 @@ aws_region = "ap-southeast-1"
 my_ip_cidr = "<your-public-ip>/32"
 ci_cd_ssh_cidr_blocks = []
 
-public_key_path  = "/home/<user>/.ssh/aws-hybrid.pub"
-private_key_path = "/home/<user>/.ssh/aws-hybrid"
+public_key_path  = "~/.ssh/aws-hybrid.pub"
+private_key_path = "~/.ssh/aws-hybrid"
 ssh_user         = "ec2-user"
 
 monitor_instance_type = "t3.small"
@@ -191,7 +191,7 @@ core
 
 [all:vars]
 ansible_python_interpreter=/usr/bin/python3
-ansible_ssh_private_key_file=/home/<user>/.ssh/aws-hybrid
+ansible_ssh_private_key_file=~/.ssh/aws-hybrid
 ```
 
 Neu may dev doi IP sau nay, chay:
