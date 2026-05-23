@@ -1,5 +1,5 @@
 aws_region            = "ap-southeast-1"
-my_ip_cidr            = "203.205.32.65/32"
+my_ip_cidr       = "171.250.164.173/32"
 ci_cd_ssh_cidr_blocks = ["0.0.0.0/0"]
 public_key_path       = "~/.ssh/aws-hybrid.pub"
 private_key_path      = "~/.ssh/aws-hybrid"
