@@ -102,7 +102,49 @@ groups:
         for: 30s
         labels:
           severity: critical
-          service: availability
+          service: nginx
+          component: frontend-web-prod
+          runbook: nginx
         annotations:
           summary: "Web endpoint is DOWN on {{ $labels.instance }}"
           description: "Blackbox probe failed for {{ $labels.target }}"
+
+      - alert: PostgreSQLDown
+        expr: pg_up{job="postgres_exporter_core",instance="bank-core-01"} == 0
+        for: 30s
+        labels:
+          severity: critical
+          service: postgresql
+          component: postgres-prod
+          runbook: postgresql
+        annotations:
+          summary: "PostgreSQL is DOWN on {{ $labels.instance }}"
+          description: "postgres_exporter reports pg_up=0 for {{ $labels.component }}"
+
+      - alert: RedisDown
+        expr: redis_up{job="redis_exporter_monitor",instance="monitor-ai-01"} == 0
+        for: 30s
+        labels:
+          severity: critical
+          service: redis
+          component: redis-prod
+          runbook: redis
+        annotations:
+          summary: "Redis is DOWN on {{ $labels.instance }}"
+          description: "redis_exporter reports redis_up=0 for {{ $labels.component }}"
+
+      - alert: DockerContainerDown
+        expr: |
+          absent(container_last_seen{name="frontend-web-prod",instance="bank-web-01"})
+          or absent(container_last_seen{name="payment-api-prod",instance="bank-core-01"})
+          or absent(container_last_seen{name="postgres-prod",instance="bank-core-01"})
+          or absent(container_last_seen{name="ai-agent-prod",instance="monitor-ai-01"})
+          or absent(container_last_seen{name="redis-prod",instance="monitor-ai-01"})
+        for: 30s
+        labels:
+          severity: critical
+          service: docker
+          runbook: docker
+        annotations:
+          summary: "Required Docker container is missing"
+          description: "A required production container is not visible in cAdvisor metrics."

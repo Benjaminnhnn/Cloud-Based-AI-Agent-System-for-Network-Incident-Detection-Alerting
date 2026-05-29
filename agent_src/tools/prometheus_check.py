@@ -130,6 +130,36 @@ class PrometheusChecker:
                 )
                 return probe == 1
 
+            elif alert_name == "PostgreSQLDown":
+                pg_up = self._first_value(
+                    f'pg_up{{job="postgres_exporter_core",instance="{instance}"}}'
+                )
+                return pg_up == 1
+
+            elif alert_name == "RedisDown":
+                redis_up = self._first_value(
+                    f'redis_up{{job="redis_exporter_monitor",instance="{instance}"}}'
+                )
+                return redis_up == 1
+
+            elif alert_name == "DockerContainerDown":
+                expected_by_instance = {
+                    "bank-web-01": ("frontend-web-prod",),
+                    "bank-core-01": ("payment-api-prod", "postgres-prod"),
+                    "monitor-ai-01": ("ai-agent-prod", "redis-prod"),
+                }
+                expected = expected_by_instance.get(instance, ())
+                if not expected:
+                    logger.warning("No Docker container mapping for instance: %s", instance)
+                    return False
+                return all(
+                    self._first_value(
+                        f'container_last_seen{{name="{container}",instance="{instance}"}}'
+                    )
+                    is not None
+                    for container in expected
+                )
+
             elif alert_name == "service_down":
                 # Check if service is up (via port health check)
                 # This would require specific port configuration

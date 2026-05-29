@@ -110,6 +110,14 @@ resource "aws_security_group" "web_sg" {
   }
 
   ingress {
+    description     = "cAdvisor from monitor node"
+    from_port       = 8088
+    to_port         = 8088
+    protocol        = "tcp"
+    security_groups = [aws_security_group.monitor_sg.id]
+  }
+
+  ingress {
     description     = "Internal health check from monitor node"
     from_port       = 8080
     to_port         = 8080
@@ -195,6 +203,22 @@ resource "aws_security_group" "core_sg" {
     description     = "Node Exporter from monitor node"
     from_port       = 9100
     to_port         = 9100
+    protocol        = "tcp"
+    security_groups = [aws_security_group.monitor_sg.id]
+  }
+
+  ingress {
+    description     = "Postgres Exporter from monitor node"
+    from_port       = 9187
+    to_port         = 9187
+    protocol        = "tcp"
+    security_groups = [aws_security_group.monitor_sg.id]
+  }
+
+  ingress {
+    description     = "cAdvisor from monitor node"
+    from_port       = 8088
+    to_port         = 8088
     protocol        = "tcp"
     security_groups = [aws_security_group.monitor_sg.id]
   }
