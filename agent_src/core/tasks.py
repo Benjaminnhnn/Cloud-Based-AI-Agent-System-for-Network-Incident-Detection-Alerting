@@ -135,6 +135,84 @@ def _clear_alert_cooldown(alert: dict) -> None:
         logger.warning("Redis cooldown cleanup failed: %s", e)
 
 
+def _format_labels(labels: dict) -> str:
+    if not labels:
+        return "none"
+    return ", ".join(f"{key}={value}" for key, value in sorted(labels.items()))
+
+
+def _format_annotations(annotations: dict) -> str:
+    if not annotations:
+        return "none"
+    return ", ".join(f"{key}={value}" for key, value in sorted(annotations.items()))
+
+
+def build_incident_details(alert: dict) -> str:
+    labels = alert.get("labels", {})
+    annotations = alert.get("annotations", {})
+    alert_name = labels.get("alertname", "Unknown")
+    instance = labels.get("instance", "Unknown")
+    job = labels.get("job", "unknown")
+    service = labels.get("service", "unknown")
+    target = labels.get("target", labels.get("endpoint", "unknown"))
+    summary = annotations.get("summary", "")
+    description = annotations.get("description", "")
+    generator_url = alert.get("generatorURL", "")
+
+    return (
+        f"Alert: {alert_name}\n"
+        f"Instance: {instance}\n"
+        f"Job: {job}\n"
+        f"Service: {service}\n"
+        f"Target: {target}\n"
+        f"Summary: {summary}\n"
+        f"Description: {description}\n"
+        f"GeneratorURL: {generator_url}\n"
+        f"Labels: {_format_labels(labels)}\n"
+        f"Annotations: {_format_annotations(annotations)}"
+    )
+
+
+def deterministic_diagnosis(alert: dict) -> tuple[str, dict | None]:
+    labels = alert.get("labels", {})
+    annotations = alert.get("annotations", {})
+    alert_name = labels.get("alertname", "Unknown")
+    instance = labels.get("instance", "Unknown")
+    target = labels.get("target", "unknown")
+    endpoint = labels.get("endpoint", "/health")
+    summary = annotations.get("summary", "")
+
+    if alert_name == "WebEndpointDown":
+        analysis = (
+            "Chẩn đoán tự động: Prometheus Blackbox probe không nhận được HTTP 2xx từ web endpoint.\n"
+            f"- Host liên quan: `{instance}`\n"
+            f"- Target đang probe: `{target}`\n"
+            f"- Endpoint: `{endpoint}`\n"
+            f"- Tóm tắt alert: {summary or 'không có'}\n\n"
+            "Nguyên nhân khả dĩ theo thứ tự ưu tiên:\n"
+            "1. Container `frontend-web-prod` trên web host đang stopped/unhealthy.\n"
+            "2. Docker daemon trên web host có vấn đề hoặc container không bind được port 80.\n"
+            "3. Nginx trong container lỗi cấu hình hoặc không trả `/health`.\n"
+            "4. Security Group/firewall/route làm monitor không truy cập được web endpoint.\n"
+            "5. Nếu `/health` OK nhưng `/api/*` lỗi, kiểm tra `PAYMENT_API_UPSTREAM` và backend core.\n\n"
+            "Lệnh kiểm tra khuyến nghị trên `bank-web-01`:\n"
+            "```bash\n"
+            "docker ps --filter name=frontend-web-prod\n"
+            "docker inspect -f '{{.State.Status}} {{.State.Health.Status}}' frontend-web-prod\n"
+            "docker logs --tail=100 frontend-web-prod\n"
+            "curl -i http://127.0.0.1/health\n"
+            "curl -i http://127.0.0.1/api/health\n"
+            "```\n\n"
+            "Nếu container bị stop do test hoặc restart lỗi, khôi phục bằng:\n"
+            "```bash\n"
+            "docker start frontend-web-prod\n"
+            "```\n"
+        )
+        return analysis, {"action": "check_or_start_frontend_web_prod", "host": instance}
+
+    return "", None
+
+
 def save_incident_to_redis(incident_id: str, context: dict, ttl: int = 86400):
     if redis_client is None:
         logger.error("Redis client unavailable, skipping incident save.")
@@ -195,7 +273,7 @@ async def run_agent_workflow(incident_details: str):
         return any(marker in error_text for marker in retryable_markers)
 
     def fallback_analysis(last_error: Exception | None):
-        host_match = re.search(r"Host:\s*([^|]+)", incident_details)
+        host_match = re.search(r"(?:Host|Instance):\s*([^\n|]+)", incident_details)
         host = host_match.group(1).strip() if host_match else "unknown"
         error_text = _truncate_text(str(last_error), 500) if last_error else "Gemini không phản hồi."
         analysis = (
@@ -287,9 +365,16 @@ async def process_single_alert(alert: dict) -> None:
             ALERTS_PROCESSED_TOTAL.labels(status='deduped').inc()
             return
 
-        incident_details = f"Alert: {alert_name} | Host: {instance} | Summary: {summary}"
+        incident_details = build_incident_details(alert)
+        rule_analysis, rule_proposal = deterministic_diagnosis(alert)
 
         ai_analysis, proposal = await run_agent_workflow(incident_details)
+        if rule_analysis:
+            if not ai_analysis or ai_analysis == "AI không phản hồi.":
+                ai_analysis = rule_analysis
+            else:
+                ai_analysis = f"{rule_analysis}\n\nPhân tích bổ sung từ AI:\n{ai_analysis}"
+            proposal = proposal or rule_proposal
 
         duration = time.time() - start_time
         AI_WORKFLOW_LATENCY_SECONDS.observe(duration)
@@ -408,7 +493,7 @@ async def verify_resolution(incident_id: str, alert_name: str, instance: str):
                 alert_name=ctx["alert_name"],
                 description=ctx["incident_details"],
                 ai_analysis=ctx["ai_analysis"],
-                resolution=ctx.get("proposal", {}).get("action", "manual_fix"),
+                resolution=(ctx.get("proposal") or {}).get("action", "manual_fix"),
                 outcome=outcome
             )
             logger.info(f"✅ Saved incident to ChromaDB with outcome: {outcome}")

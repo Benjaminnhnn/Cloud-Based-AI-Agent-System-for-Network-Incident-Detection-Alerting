@@ -8,7 +8,9 @@ from typing import Dict, Any, Optional
 
 logger = logging.getLogger(__name__)
 
-# Prometheus configuration
+# Prometheus configuration. In production Prometheus runs on the monitor host
+# network, while the AI agent runs in a bridge network. Try the configured URL
+# first, then common Docker host gateway addresses.
 PROMETHEUS_URL = os.getenv("PROMETHEUS_URL", "http://prometheus:9090")
 PROMETHEUS_TIMEOUT = 10
 
@@ -23,8 +25,48 @@ class PrometheusChecker:
     """
     
     def __init__(self, prometheus_url: str = PROMETHEUS_URL):
-        self.base_url = prometheus_url.rstrip("/")
+        fallback_urls = (
+            "http://172.20.0.1:9090",
+            "http://172.19.0.1:9090",
+            "http://172.18.0.1:9090",
+            "http://172.17.0.1:9090",
+            "http://127.0.0.1:9090",
+        )
+        urls = [prometheus_url.rstrip("/")]
+        urls.extend(url for url in fallback_urls if url not in urls)
+        self.base_urls = urls
+        self.base_url = urls[0]
         self.query_url = f"{self.base_url}/api/v1/query"
+
+    def _query(self, query: str) -> list[dict[str, Any]]:
+        last_error = None
+        for base_url in self.base_urls:
+            try:
+                response = requests.get(
+                    f"{base_url}/api/v1/query",
+                    params={"query": query},
+                    timeout=PROMETHEUS_TIMEOUT,
+                )
+                response.raise_for_status()
+
+                data = response.json()
+                if data.get("status") == "success":
+                    self.base_url = base_url
+                    self.query_url = f"{base_url}/api/v1/query"
+                    return data.get("data", {}).get("result", [])
+            except Exception as e:
+                last_error = e
+                logger.warning("Prometheus query failed via %s: %s", base_url, e)
+
+        logger.error("All Prometheus query endpoints failed. Last error: %s", last_error)
+        return []
+
+    def _first_value(self, query: str) -> Optional[float]:
+        results = self._query(query)
+        if not results:
+            return None
+        value = results[0].get("value", [None, None])[1]
+        return float(value) if value is not None else None
     
     def get_metric(self, instance: str, metric_name: str) -> Optional[float]:
         """
@@ -36,23 +78,7 @@ class PrometheusChecker:
         """
         try:
             query = f"{metric_name}{{instance='{instance}'}}"
-            params = {"query": query}
-            
-            response = requests.get(
-                self.query_url,
-                params=params,
-                timeout=PROMETHEUS_TIMEOUT
-            )
-            response.raise_for_status()
-            
-            data = response.json()
-            if data.get("status") == "success":
-                results = data.get("data", {}).get("result", [])
-                if results:
-                    value = results[0].get("value", [None, None])[1]
-                    return float(value) if value else None
-            
-            return None
+            return self._first_value(query)
         except Exception as e:
             logger.error(f"Error querying Prometheus for {metric_name}: {e}")
             return None
@@ -98,6 +124,12 @@ class PrometheusChecker:
                 threshold = 1
                 return loss is not None and loss < threshold
             
+            elif alert_name == "WebEndpointDown":
+                probe = self._first_value(
+                    f'probe_success{{job="blackbox_http_web",instance="{instance}"}}'
+                )
+                return probe == 1
+
             elif alert_name == "service_down":
                 # Check if service is up (via port health check)
                 # This would require specific port configuration
@@ -105,9 +137,14 @@ class PrometheusChecker:
                 return True
             
             else:
-                # Default: assume resolved if we can't determine
-                logger.warning(f"Unknown alert type: {alert_name}")
-                return True
+                active_alert = self._first_value(
+                    f'ALERTS{{alertname="{alert_name}",instance="{instance}",alertstate="firing"}}'
+                )
+                if active_alert is not None:
+                    return active_alert != 1
+
+                logger.warning("Unknown alert type and no ALERTS series found: %s", alert_name)
+                return False
         
         except Exception as e:
             logger.error(f"Error in is_alert_resolved: {e}")

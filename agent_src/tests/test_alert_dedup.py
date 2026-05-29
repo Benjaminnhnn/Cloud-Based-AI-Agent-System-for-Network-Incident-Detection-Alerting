@@ -39,3 +39,23 @@ def test_alert_processing_uses_local_cooldown_when_redis_unavailable() -> None:
 
         tasks._clear_alert_cooldown(alert)
         assert tasks._reserve_alert_processing(alert) is True
+
+
+def test_web_endpoint_alert_context_includes_probe_target() -> None:
+    details = tasks.build_incident_details(_alert("web-down"))
+
+    assert "Alert: WebEndpointDown" in details
+    assert "Instance: bank-web-01" in details
+    assert "Job: blackbox_http_web" in details
+    assert "Target: http://52.220.34.44/health" in details
+
+
+def test_web_endpoint_diagnosis_has_actionable_checks() -> None:
+    analysis, proposal = tasks.deterministic_diagnosis(_alert("web-down"))
+
+    assert "frontend-web-prod" in analysis
+    assert "docker ps --filter name=frontend-web-prod" in analysis
+    assert proposal == {
+        "action": "check_or_start_frontend_web_prod",
+        "host": "bank-web-01",
+    }
