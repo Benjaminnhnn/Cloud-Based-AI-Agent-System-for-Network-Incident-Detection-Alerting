@@ -102,9 +102,13 @@ jobs:
           import os
           from pathlib import Path
 
+          payment_api_upstream = os.environ.get("PAYMENT_API_UPSTREAM")
+          if not payment_api_upstream:
+              raise SystemExit("Missing required secret: PAYMENT_API_UPSTREAM")
+
           values = {
               "ENVIRONMENT": "production",
-              "PAYMENT_API_UPSTREAM": os.environ.get("PAYMENT_API_UPSTREAM") or "http://10.10.1.118:8080",
+              "PAYMENT_API_UPSTREAM": payment_api_upstream,
           }
           for key in (
               "GEMINI_API_KEY",
