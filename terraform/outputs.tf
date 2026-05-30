@@ -28,13 +28,13 @@ output "core_private_ip" {
 output "ssh_commands" {
   value = <<-EOT
   SSH monitor:
-  ssh -i ${var.private_key_path} ${var.ssh_user}@${aws_eip.monitor.public_ip}
+  ssh -i "${var.private_key_path}" ${var.ssh_user}@${aws_eip.monitor.public_ip}
 
   SSH web:
-  ssh -i ${var.private_key_path} ${var.ssh_user}@${aws_eip.web.public_ip}
+  ssh -i "${var.private_key_path}" ${var.ssh_user}@${aws_eip.web.public_ip}
 
   SSH core:
-  ssh -i ${var.private_key_path} ${var.ssh_user}@${aws_eip.core.public_ip}
+  ssh -i "${var.private_key_path}" ${var.ssh_user}@${aws_eip.core.public_ip}
   EOT
 }
 
@@ -55,7 +55,7 @@ output "ansible_inventory" {
 
   [all:vars]
   ansible_python_interpreter=/usr/bin/python3
-  ansible_ssh_private_key_file=~/.ssh/aws-hybrid
+  ansible_ssh_private_key_file=${var.private_key_path}
   EOT
 }
 

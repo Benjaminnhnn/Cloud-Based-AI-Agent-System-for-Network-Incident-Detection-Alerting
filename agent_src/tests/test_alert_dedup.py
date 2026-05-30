@@ -20,6 +20,21 @@ def _alert(fingerprint: str | None = None) -> dict:
     return alert
 
 
+def _runbook_alert(alertname: str, component: str, instance: str) -> dict:
+    return {
+        "status": "firing",
+        "labels": {
+            "alertname": alertname,
+            "instance": instance,
+            "job": "demo",
+            "service": "demo",
+            "component": component,
+            "environment": "staging",
+        },
+        "annotations": {"summary": f"{component} is down"},
+    }
+
+
 def test_alert_identity_prefers_alertmanager_fingerprint() -> None:
     assert tasks._alert_identity(_alert("abc123")) == "abc123"
 
@@ -39,3 +54,79 @@ def test_alert_processing_uses_local_cooldown_when_redis_unavailable() -> None:
 
         tasks._clear_alert_cooldown(alert)
         assert tasks._reserve_alert_processing(alert) is True
+
+
+def test_web_endpoint_alert_context_includes_probe_target() -> None:
+    details = tasks.build_incident_details(_alert("web-down"))
+
+    assert "Alert: WebEndpointDown" in details
+    assert "Instance: bank-web-01" in details
+    assert "Job: blackbox_http_web" in details
+    assert "Target: http://52.220.34.44/health" in details
+
+
+def test_web_endpoint_diagnosis_has_actionable_checks() -> None:
+    analysis, proposal = tasks.deterministic_diagnosis(_alert("web-down"))
+
+    assert "frontend-web-prod" in analysis
+    assert "docker ps -a --filter name=frontend-web-prod" in analysis
+    assert proposal == {
+        "action": "check_or_start_frontend_web_prod",
+        "host": "bank-web-01",
+    }
+
+
+def test_staging_web_endpoint_diagnosis_uses_staging_container_and_port() -> None:
+    alert = _runbook_alert("WebEndpointDown", "frontend-web-staging", "bank-web-01")
+    alert["labels"]["target"] = "http://13.228.171.39:18081/health"
+
+    analysis, proposal = tasks.deterministic_diagnosis(alert)
+
+    assert "frontend-web-staging" in analysis
+    assert "http://127.0.0.1:18081/health" in analysis
+    assert proposal == {
+        "action": "check_or_start_frontend_web_staging",
+        "host": "bank-web-01",
+    }
+
+
+def test_postgresql_diagnosis_has_core_redeploy_steps() -> None:
+    analysis, proposal = tasks.deterministic_diagnosis(
+        _runbook_alert("PostgreSQLDown", "postgres-staging", "bank-core-01")
+    )
+
+    assert "postgres-staging" in analysis
+    assert "pg_isready -U aiops_user -d aiops_db" in analysis
+    assert "./automation/app-release-deploy.sh staging \"$TAG\" core" in analysis
+    assert proposal == {
+        "action": "check_or_start_postgres_staging",
+        "host": "bank-core-01",
+    }
+
+
+def test_redis_diagnosis_has_monitor_redeploy_steps() -> None:
+    analysis, proposal = tasks.deterministic_diagnosis(
+        _runbook_alert("RedisDown", "redis-cache-staging", "monitor-ai-01")
+    )
+
+    assert "redis-cache-staging" in analysis
+    assert "redis-cli ping" in analysis
+    assert "./automation/app-release-deploy.sh staging \"$TAG\" monitor" in analysis
+    assert proposal == {
+        "action": "check_or_start_redis_cache_staging",
+        "host": "monitor-ai-01",
+    }
+
+
+def test_docker_container_diagnosis_maps_component_to_role() -> None:
+    analysis, proposal = tasks.deterministic_diagnosis(
+        _runbook_alert("DockerContainerDown", "payment-api-staging", "bank-core-01")
+    )
+
+    assert "payment-api-staging" in analysis
+    assert "Deploy role de khoi phuc: `core`" in analysis
+    assert "./automation/app-release-deploy.sh staging \"$TAG\" core" in analysis
+    assert proposal == {
+        "action": "redeploy_core_staging",
+        "host": "bank-core-01",
+    }

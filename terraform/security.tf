@@ -44,6 +44,22 @@ resource "aws_security_group" "monitor_sg" {
   }
 
   ingress {
+    description = "Staging AI Agent API from my IP only"
+    from_port   = 18000
+    to_port     = 18000
+    protocol    = "tcp"
+    cidr_blocks = [var.my_ip_cidr]
+  }
+
+  ingress {
+    description = "Staging Redis Exporter from my IP only"
+    from_port   = 19121
+    to_port     = 19121
+    protocol    = "tcp"
+    cidr_blocks = [var.my_ip_cidr]
+  }
+
+  ingress {
     description = "ICMP inside VPC"
     from_port   = -1
     to_port     = -1
@@ -94,6 +110,14 @@ resource "aws_security_group" "web_sg" {
   }
 
   ingress {
+    description = "Staging frontend from internet"
+    from_port   = 18081
+    to_port     = 18081
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  ingress {
     description     = "Nginx metrics proxy from monitor node"
     from_port       = 80
     to_port         = 80
@@ -105,6 +129,14 @@ resource "aws_security_group" "web_sg" {
     description     = "Node Exporter from monitor node"
     from_port       = 9100
     to_port         = 9100
+    protocol        = "tcp"
+    security_groups = [aws_security_group.monitor_sg.id]
+  }
+
+  ingress {
+    description     = "cAdvisor from monitor node"
+    from_port       = 8088
+    to_port         = 8088
     protocol        = "tcp"
     security_groups = [aws_security_group.monitor_sg.id]
   }
@@ -192,9 +224,41 @@ resource "aws_security_group" "core_sg" {
   }
 
   ingress {
+    description = "Staging API access from my IP"
+    from_port   = 18080
+    to_port     = 18080
+    protocol    = "tcp"
+    cidr_blocks = [var.my_ip_cidr]
+  }
+
+  ingress {
     description     = "Node Exporter from monitor node"
     from_port       = 9100
     to_port         = 9100
+    protocol        = "tcp"
+    security_groups = [aws_security_group.monitor_sg.id]
+  }
+
+  ingress {
+    description     = "Postgres Exporter from monitor node"
+    from_port       = 9187
+    to_port         = 9187
+    protocol        = "tcp"
+    security_groups = [aws_security_group.monitor_sg.id]
+  }
+
+  ingress {
+    description     = "Staging Postgres Exporter from monitor node"
+    from_port       = 19187
+    to_port         = 19187
+    protocol        = "tcp"
+    security_groups = [aws_security_group.monitor_sg.id]
+  }
+
+  ingress {
+    description     = "cAdvisor from monitor node"
+    from_port       = 8088
+    to_port         = 8088
     protocol        = "tcp"
     security_groups = [aws_security_group.monitor_sg.id]
   }

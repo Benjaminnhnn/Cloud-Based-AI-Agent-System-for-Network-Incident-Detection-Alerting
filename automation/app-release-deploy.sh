@@ -27,6 +27,7 @@ case "$ENVIRONMENT" in
     AI_HEALTH_URL="http://127.0.0.1:18000/health"
     API_HEALTH_URL="http://127.0.0.1:18080/api/health"
     WEB_HEALTH_URL="http://127.0.0.1:18081/health"
+    WEB_API_HEALTH_URL="http://127.0.0.1:18081/api/health"
     ;;
   production)
     COMPOSE_FILE="release/docker-compose.production.yml"
@@ -34,6 +35,7 @@ case "$ENVIRONMENT" in
     AI_HEALTH_URL="http://127.0.0.1:8000/health"
     API_HEALTH_URL="http://127.0.0.1:8080/api/health"
     WEB_HEALTH_URL="http://127.0.0.1/health"
+    WEB_API_HEALTH_URL="http://127.0.0.1/api/health"
     ;;
 esac
 
@@ -177,6 +179,29 @@ remove_out_of_role_containers() {
   done
 }
 
+prepare_role_runtime_files() {
+  if [[ "$DEPLOY_ROLE" == "monitor" ]]; then
+    touch /tmp/aiops-test-syslog.log
+  fi
+}
+
+validate_release_env() {
+  if [[ "$DEPLOY_ROLE" != "web" ]]; then
+    return
+  fi
+
+  load_env_file
+  case "${PAYMENT_API_UPSTREAM:-}" in
+    http://*|https://*)
+      ;;
+    *)
+      echo "PAYMENT_API_UPSTREAM must include http:// or https://"
+      echo "Example for staging: PAYMENT_API_UPSTREAM=http://10.10.1.171:18080"
+      exit 1
+      ;;
+  esac
+}
+
 available_disk_mb() {
   df -Pm / | awk 'NR == 2 {print $4}'
 }
@@ -233,7 +258,7 @@ health_check() {
 
     if [[ "$DEPLOY_ROLE" == "web" ]]; then
       web_ok=0
-      if curl -fsS "$WEB_HEALTH_URL" >/dev/null; then
+      if curl -fsS "$WEB_HEALTH_URL" >/dev/null && curl -fsS "$WEB_API_HEALTH_URL" >/dev/null; then
         web_ok=1
       fi
     fi
@@ -250,6 +275,8 @@ health_check() {
 }
 
 echo "Deploying $ENVIRONMENT role $DEPLOY_ROLE with tag $NEW_TAG"
+validate_release_env
+prepare_role_runtime_files
 ensure_docker_disk_space
 compose_cmd pull "${SERVICE_NAMES[@]}"
 remove_out_of_role_containers
