@@ -125,7 +125,7 @@ def test_docker_container_diagnosis_maps_component_to_role() -> None:
     )
 
     assert "payment-api-staging" in analysis
-    assert "Deploy role de khoi phuc: `core`" in analysis
+    assert "Deploy role: core" in analysis
     assert "./automation/app-release-deploy.sh staging \"$TAG\" core" in analysis
     assert proposal == {
         "action": "redeploy_core_staging",

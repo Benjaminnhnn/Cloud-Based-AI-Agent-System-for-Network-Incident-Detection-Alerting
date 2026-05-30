@@ -76,6 +76,7 @@ if [[ -f "$STATE_FILE" ]]; then
   PREVIOUS_TAG="$(cat "$STATE_FILE")"
 fi
 
+EXTERNAL_GHCR_OWNER="${GHCR_OWNER:-}"
 export GHCR_OWNER="${GHCR_OWNER:-your-org}"
 export IMAGE_TAG="$NEW_TAG"
 COMPOSE_PROJECT_NAME="aws-hybrid-${ENVIRONMENT}-${DEPLOY_ROLE}"
@@ -116,7 +117,6 @@ esac
 
 load_env_file() {
   # Export key=value pairs from env file for docker-compose fallback.
-  local owner_backup="${GHCR_OWNER:-}"
   local tag_backup="${IMAGE_TAG:-}"
 
   set -a
@@ -125,8 +125,10 @@ load_env_file() {
   set +a
 
   # Keep runtime deployment values authoritative over template defaults.
-  if [[ -n "$owner_backup" ]]; then
-    export GHCR_OWNER="$owner_backup"
+  if [[ -n "$EXTERNAL_GHCR_OWNER" ]]; then
+    export GHCR_OWNER="$EXTERNAL_GHCR_OWNER"
+  elif [[ -z "${GHCR_OWNER:-}" ]]; then
+    export GHCR_OWNER="your-org"
   fi
   if [[ -n "$tag_backup" ]]; then
     export IMAGE_TAG="$tag_backup"

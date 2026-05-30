@@ -120,7 +120,7 @@ def split_message(text, max_length=4000):
     return chunks
 
 
-def send_telegram_message(message=None, chat_id=None, reply_markup=None):
+def send_telegram_message(message=None, chat_id=None, reply_markup=None, parse_mode="Markdown"):
     """Sends a message to the configured Telegram chat with error handling."""
 
     effective_chat_id = chat_id or TELEGRAM_CHAT_ID
@@ -146,8 +146,9 @@ def send_telegram_message(message=None, chat_id=None, reply_markup=None):
             payload = {
                 "chat_id": effective_chat_id,
                 "text": chunk,
-                "parse_mode": "Markdown",
             }
+            if parse_mode:
+                payload["parse_mode"] = parse_mode
             
             # Add buttons to the LAST chunk
             if i == len(chunks) - 1 and reply_markup:
@@ -178,7 +179,7 @@ def send_telegram_message(message=None, chat_id=None, reply_markup=None):
                 # If entity parsing error, retry without Markdown
                 if "entities" in error_detail or "parse" in error_detail:
                     print("💡 Markdown parsing error - retrying without Markdown...")
-                    payload.pop("parse_mode")
+                    payload.pop("parse_mode", None)
                     retry = requests.post(url, json=payload, timeout=10)
                     if retry.ok:
                         print("✅ Message sent (plain text, no Markdown)")
