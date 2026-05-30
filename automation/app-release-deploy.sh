@@ -181,7 +181,14 @@ remove_out_of_role_containers() {
 
 prepare_role_runtime_files() {
   if [[ "$DEPLOY_ROLE" == "monitor" ]]; then
-    touch /tmp/aiops-test-syslog.log
+    if [[ -d /tmp/aiops-test-syslog.log ]]; then
+      sudo rm -rf /tmp/aiops-test-syslog.log
+    fi
+
+    if [[ ! -e /tmp/aiops-test-syslog.log ]]; then
+      install -m 0644 /dev/null /tmp/aiops-test-syslog.log 2>/dev/null \
+        || sudo install -o ec2-user -g ec2-user -m 0644 /dev/null /tmp/aiops-test-syslog.log
+    fi
   fi
 }
 
