@@ -1,3 +1,4 @@
+import asyncio
 from unittest.mock import patch
 
 from core import tasks
@@ -130,3 +131,21 @@ def test_docker_container_diagnosis_maps_component_to_role() -> None:
         "action": "redeploy_core_staging",
         "host": "bank-core-01",
     }
+
+
+def test_known_runbook_alert_does_not_call_gemini() -> None:
+    alert = _runbook_alert("RedisDown", "redis-cache-staging", "monitor-ai-01")
+
+    with (
+        patch.object(tasks, "redis_client", None),
+        patch.object(tasks, "ALERT_DEDUP_ENABLED", False),
+        patch.object(tasks, "run_agent_workflow") as run_agent_workflow,
+        patch.object(tasks, "send_telegram_message") as send_telegram_message,
+        patch.object(tasks, "save_incident_to_redis"),
+        patch.object(tasks.verify_resolution_task, "apply_async"),
+    ):
+        asyncio.run(tasks.process_single_alert(alert))
+
+    run_agent_workflow.assert_not_called()
+    assert send_telegram_message.called
+    assert "redis-cache-staging" in send_telegram_message.call_args.args[0]

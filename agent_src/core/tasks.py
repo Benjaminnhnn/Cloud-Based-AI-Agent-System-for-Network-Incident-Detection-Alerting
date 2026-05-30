@@ -503,16 +503,11 @@ async def process_single_alert(alert: dict) -> None:
         incident_details = build_incident_details(alert)
         rule_analysis, rule_proposal = deterministic_diagnosis(alert)
 
-        ai_analysis, proposal = await run_agent_workflow(incident_details)
         if rule_analysis:
-            if "GEMINI_API_KEY not configured" in ai_analysis:
-                ai_analysis = ""
-            if not ai_analysis or ai_analysis == "AI không phản hồi.":
-                ai_analysis = rule_analysis
-            else:
-                ai_analysis = f"{rule_analysis}\n\nPhân tích bổ sung từ AI:\n{ai_analysis}"
-            proposal = proposal or rule_proposal
-
+            ai_analysis = rule_analysis
+            proposal = rule_proposal
+        else:
+            ai_analysis, proposal = await run_agent_workflow(incident_details)
         duration = time.time() - start_time
         AI_WORKFLOW_LATENCY_SECONDS.observe(duration)
         ALERTS_PROCESSED_TOTAL.labels(status='success').inc()
