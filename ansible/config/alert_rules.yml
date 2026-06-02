@@ -78,7 +78,7 @@ groups:
       
       # Service Availability Alerts
       - alert: ServiceDown
-        expr: up{service!=""} == 0
+        expr: up{service!="",runbook=""} == 0
         for: 1m
         labels:
           severity: critical
@@ -88,7 +88,7 @@ groups:
           description: "{{ $labels.service }} service on {{ $labels.instance }} is not responding"
       
       - alert: ServiceUnreachable
-        expr: up{service!=""} == 0
+        expr: up{service!="",runbook=""} == 0
         for: 30s
         labels:
           severity: warning
@@ -98,11 +98,108 @@ groups:
           description: "{{ $labels.service }} on {{ $labels.instance }} failed health check"
 
       - alert: WebEndpointDown
-        expr: probe_success{job="blackbox_http_web",instance="bank-web-01"} == 0
+        expr: probe_success{runbook="nginx",component="frontend-web-staging",instance="bank-web-01"} == 0
         for: 30s
         labels:
           severity: critical
-          service: availability
+          service: nginx
+          runbook: nginx
         annotations:
-          summary: "Web endpoint is DOWN on {{ $labels.instance }}"
+          summary: "Web endpoint {{ $labels.component }} is DOWN on {{ $labels.instance }}"
           description: "Blackbox probe failed for {{ $labels.target }}"
+
+      - alert: PostgreSQLDown
+        expr: |
+          up{runbook="postgresql",component="postgres-staging",instance="bank-core-01"} == 0
+          or pg_up{runbook="postgresql",component="postgres-staging",instance="bank-core-01"} == 0
+        for: 30s
+        labels:
+          severity: critical
+          service: postgresql
+          runbook: postgresql
+        annotations:
+          summary: "PostgreSQL {{ $labels.component }} is DOWN on {{ $labels.instance }}"
+          description: "postgres_exporter reports pg_up=0 for {{ $labels.component }}"
+
+      - alert: RedisDown
+        expr: |
+          up{runbook="redis",component="redis-cache-staging",instance="monitor-ai-01"} == 0
+          or redis_up{runbook="redis",component="redis-cache-staging",instance="monitor-ai-01"} == 0
+        for: 30s
+        labels:
+          severity: critical
+          service: redis
+          runbook: redis
+        annotations:
+          summary: "Redis {{ $labels.component }} is DOWN on {{ $labels.instance }}"
+          description: "redis_exporter reports redis_up=0 for {{ $labels.component }}"
+
+      - alert: DockerContainerDown
+        expr: absent(container_last_seen{name=~".*frontend-web-staging",instance="bank-web-01"})
+        for: 30s
+        labels:
+          severity: critical
+          service: docker
+          component: frontend-web-staging
+          environment: staging
+          instance: bank-web-01
+          runbook: docker
+        annotations:
+          summary: "Docker container frontend-web-staging is missing on bank-web-01"
+          description: "cAdvisor no longer sees frontend-web-staging on bank-web-01."
+
+      - alert: DockerContainerDown
+        expr: absent(container_last_seen{name=~".*payment-api-staging",instance="bank-core-01"})
+        for: 30s
+        labels:
+          severity: critical
+          service: docker
+          component: payment-api-staging
+          environment: staging
+          instance: bank-core-01
+          runbook: docker
+        annotations:
+          summary: "Docker container payment-api-staging is missing on bank-core-01"
+          description: "cAdvisor no longer sees payment-api-staging on bank-core-01."
+
+      - alert: DockerContainerDown
+        expr: absent(container_last_seen{name=~".*postgres-staging",instance="bank-core-01"})
+        for: 30s
+        labels:
+          severity: critical
+          service: docker
+          component: postgres-staging
+          environment: staging
+          instance: bank-core-01
+          runbook: docker
+        annotations:
+          summary: "Docker container postgres-staging is missing on bank-core-01"
+          description: "cAdvisor no longer sees postgres-staging on bank-core-01."
+
+      - alert: DockerContainerDown
+        expr: absent(container_last_seen{name=~".*ai-agent-staging",instance="monitor-ai-01"})
+        for: 30s
+        labels:
+          severity: critical
+          service: docker
+          component: ai-agent-staging
+          environment: staging
+          instance: monitor-ai-01
+          runbook: docker
+        annotations:
+          summary: "Docker container ai-agent-staging is missing on monitor-ai-01"
+          description: "cAdvisor no longer sees ai-agent-staging on monitor-ai-01."
+
+      - alert: DockerContainerDown
+        expr: absent(container_last_seen{name=~".*redis-cache-staging",instance="monitor-ai-01"})
+        for: 30s
+        labels:
+          severity: critical
+          service: docker
+          component: redis-cache-staging
+          environment: staging
+          instance: monitor-ai-01
+          runbook: docker
+        annotations:
+          summary: "Docker container redis-cache-staging is missing on monitor-ai-01"
+          description: "cAdvisor no longer sees redis-cache-staging on monitor-ai-01."

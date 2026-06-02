@@ -135,6 +135,193 @@ def _clear_alert_cooldown(alert: dict) -> None:
         logger.warning("Redis cooldown cleanup failed: %s", e)
 
 
+def _format_labels(labels: dict) -> str:
+    if not labels:
+        return "none"
+    return ", ".join(f"{key}={value}" for key, value in sorted(labels.items()))
+
+
+def _format_annotations(annotations: dict) -> str:
+    if not annotations:
+        return "none"
+    return ", ".join(f"{key}={value}" for key, value in sorted(annotations.items()))
+
+
+def build_incident_details(alert: dict) -> str:
+    labels = alert.get("labels", {})
+    annotations = alert.get("annotations", {})
+    alert_name = labels.get("alertname", "Unknown")
+    instance = labels.get("instance", "Unknown")
+    job = labels.get("job", "unknown")
+    service = labels.get("service", "unknown")
+    target = labels.get("target", labels.get("endpoint", "unknown"))
+    summary = annotations.get("summary", "")
+    description = annotations.get("description", "")
+    generator_url = alert.get("generatorURL", "")
+
+    return (
+        f"Alert: {alert_name}\n"
+        f"Instance: {instance}\n"
+        f"Job: {job}\n"
+        f"Service: {service}\n"
+        f"Target: {target}\n"
+        f"Summary: {summary}\n"
+        f"Description: {description}\n"
+        f"GeneratorURL: {generator_url}\n"
+        f"Labels: {_format_labels(labels)}\n"
+        f"Annotations: {_format_annotations(annotations)}"
+    )
+
+
+def _alert_environment(labels: dict, target: str = "") -> str:
+    environment = labels.get("environment", "")
+    component = labels.get("component", "")
+    if environment:
+        return environment
+    if component.endswith("-staging") or ":180" in target or ":191" in target:
+        return "staging"
+    return "production"
+
+
+def _default_component(labels: dict, environment: str, prod_name: str, staging_name: str) -> str:
+    component = labels.get("component")
+    if component:
+        return component
+    return staging_name if environment == "staging" else prod_name
+
+
+def _deploy_role_for_component(component: str) -> str:
+    if component.startswith("frontend-web"):
+        return "web"
+    if component.startswith("payment-api") or component.startswith("postgres"):
+        return "core"
+    return "monitor"
+
+
+def _action_component(component: str) -> str:
+    return component.replace("-", "_").replace(".", "_")
+
+
+def deterministic_diagnosis(alert: dict) -> tuple[str, dict | None]:
+    labels = alert.get("labels", {})
+    annotations = alert.get("annotations", {})
+    alert_name = labels.get("alertname", "Unknown")
+    instance = labels.get("instance", "Unknown")
+    target = labels.get("target", "unknown")
+    endpoint = labels.get("endpoint", "/health")
+    summary = annotations.get("summary", "")
+    environment = _alert_environment(labels, target)
+    state_file = f"release/.state/{environment}.tag"
+
+    if alert_name == "WebEndpointDown":
+        component = _default_component(labels, environment, "frontend-web-prod", "frontend-web-staging")
+        local_health_url = "http://127.0.0.1:18081/health" if environment == "staging" else "http://127.0.0.1/health"
+        local_api_url = "http://127.0.0.1:18081/api/health" if environment == "staging" else "http://127.0.0.1/api/health"
+        analysis = (
+            "Chẩn đoán: Blackbox không nhận HTTP 2xx từ web endpoint.\n"
+            f"Component: {component}\n"
+            f"Target: {target}\n"
+            f"Tóm tắt: {summary or 'không có'}\n\n"
+            "Nguyên nhân ưu tiên:\n"
+            f"1. {component} stopped/unhealthy.\n"
+            "2. Nginx không trả /health hoặc container không bind đúng port.\n"
+            "3. Firewall/Security Group/route chặn monitor.\n"
+            "4. Nếu /health OK nhưng /api lỗi: kiểm tra PAYMENT_API_UPSTREAM và backend core.\n\n"
+            "Kiểm tra trên bank-web-01:\n"
+            f"docker ps -a --filter name={component}\n"
+            f"docker inspect -f '{{{{.State.Status}}}} {{{{if .State.Health}}}}{{{{.State.Health.Status}}}}{{{{end}}}}' {component} || true\n"
+            f"docker logs --tail=100 {component}\n"
+            f"curl -i {local_health_url}\n"
+            f"curl -i {local_api_url}\n\n"
+            "Khôi phục nhanh:\n"
+            f"docker start {component}\n"
+            "cd /home/ec2-user/aws-hybrid\n"
+            f"TAG=$(cat {state_file})\n"
+            f"./automation/app-release-deploy.sh {environment} \"$TAG\" web"
+        )
+        return analysis, {"action": f"check_or_start_{_action_component(component)}", "host": instance}
+
+    if alert_name == "PostgreSQLDown":
+        component = _default_component(labels, environment, "postgres-prod", "postgres-staging")
+        api_health_url = "http://127.0.0.1:18080/api/health" if environment == "staging" else "http://127.0.0.1:8080/api/health"
+        analysis = (
+            "Chẩn đoán: postgres_exporter báo PostgreSQL không sẵn sàng hoặc không scrape được.\n"
+            f"Component: {component}\n"
+            f"Tóm tắt: {summary or 'không có'}\n\n"
+            "Nguyên nhân ưu tiên:\n"
+            f"1. {component} stopped/unhealthy.\n"
+            "2. PostgreSQL khởi động chậm, volume lỗi hoặc database chưa ready.\n"
+            "3. postgres-exporter không kết nối được PostgreSQL.\n"
+            "4. payment-api mất kết nối DB nên /api/health có thể fail.\n\n"
+            "Kiểm tra trên bank-core-01:\n"
+            f"docker ps -a --filter name={component}\n"
+            f"docker inspect -f '{{{{.State.Status}}}} {{{{if .State.Health}}}}{{{{.State.Health.Status}}}}{{{{end}}}}' {component} || true\n"
+            f"docker logs --tail=100 {component}\n"
+            f"docker exec {component} pg_isready -U aiops_user -d aiops_db\n"
+            f"curl -i {api_health_url}\n\n"
+            "Khôi phục nhanh:\n"
+            f"docker start {component}\n"
+            "cd /home/ec2-user/aws-hybrid\n"
+            f"TAG=$(cat {state_file})\n"
+            f"./automation/app-release-deploy.sh {environment} \"$TAG\" core"
+        )
+        return analysis, {"action": f"check_or_start_{_action_component(component)}", "host": instance}
+
+    if alert_name == "RedisDown":
+        component = _default_component(labels, environment, "redis-cache-prod", "redis-cache-staging")
+        exporter_url = "http://127.0.0.1:19121/metrics" if environment == "staging" else "http://127.0.0.1:9121/metrics"
+        analysis = (
+            "Chẩn đoán: redis_exporter báo Redis cache không sẵn sàng hoặc không scrape được.\n"
+            f"Component: {component}\n"
+            f"Tóm tắt: {summary or 'không có'}\n\n"
+            "Nguyên nhân ưu tiên:\n"
+            f"1. {component} stopped/unhealthy.\n"
+            "2. Redis lỗi appendonly/volume hoặc restart loop.\n"
+            "3. redis-exporter không kết nối được Redis cache.\n"
+            "4. Nếu Redis broker dừng, AI Agent/Celery có thể xử lý alert chậm.\n\n"
+            "Kiểm tra trên monitor-ai-01:\n"
+            f"docker ps -a --filter name={component}\n"
+            f"docker inspect -f '{{{{.State.Status}}}} {{{{if .State.Health}}}}{{{{.State.Health.Status}}}}{{{{end}}}}' {component} || true\n"
+            f"docker logs --tail=100 {component}\n"
+            f"docker exec {component} redis-cli ping\n"
+            f"curl -s {exporter_url} | head\n\n"
+            "Khôi phục nhanh:\n"
+            f"docker start {component}\n"
+            "cd /home/ec2-user/aws-hybrid\n"
+            f"TAG=$(cat {state_file})\n"
+            f"./automation/app-release-deploy.sh {environment} \"$TAG\" monitor"
+        )
+        return analysis, {"action": f"check_or_start_{_action_component(component)}", "host": instance}
+
+    if alert_name == "DockerContainerDown":
+        component = labels.get("component", "unknown-container")
+        role = _deploy_role_for_component(component)
+        analysis = (
+            "Chẩn đoán: cAdvisor không còn thấy container bắt buộc của release stack.\n"
+            f"Component: {component}\n"
+            f"Deploy role: {role}\n"
+            f"Tóm tắt: {summary or 'không có'}\n\n"
+            "Nguyên nhân ưu tiên:\n"
+            "1. Container bị stop/rm thủ công trong demo hoặc sau deploy lỗi.\n"
+            "2. Docker daemon restart và container không được recreate đúng compose project.\n"
+            "3. Host hết disk, pull image fail hoặc health check làm release chưa hoàn tất.\n"
+            "4. Nếu mất ai-agent, Alertmanager có thể không gửi được thông báo mới cho đến khi khôi phục.\n\n"
+            f"Kiểm tra trên {instance}:\n"
+            f"docker ps -a --filter name={component}\n"
+            f"docker inspect -f '{{{{.State.Status}}}} {{{{if .State.Health}}}}{{{{.State.Health.Status}}}}{{{{end}}}}' {component} || true\n"
+            f"docker logs --tail=100 {component} || true\n"
+            "df -h /\n"
+            "docker system df\n\n"
+            "Khôi phục bằng release script:\n"
+            "cd /home/ec2-user/aws-hybrid\n"
+            f"TAG=$(cat {state_file})\n"
+            f"./automation/app-release-deploy.sh {environment} \"$TAG\" {role}"
+        )
+        return analysis, {"action": f"redeploy_{role}_{environment}", "host": instance}
+
+    return "", None
+
+
 def save_incident_to_redis(incident_id: str, context: dict, ttl: int = 86400):
     if redis_client is None:
         logger.error("Redis client unavailable, skipping incident save.")
@@ -195,7 +382,7 @@ async def run_agent_workflow(incident_details: str):
         return any(marker in error_text for marker in retryable_markers)
 
     def fallback_analysis(last_error: Exception | None):
-        host_match = re.search(r"Host:\s*([^|]+)", incident_details)
+        host_match = re.search(r"(?:Host|Instance):\s*([^\n|]+)", incident_details)
         host = host_match.group(1).strip() if host_match else "unknown"
         error_text = _truncate_text(str(last_error), 500) if last_error else "Gemini không phản hồi."
         analysis = (
@@ -256,7 +443,7 @@ async def run_agent_workflow(incident_details: str):
 async def process_single_alert(alert: dict) -> None:
     """
     Xử lý logic cho một alert đơn lẻ (async).
-    
+
     NEW WORKFLOW (Phase 7):
     - AI phân tích sự cố
     - Gửi hướng dẫn xử lí chi tiết cho Admin (không có buttons)
@@ -287,10 +474,14 @@ async def process_single_alert(alert: dict) -> None:
             ALERTS_PROCESSED_TOTAL.labels(status='deduped').inc()
             return
 
-        incident_details = f"Alert: {alert_name} | Host: {instance} | Summary: {summary}"
+        incident_details = build_incident_details(alert)
+        rule_analysis, rule_proposal = deterministic_diagnosis(alert)
 
-        ai_analysis, proposal = await run_agent_workflow(incident_details)
-
+        if rule_analysis:
+            ai_analysis = rule_analysis
+            proposal = rule_proposal
+        else:
+            ai_analysis, proposal = await run_agent_workflow(incident_details)
         duration = time.time() - start_time
         AI_WORKFLOW_LATENCY_SECONDS.observe(duration)
         ALERTS_PROCESSED_TOTAL.labels(status='success').inc()
@@ -308,21 +499,19 @@ async def process_single_alert(alert: dict) -> None:
 
         # PHASE 7: Format resolution guide (NO approval buttons)
         action_name = proposal.get("action", "fix") if proposal else "xử lí"
-        
+
         report = (
-            f"*🚨 SỰ CỐ:* {alert_name}\n"
-            f"📊 *Server:* `{instance}`\n"
-            f"🆔 *ID:* `{incident_id}`\n\n"
-            f"🔍 *NGUYÊN NHÂN & PHÂN TÍCH:*\n"
+            f"🚨 SỰ CỐ: {alert_name}\n"
+            f"Server: {instance}\n"
+            f"ID: {incident_id}\n"
+            f"Hành động: {action_name}\n\n"
             f"{ai_analysis}\n\n"
-            f"🛠️ *HƯỚNG DẪN XỬ LÍ:*\n"
-            f"Thực hiện hành động: *{action_name}*\n\n"
-            f"⏱️ Agent sẽ tự động kiểm lại trong 5-10 phút."
+            "Agent sẽ tự kiểm tra lại sau 5 phút."
         )
-        
+
         # Gửi hướng dẫn cho admin (NO buttons)
-        send_telegram_message(report)
-        
+        send_telegram_message(report, parse_mode=None)
+
         # PHASE 9: Schedule verification task sau 5-10 phút (300-600 seconds)
         verification_countdown = 300  # 5 minutes (có thể điều chỉnh)
         verify_resolution_task.apply_async(
@@ -344,14 +533,14 @@ async def process_single_alert(alert: dict) -> None:
 async def verify_resolution(incident_id: str, alert_name: str, instance: str):
     """
     PHASE 9: Automatic Verification - kiểm lại sau 5-10 phút
-    
+
     1. Query Prometheus để lấy metrics hiện tại
     2. So sánh với alert threshold
     3. Gửi báo cáo về kết quả (resolved/failed)
     4. Lưu vào ChromaDB với outcome
     """
     logger.info(f"🔍 Starting verification for incident {incident_id} ({alert_name} on {instance})")
-    
+
     try:
         # Retrieve incident context từ Redis
         try:
@@ -360,22 +549,22 @@ async def verify_resolution(incident_id: str, alert_name: str, instance: str):
             logger.error(f"Redis read error during verification: {e}")
             send_telegram_message(f"⚠️ Không thể xác nhận kết quả vì Redis unavailable")
             return
-        
+
         if not ctx_raw:
             logger.warning(f"Incident context expired for {incident_id}")
             send_telegram_message(f"⚠️ Context hết hạn cho sự cố `{incident_id}`")
             return
-        
+
         ctx = json.loads(ctx_raw)
-        
+
         # Query Prometheus metrics để kiểm lại
         # Cách 1: Gọi các diagnostic tools tương tự như AI analysis
         # Cách 2: Query trực tiếp Prometheus API (nếu cấu hình public)
         logger.info(f"📊 Checking current metrics for {instance}...")
-        
+
         # Simulate health check (thực tế sẽ call Prometheus API hoặc diagnostic tools)
         is_resolved = await check_alert_resolved(alert_name, instance)
-        
+
         if is_resolved:
             # Issue RESOLVED ✅
             outcome = "resolved_by_human"
@@ -397,10 +586,10 @@ async def verify_resolution(incident_id: str, alert_name: str, instance: str):
                 f"⚠️ Các metrics vẫn còn cao.\n"
                 f"💡 Gợi ý: Hãy thử giải pháp thay thế hoặc escalate."
             )
-        
+
         # Send verification report
         send_telegram_message(message)
-        
+
         # Save to ChromaDB with outcome
         rag = get_rag_instance()
         if rag:
@@ -408,17 +597,17 @@ async def verify_resolution(incident_id: str, alert_name: str, instance: str):
                 alert_name=ctx["alert_name"],
                 description=ctx["incident_details"],
                 ai_analysis=ctx["ai_analysis"],
-                resolution=ctx.get("proposal", {}).get("action", "manual_fix"),
+                resolution=(ctx.get("proposal") or {}).get("action", "manual_fix"),
                 outcome=outcome
             )
             logger.info(f"✅ Saved incident to ChromaDB with outcome: {outcome}")
-        
+
         # Cleanup Redis
         try:
             redis_client.delete(f"incident:{incident_id}")
         except redis.RedisError as e:
             logger.warning(f"Error deleting incident from Redis: {e}")
-    
+
     except Exception as e:
         logger.error(f"Error during verification: {e}")
         send_telegram_message(f"⚠️ Lỗi kiểm tra kết quả: {str(e)}")
@@ -427,12 +616,12 @@ async def verify_resolution(incident_id: str, alert_name: str, instance: str):
 async def check_alert_resolved(alert_name: str, instance: str) -> bool:
     """
     Check nếu alert đã được resolve bằng cách query Prometheus.
-    
+
     Thực hiện:
     1. Query Prometheus API để lấy current metrics
     2. Compare với alert threshold
     3. Return True nếu metrics < threshold
-    
+
     Example:
     - alert_name: "node_cpu_high"
     - instance: "10.10.1.68:9100"
@@ -440,21 +629,21 @@ async def check_alert_resolved(alert_name: str, instance: str) -> bool:
     """
     try:
         logger.info(f"Checking if {alert_name} is resolved on {instance}...")
-        
+
         checker = get_prometheus_checker()
         is_resolved = checker.is_alert_resolved(alert_name, instance)
-        
+
         if is_resolved:
             logger.info(f"✅ Alert {alert_name} is RESOLVED")
         else:
             logger.warning(f"❌ Alert {alert_name} is STILL FAILING")
-        
+
         # Log metrics for debugging
         metrics = checker.get_alert_metrics(instance)
         logger.info(f"📊 Current metrics: {metrics}")
-        
+
         return is_resolved
-    
+
     except Exception as e:
         logger.error(f"Error checking alert resolution: {e}")
         # Default to failed if can't determine
@@ -465,7 +654,7 @@ async def check_alert_resolved(alert_name: str, instance: str) -> bool:
 def verify_resolution_task(self, incident_id: str, alert_name: str, instance: str):
     """
     Celery task để verify resolution (chạy sau 5-10 phút)
-    
+
     Parameters:
     - incident_id: ID của incident
     - alert_name: Tên alert (e.g., node_cpu_high)

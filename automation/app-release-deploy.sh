@@ -27,6 +27,7 @@ case "$ENVIRONMENT" in
     AI_HEALTH_URL="http://127.0.0.1:18000/health"
     API_HEALTH_URL="http://127.0.0.1:18080/api/health"
     WEB_HEALTH_URL="http://127.0.0.1:18081/health"
+    WEB_API_HEALTH_URL="http://127.0.0.1:18081/api/health"
     ;;
   production)
     COMPOSE_FILE="release/docker-compose.production.yml"
@@ -34,6 +35,7 @@ case "$ENVIRONMENT" in
     AI_HEALTH_URL="http://127.0.0.1:8000/health"
     API_HEALTH_URL="http://127.0.0.1:8080/api/health"
     WEB_HEALTH_URL="http://127.0.0.1/health"
+    WEB_API_HEALTH_URL="http://127.0.0.1/api/health"
     ;;
 esac
 
@@ -74,6 +76,7 @@ if [[ -f "$STATE_FILE" ]]; then
   PREVIOUS_TAG="$(cat "$STATE_FILE")"
 fi
 
+EXTERNAL_GHCR_OWNER="${GHCR_OWNER:-}"
 export GHCR_OWNER="${GHCR_OWNER:-your-org}"
 export IMAGE_TAG="$NEW_TAG"
 COMPOSE_PROJECT_NAME="aws-hybrid-${ENVIRONMENT}-${DEPLOY_ROLE}"
@@ -81,40 +84,39 @@ STALE_CONTAINER_NAMES=()
 
 case "$DEPLOY_ROLE:$ENVIRONMENT" in
   monitor:staging)
-    CONTAINER_NAMES=(redis-staging ai-agent-staging celery-worker-staging log-watcher-staging)
-    STALE_CONTAINER_NAMES=(payment-api-staging postgres-staging frontend-web-staging payment-api-prod postgres-prod frontend-web-prod)
-    SERVICE_NAMES=(redis ai-agent celery-worker log-watcher)
+    CONTAINER_NAMES=(redis-staging redis-cache-staging redis-exporter-staging ai-agent-staging celery-worker-staging log-watcher-staging)
+    STALE_CONTAINER_NAMES=(payment-api-staging postgres-staging postgres-exporter-staging frontend-web-staging payment-api-prod postgres-prod postgres-exporter-prod frontend-web-prod)
+    SERVICE_NAMES=(redis redis-cache redis-exporter ai-agent celery-worker log-watcher)
     ;;
   monitor:production)
-    CONTAINER_NAMES=(redis-prod ai-agent-prod celery-worker-prod log-watcher-prod)
-    STALE_CONTAINER_NAMES=(payment-api-staging postgres-staging frontend-web-staging payment-api-prod postgres-prod frontend-web-prod)
-    SERVICE_NAMES=(redis ai-agent celery-worker log-watcher)
+    CONTAINER_NAMES=(redis-prod redis-cache-prod redis-exporter-prod ai-agent-prod celery-worker-prod log-watcher-prod)
+    STALE_CONTAINER_NAMES=(payment-api-staging postgres-staging postgres-exporter-staging frontend-web-staging payment-api-prod postgres-prod postgres-exporter-prod frontend-web-prod)
+    SERVICE_NAMES=(redis redis-cache redis-exporter ai-agent celery-worker log-watcher)
     ;;
   web:staging)
     CONTAINER_NAMES=(frontend-web-staging)
-    STALE_CONTAINER_NAMES=(redis-staging ai-agent-staging celery-worker-staging log-watcher-staging payment-api-staging postgres-staging redis-prod ai-agent-prod celery-worker-prod log-watcher-prod payment-api-prod postgres-prod)
+    STALE_CONTAINER_NAMES=(redis-staging redis-cache-staging redis-exporter-staging ai-agent-staging celery-worker-staging log-watcher-staging payment-api-staging postgres-staging postgres-exporter-staging redis-prod redis-cache-prod redis-exporter-prod ai-agent-prod celery-worker-prod log-watcher-prod payment-api-prod postgres-prod postgres-exporter-prod)
     SERVICE_NAMES=(frontend-web)
     ;;
   web:production)
     CONTAINER_NAMES=(frontend-web-prod)
-    STALE_CONTAINER_NAMES=(redis-staging ai-agent-staging celery-worker-staging log-watcher-staging payment-api-staging postgres-staging redis-prod ai-agent-prod celery-worker-prod log-watcher-prod payment-api-prod postgres-prod)
+    STALE_CONTAINER_NAMES=(redis-staging redis-cache-staging redis-exporter-staging ai-agent-staging celery-worker-staging log-watcher-staging payment-api-staging postgres-staging postgres-exporter-staging redis-prod redis-cache-prod redis-exporter-prod ai-agent-prod celery-worker-prod log-watcher-prod payment-api-prod postgres-prod postgres-exporter-prod)
     SERVICE_NAMES=(frontend-web)
     ;;
   core:staging)
-    CONTAINER_NAMES=(postgres-staging payment-api-staging)
-    STALE_CONTAINER_NAMES=(redis-staging ai-agent-staging celery-worker-staging log-watcher-staging frontend-web-staging redis-prod ai-agent-prod celery-worker-prod log-watcher-prod frontend-web-prod)
-    SERVICE_NAMES=(postgres payment-api)
+    CONTAINER_NAMES=(postgres-staging postgres-exporter-staging payment-api-staging)
+    STALE_CONTAINER_NAMES=(redis-staging redis-cache-staging redis-exporter-staging ai-agent-staging celery-worker-staging log-watcher-staging frontend-web-staging redis-prod redis-cache-prod redis-exporter-prod ai-agent-prod celery-worker-prod log-watcher-prod frontend-web-prod)
+    SERVICE_NAMES=(postgres postgres-exporter payment-api)
     ;;
   core:production)
-    CONTAINER_NAMES=(postgres-prod payment-api-prod)
-    STALE_CONTAINER_NAMES=(redis-staging ai-agent-staging celery-worker-staging log-watcher-staging frontend-web-staging redis-prod ai-agent-prod celery-worker-prod log-watcher-prod frontend-web-prod)
-    SERVICE_NAMES=(postgres payment-api)
+    CONTAINER_NAMES=(postgres-prod postgres-exporter-prod payment-api-prod)
+    STALE_CONTAINER_NAMES=(redis-staging redis-cache-staging redis-exporter-staging ai-agent-staging celery-worker-staging log-watcher-staging frontend-web-staging redis-prod redis-cache-prod redis-exporter-prod ai-agent-prod celery-worker-prod log-watcher-prod frontend-web-prod)
+    SERVICE_NAMES=(postgres postgres-exporter payment-api)
     ;;
 esac
 
 load_env_file() {
   # Export key=value pairs from env file for docker-compose fallback.
-  local owner_backup="${GHCR_OWNER:-}"
   local tag_backup="${IMAGE_TAG:-}"
 
   set -a
@@ -123,8 +125,10 @@ load_env_file() {
   set +a
 
   # Keep runtime deployment values authoritative over template defaults.
-  if [[ -n "$owner_backup" ]]; then
-    export GHCR_OWNER="$owner_backup"
+  if [[ -n "$EXTERNAL_GHCR_OWNER" ]]; then
+    export GHCR_OWNER="$EXTERNAL_GHCR_OWNER"
+  elif [[ -z "${GHCR_OWNER:-}" ]]; then
+    export GHCR_OWNER="your-org"
   fi
   if [[ -n "$tag_backup" ]]; then
     export IMAGE_TAG="$tag_backup"
@@ -175,6 +179,36 @@ remove_out_of_role_containers() {
       docker rm -f "$container"
     fi
   done
+}
+
+prepare_role_runtime_files() {
+  if [[ "$DEPLOY_ROLE" == "monitor" ]]; then
+    if [[ -d /tmp/aiops-test-syslog.log ]]; then
+      sudo rm -rf /tmp/aiops-test-syslog.log
+    fi
+
+    if [[ ! -e /tmp/aiops-test-syslog.log ]]; then
+      install -m 0644 /dev/null /tmp/aiops-test-syslog.log 2>/dev/null \
+        || sudo install -o ec2-user -g ec2-user -m 0644 /dev/null /tmp/aiops-test-syslog.log
+    fi
+  fi
+}
+
+validate_release_env() {
+  if [[ "$DEPLOY_ROLE" != "web" ]]; then
+    return
+  fi
+
+  load_env_file
+  case "${PAYMENT_API_UPSTREAM:-}" in
+    http://*|https://*)
+      ;;
+    *)
+      echo "PAYMENT_API_UPSTREAM must include http:// or https://"
+      echo "Example for staging: PAYMENT_API_UPSTREAM=http://10.10.1.171:18080"
+      exit 1
+      ;;
+  esac
 }
 
 available_disk_mb() {
@@ -233,7 +267,7 @@ health_check() {
 
     if [[ "$DEPLOY_ROLE" == "web" ]]; then
       web_ok=0
-      if curl -fsS "$WEB_HEALTH_URL" >/dev/null; then
+      if curl -fsS "$WEB_HEALTH_URL" >/dev/null && curl -fsS "$WEB_API_HEALTH_URL" >/dev/null; then
         web_ok=1
       fi
     fi
@@ -250,6 +284,8 @@ health_check() {
 }
 
 echo "Deploying $ENVIRONMENT role $DEPLOY_ROLE with tag $NEW_TAG"
+validate_release_env
+prepare_role_runtime_files
 ensure_docker_disk_space
 compose_cmd pull "${SERVICE_NAMES[@]}"
 remove_out_of_role_containers

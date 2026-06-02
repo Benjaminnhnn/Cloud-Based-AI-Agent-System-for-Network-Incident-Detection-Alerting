@@ -1,15 +1,15 @@
 output "monitor_public_ip" {
-  value = aws_eip.monitor.public_ip
+  value       = aws_eip.monitor.public_ip
   description = "Elastic IP of monitor instance (static)"
 }
 
 output "web_public_ip" {
-  value = aws_eip.web.public_ip
+  value       = aws_eip.web.public_ip
   description = "Elastic IP of web instance (static)"
 }
 
 output "core_public_ip" {
-  value = aws_eip.core.public_ip
+  value       = aws_eip.core.public_ip
   description = "Elastic IP of core instance (static)"
 }
 
@@ -71,11 +71,11 @@ output "elastic_ips" {
 output "elastic_ips_info" {
   value = <<-EOT
   ✓ Elastic IPs have been allocated (Static Public IPs)
-  
+
   Monitor: ${aws_eip.monitor.public_ip} (Allocation ID: ${aws_eip.monitor.id})
   Web:     ${aws_eip.web.public_ip} (Allocation ID: ${aws_eip.web.id})
   Core:    ${aws_eip.core.public_ip} (Allocation ID: ${aws_eip.core.id})
-  
+
   Note: These IPs will NOT change when instances are stopped/started!
   EOT
 }
