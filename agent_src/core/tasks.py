@@ -51,6 +51,7 @@ GEMINI_MAX_ATTEMPTS = int(os.getenv("GEMINI_MAX_ATTEMPTS", "1"))
 GEMINI_MAX_REMOTE_CALLS = int(os.getenv("GEMINI_MAX_REMOTE_CALLS", "1"))
 GEMINI_RETRY_BASE_SECONDS = float(os.getenv("GEMINI_RETRY_BASE_SECONDS", "2"))
 ALERT_AI_COOLDOWN_SECONDS = int(os.getenv("ALERT_AI_COOLDOWN_SECONDS", "900"))
+ALERT_NOTIFICATION_TTL_SECONDS = int(os.getenv("ALERT_NOTIFICATION_TTL_SECONDS", "86400"))
 ALERT_DEDUP_ENABLED = os.getenv("ALERT_DEDUP_ENABLED", "true").lower() not in {"0", "false", "no"}
 VN_TZ = ZoneInfo("Asia/Ho_Chi_Minh")
 
@@ -76,6 +77,7 @@ except redis.RedisError as e:
     redis_client = None  # type: ignore
 
 _local_alert_cooldowns: dict[str, float] = {}
+_local_alert_notifications: dict[str, float] = {}
 
 
 def _truncate_text(value: str, max_chars: int = 1500) -> str:
@@ -103,6 +105,31 @@ def _alert_identity(alert: dict) -> str:
 
 def _alert_cooldown_key(alert: dict) -> str:
     return f"alert-ai-cooldown:{_alert_identity(alert)}"
+
+
+def _alert_notification_key(alert: dict, notification_type: str) -> str:
+    event_start = str(alert.get("startsAt") or "unknown-start")
+    event_hash = hashlib.sha256(event_start.encode("utf-8")).hexdigest()[:12]
+    return f"alert-ai-notification:{notification_type}:{_alert_identity(alert)}:{event_hash}"
+
+
+def _reserve_alert_notification(alert: dict, notification_type: str) -> bool:
+    if not ALERT_DEDUP_ENABLED or ALERT_NOTIFICATION_TTL_SECONDS <= 0:
+        return True
+
+    key = _alert_notification_key(alert, notification_type)
+    if redis_client is not None:
+        try:
+            return bool(redis_client.set(key, "sent", ex=ALERT_NOTIFICATION_TTL_SECONDS, nx=True))
+        except redis.RedisError as e:
+            logger.warning("Redis notification dedup failed, using in-memory fallback: %s", e)
+
+    now = time.time()
+    expires_at = _local_alert_notifications.get(key, 0)
+    if expires_at > now:
+        return False
+    _local_alert_notifications[key] = now + ALERT_NOTIFICATION_TTL_SECONDS
+    return True
 
 
 def _reserve_alert_processing(alert: dict) -> bool:
@@ -332,6 +359,178 @@ def save_incident_to_redis(incident_id: str, context: dict, ttl: int = 86400):
         logger.error(f"Error writing to Redis: {e}")
 
 
+def _load_incident_from_redis(incident_id: str) -> dict | None:
+    if redis_client is None:
+        logger.error("Redis client unavailable, cannot load incident context.")
+        return None
+    try:
+        ctx_raw = redis_client.get(f"incident:{incident_id}")
+    except redis.RedisError as e:
+        logger.error("Redis read error for incident %s: %s", incident_id, e)
+        return None
+    if not ctx_raw:
+        return None
+    try:
+        return json.loads(ctx_raw)
+    except json.JSONDecodeError:
+        logger.error("Invalid incident context JSON for incident %s", incident_id)
+        return None
+
+
+def _parse_review_json(full_text: str) -> dict | None:
+    match = re.search(r"REVIEW_JSON:\s*(\{.*\})", full_text, flags=re.DOTALL)
+    if not match:
+        return None
+    try:
+        return json.loads(match.group(1))
+    except json.JSONDecodeError:
+        logger.warning("Failed to parse REVIEW_JSON from AI response.")
+        return None
+
+
+def _basic_feedback_review(admin_feedback: str) -> dict:
+    feedback = admin_feedback.strip()
+    action_markers = (
+        "check",
+        "restart",
+        "start",
+        "docker",
+        "curl",
+        "logs",
+        "rollback",
+        "redeploy",
+        "kiểm tra",
+        "khoi phuc",
+        "khôi phục",
+        "khởi động",
+        "xem log",
+    )
+    has_action = any(marker in feedback.lower() for marker in action_markers)
+    if len(feedback) >= 20 and has_action:
+        return {
+            "status": "accepted",
+            "reviewed_solution": feedback,
+            "admin_message": (
+                "Agent đã kiểm tra cơ bản và ghi nhận góp ý này vào RAG. "
+                "Khi có Gemini, Agent sẽ đánh giá sâu hơn theo ngữ cảnh incident."
+            ),
+        }
+
+    return {
+        "status": "revised",
+        "reviewed_solution": (
+            "Góp ý của admin chưa đủ chi tiết để lưu trực tiếp. "
+            f"Nội dung gốc: {feedback}\n"
+            "Bản chỉnh: xác nhận alert còn firing, kiểm tra log/service liên quan, "
+            "thực hiện thay đổi nhỏ nhất để khôi phục, rồi verify lại metric/health endpoint."
+        ),
+        "admin_message": "Góp ý chưa đủ hành động cụ thể, Agent đã chỉnh lại thành checklist an toàn hơn.",
+    }
+
+
+async def review_admin_feedback(incident_context: dict, admin_feedback: str) -> dict:
+    if not GEMINI_API_KEY:
+        return _basic_feedback_review(admin_feedback)
+
+    client = genai.Client(api_key=GEMINI_API_KEY)
+    prompt = f"""
+Bạn là AI Ops Agent. Hãy đánh giá góp ý xử lý sự cố của admin.
+
+Incident context:
+{incident_context.get("incident_details", "")}
+
+Phân tích ban đầu của Agent:
+{incident_context.get("ai_analysis", "")}
+
+Góp ý của admin:
+{admin_feedback}
+
+Yêu cầu:
+- Nếu góp ý đúng, an toàn và hữu ích: status = "accepted".
+- Nếu góp ý có ý đúng nhưng thiếu bước/thiếu an toàn: status = "revised" và viết lại giải pháp tốt hơn.
+- Nếu góp ý sai hoặc rủi ro: status = "rejected" và đưa giải pháp thay thế an toàn.
+- Không đề xuất thao tác phá dữ liệu nếu chưa có backup/xác nhận.
+- Dòng cuối cùng bắt buộc là:
+REVIEW_JSON: {{"status": "accepted|revised|rejected", "reviewed_solution": "...", "admin_message": "..."}}
+"""
+    try:
+        response = await client.aio.models.generate_content(
+            model=GEMINI_MODEL,
+            contents=prompt,
+            config=types.GenerateContentConfig(
+                automatic_function_calling=types.AutomaticFunctionCallingConfig(
+                    maximum_remote_calls=0
+                )
+            )
+        )
+        full_text = response.text or ""
+        parsed = _parse_review_json(full_text)
+        if parsed:
+            return {
+                "status": parsed.get("status", "revised"),
+                "reviewed_solution": parsed.get("reviewed_solution", "").strip() or full_text.strip(),
+                "admin_message": parsed.get("admin_message", "").strip() or "Agent đã đánh giá góp ý.",
+            }
+        return {
+            "status": "revised",
+            "reviewed_solution": full_text.strip() or admin_feedback.strip(),
+            "admin_message": "Agent đã đánh giá góp ý nhưng phản hồi AI không đúng định dạng JSON.",
+        }
+    except Exception as e:
+        logger.warning("Gemini feedback review failed, using basic review: %s", e)
+        return _basic_feedback_review(admin_feedback)
+
+
+async def process_admin_feedback(incident_id: str, admin_feedback: str, chat_id: str | None = None) -> dict:
+    incident_id = incident_id.strip()
+    admin_feedback = admin_feedback.strip()
+    if not incident_id or not admin_feedback:
+        result = {"status": "invalid", "message": "Thiếu incident ID hoặc nội dung góp ý."}
+        send_telegram_message(result["message"], chat_id=chat_id, parse_mode=None)
+        return result
+
+    ctx = _load_incident_from_redis(incident_id)
+    if not ctx:
+        message = (
+            f"Không tìm thấy context cho incident `{incident_id}`. "
+            "Hãy gửi góp ý khi incident còn trong TTL Redis hoặc kiểm tra lại ID."
+        )
+        send_telegram_message(message, chat_id=chat_id, parse_mode=None)
+        return {"status": "not_found", "message": message}
+
+    review = await review_admin_feedback(ctx, admin_feedback)
+    review_status = str(review.get("status", "revised"))
+    reviewed_solution = str(review.get("reviewed_solution", admin_feedback)).strip()
+
+    rag = get_rag_instance()
+    saved = False
+    if rag and review_status in {"accepted", "revised"}:
+        rag.save_admin_solution(
+            incident_id=incident_id,
+            alert_name=ctx.get("alert_name", "Unknown"),
+            incident_details=ctx.get("incident_details", ""),
+            admin_feedback=admin_feedback,
+            reviewed_solution=reviewed_solution,
+            review_status=review_status,
+        )
+        saved = True
+
+    prefix = {
+        "accepted": "Đã chấp nhận góp ý và lưu vào RAG.",
+        "revised": "Agent đã chỉnh lại góp ý và lưu bản đã chỉnh vào RAG.",
+        "rejected": "Agent không lưu góp ý vì đánh giá là chưa phù hợp.",
+    }.get(review_status, "Agent đã xử lý góp ý.")
+    message = (
+        f"{prefix}\n"
+        f"Incident ID: {incident_id}\n"
+        f"Trạng thái: {review_status}\n\n"
+        f"{review.get('admin_message', '')}\n\n"
+        f"Giải pháp Agent dùng:\n{reviewed_solution}"
+    )
+    send_telegram_message(message, chat_id=chat_id, parse_mode=None)
+    return {"status": review_status, "saved": saved, "message": message}
+
+
 async def run_agent_workflow(incident_details: str):
     if not GEMINI_API_KEY:
         return "❌ Error: GEMINI_API_KEY not configured", None
@@ -460,6 +659,14 @@ async def process_single_alert(alert: dict) -> None:
 
         if alert.get("status") == "resolved":
             _clear_alert_cooldown(alert)
+            if not _reserve_alert_notification(alert, "resolved"):
+                logger.info(
+                    "Skipping duplicate resolved notification: alert=%s instance=%s",
+                    alert_name,
+                    instance,
+                )
+                ALERTS_PROCESSED_TOTAL.labels(status='deduped').inc()
+                return
             send_telegram_message(f"✅ *ĐÃ KHÔI PHỤC:* {alert_name} trên `{instance}`")
             ALERTS_PROCESSED_TOTAL.labels(status='resolved').inc()
             return
@@ -470,6 +677,15 @@ async def process_single_alert(alert: dict) -> None:
                 alert_name,
                 instance,
                 ALERT_AI_COOLDOWN_SECONDS,
+            )
+            ALERTS_PROCESSED_TOTAL.labels(status='deduped').inc()
+            return
+
+        if not _reserve_alert_notification(alert, "firing"):
+            logger.info(
+                "Skipping duplicate firing notification: alert=%s instance=%s",
+                alert_name,
+                instance,
             )
             ALERTS_PROCESSED_TOTAL.labels(status='deduped').inc()
             return
@@ -506,7 +722,8 @@ async def process_single_alert(alert: dict) -> None:
             f"ID: {incident_id}\n"
             f"Hành động: {action_name}\n\n"
             f"{ai_analysis}\n\n"
-            "Agent sẽ tự kiểm tra lại sau 5 phút."
+            "Agent sẽ tự kiểm tra lại sau 5 phút.\n"
+            f"Admin có thể góp ý thêm bằng lệnh: /feedback {incident_id} <giải pháp>"
         )
 
         # Gửi hướng dẫn cho admin (NO buttons)
@@ -673,6 +890,16 @@ def verify_resolution_task(self, incident_id: str, alert_name: str, instance: st
 #   Logic cũ: 1 alert lỗi → retry TOÀN BỘ task → các alert đã thành công bị xử lý lại.
 #   Logic mới: gather(return_exceptions=True) thu thập lỗi từng alert riêng biệt;
 #   chỉ retry task nếu có lỗi hệ thống thực sự (ví dụ Redis/network down).
+@celery_app.task(name="process_admin_feedback_task", bind=True, max_retries=2)
+def process_admin_feedback_task(self, incident_id: str, admin_feedback: str, chat_id: str | None = None):
+    """Celery task xử lý góp ý của admin gửi qua Telegram."""
+    try:
+        asyncio.run(process_admin_feedback(incident_id, admin_feedback, chat_id))
+    except Exception as e:
+        logger.error("Admin feedback task failed: %s", e)
+        raise self.retry(exc=e, countdown=30)
+
+
 @celery_app.task(name="process_alerts_task", bind=True, max_retries=3)
 def process_alerts_task(self, payload_dict: dict):
     """Celery task xử lý alert payload từ Prometheus."""

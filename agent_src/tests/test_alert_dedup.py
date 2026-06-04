@@ -15,6 +15,7 @@ def _alert(fingerprint: str | None = None) -> dict:
             "target": "http://52.220.34.44/health",
         },
         "annotations": {},
+        "startsAt": "2026-06-04T02:00:00Z",
     }
     if fingerprint:
         alert["fingerprint"] = fingerprint
@@ -33,6 +34,7 @@ def _runbook_alert(alertname: str, component: str, instance: str) -> dict:
             "environment": "staging",
         },
         "annotations": {"summary": f"{component} is down"},
+        "startsAt": "2026-06-04T02:00:00Z",
     }
 
 
@@ -55,6 +57,53 @@ def test_alert_processing_uses_local_cooldown_when_redis_unavailable() -> None:
 
         tasks._clear_alert_cooldown(alert)
         assert tasks._reserve_alert_processing(alert) is True
+
+
+def test_resolved_notification_is_sent_once_per_alert_event() -> None:
+    tasks._local_alert_notifications.clear()
+
+    alert = _alert("same-alert")
+    alert["status"] = "resolved"
+
+    with (
+        patch.object(tasks, "redis_client", None),
+        patch.object(tasks, "ALERT_DEDUP_ENABLED", True),
+        patch.object(tasks, "ALERT_NOTIFICATION_TTL_SECONDS", 60),
+        patch.object(tasks, "send_telegram_message") as send_telegram_message,
+    ):
+        asyncio.run(tasks.process_single_alert(alert))
+        asyncio.run(tasks.process_single_alert(alert))
+
+    send_telegram_message.assert_called_once()
+
+
+def test_resolved_alert_clears_firing_cooldown_without_resending_resolved() -> None:
+    tasks._local_alert_cooldowns.clear()
+    tasks._local_alert_notifications.clear()
+
+    firing_alert = _alert("same-alert")
+    resolved_alert = _alert("same-alert")
+    resolved_alert["status"] = "resolved"
+    refired_alert = _alert("same-alert")
+    refired_alert["startsAt"] = "2026-06-04T02:10:00Z"
+
+    with (
+        patch.object(tasks, "redis_client", None),
+        patch.object(tasks, "ALERT_DEDUP_ENABLED", True),
+        patch.object(tasks, "ALERT_AI_COOLDOWN_SECONDS", 60),
+        patch.object(tasks, "ALERT_NOTIFICATION_TTL_SECONDS", 60),
+        patch.object(tasks, "run_agent_workflow", return_value=("analysis", {"action": "fix", "host": "bank-web-01"})),
+        patch.object(tasks, "send_telegram_message") as send_telegram_message,
+        patch.object(tasks, "save_incident_to_redis"),
+        patch.object(tasks.verify_resolution_task, "apply_async"),
+    ):
+        asyncio.run(tasks.process_single_alert(firing_alert))
+        asyncio.run(tasks.process_single_alert(firing_alert))
+        asyncio.run(tasks.process_single_alert(resolved_alert))
+        asyncio.run(tasks.process_single_alert(resolved_alert))
+        asyncio.run(tasks.process_single_alert(refired_alert))
+
+    assert send_telegram_message.call_count == 3
 
 
 def test_web_endpoint_alert_context_includes_probe_target() -> None:
