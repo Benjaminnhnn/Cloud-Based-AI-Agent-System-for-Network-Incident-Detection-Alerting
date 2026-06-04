@@ -31,6 +31,20 @@ def test_web_endpoint_alert_requires_frontend_container_to_be_fresh() -> None:
     assert "< 20" in web_rule
 
 
+def test_payment_api_alert_requires_postgresql_to_be_healthy() -> None:
+    rules = ALERT_RULES.read_text(encoding="utf-8")
+
+    payment_rule = rules.split("- alert: PaymentAPIEndpointDown", 1)[1].split(
+        "- alert: PostgreSQLDown", 1
+    )[0]
+
+    assert 'probe_success{runbook="payment-api"' in payment_rule
+    assert 'up{runbook="postgresql"' in payment_rule
+    assert 'pg_up{runbook="postgresql"' in payment_rule
+    assert "and on()" in payment_rule
+    assert "== 1" in payment_rule
+
+
 def test_docker_container_alerts_use_latest_cadvisor_series() -> None:
     rules = ALERT_RULES.read_text(encoding="utf-8")
     docker_rules = rules.split("- alert: DockerContainerDown")[1:]

@@ -157,8 +157,8 @@ watch -n 5 "curl -s 'http://127.0.0.1:9090/api/v1/alerts' | jq '.data.alerts[] |
 | --- | --- | --- | --- |
 | 1. Container frontend dung | `docker stop` | `DockerContainerDown` | Kiem tra container, logs, sau do start lai |
 | 2. Frontend proxy sai upstream | Sua `PAYMENT_API_UPSTREAM` | `FrontendAPIProxyDown` | Sua config va redeploy role web |
-| 3. Payment API sai database credential | Sua `DATABASE_URL` | `PaymentAPIEndpointDown` | Sua dependency config va recreate API |
-| 4. Host CPU cao | Tao process `yes` | `HighCPUUsage` hoac `CriticalCPUUsage` | Tim PID gay tai va dung process |
+| 3. Payment API mat Docker network | `docker network disconnect` | `PaymentAPIEndpointDown` | Ket noi lai container vao network |
+| 4. PostgreSQL bi pause | `docker pause` | `PostgreSQLDown` | `docker unpause` va kiem tra database |
 
 ## 6. Kich ban 1: DockerContainerDown
 
@@ -257,9 +257,9 @@ curl -i http://127.0.0.1:18081/api/ready
 rm -f /tmp/.env.staging.demo-backup
 ```
 
-## 8. Kich ban 3: PaymentAPIEndpointDown
+## 8. Kich ban 3: Payment API mat Docker network
 
-Muc tieu: demo loi dependency database. Payment API process van song nhung readiness that bai vi credential sai.
+Muc tieu: demo loi Docker network. Container Payment API van `Up`, PostgreSQL van healthy, nhung Payment API bi tach khoi network cua release stack.
 
 ### Dieu kien truoc khi gay loi
 
@@ -278,48 +278,38 @@ Tat ca phai healthy truoc khi bat dau.
 Tren Core:
 
 ```bash
-cd /home/ec2-user/aws-hybrid
-test -f /tmp/docker-compose.staging.yml.demo-backup || cp release/docker-compose.staging.yml /tmp/docker-compose.staging.yml.demo-backup
+docker network ls | grep aws-hybrid-staging-core
+docker network disconnect aws-hybrid-staging-core_aiops-network payment-api-staging
 
-sed -i 's|postgresql://aiops_user:aiops_pass@postgres:5432/aiops_db|postgresql://aiops_user:wrong_password@postgres:5432/aiops_db|' release/docker-compose.staging.yml
-
-docker-compose -p aws-hybrid-staging-core \
-  --env-file release/.env.staging \
-  -f release/docker-compose.staging.yml \
-  up -d --force-recreate payment-api
-
+docker ps --filter name=payment-api-staging
+docker inspect payment-api-staging \
+  --format '{{range $name, $network := .NetworkSettings.Networks}}{{println $name}}{{end}}'
 curl -i http://127.0.0.1:18080/api/health
 curl -i http://127.0.0.1:18080/api/ready
 ```
 
 Ket qua mong doi:
 
-- `/api/health` tra `200`.
-- `/api/ready` tra `503`.
+- `payment-api-staging` van o trang thai `Up`.
 - PostgreSQL van healthy.
+- Payment API khong con nam trong `aws-hybrid-staging-core_aiops-network`.
+- `/api/health` va `/api/ready` khong truy cap duoc.
 - Telegram chi nhan `PaymentAPIEndpointDown`.
 - Khong nhan `FrontendAPIProxyDown`, `PostgreSQLDown` hoac `DockerContainerDown`.
 
 Feedback mau:
 
 ```text
-/feedback <incident_id> Payment API process van song nhung /api/ready tra 503, trong khi postgres-staging van healthy. Kiem tra docker logs --tail=100 payment-api-staging de xac nhan loi authentication, kiem tra DATABASE_URL trong container va release/docker-compose.staging.yml. Khoi phuc dung credential postgresql://aiops_user:aiops_pass@postgres:5432/aiops_db, sau do force-recreate payment-api-staging. Cuoi cung kiem tra lai /api/health, /api/ready va frontend /api/ready; khong restart PostgreSQL hoac xoa volume du lieu.
+/feedback <incident_id> payment-api-staging van Up nhung bi mat ket noi Docker network. Chay docker network connect aws-hybrid-staging-core_aiops-network payment-api-staging, sau do kiem tra lai /api/health va /api/ready.
 ```
 
 Checklist xu ly mong doi tu Agent:
 
 ```bash
-docker logs --tail=100 payment-api-staging
-docker inspect payment-api-staging --format '{{range .Config.Env}}{{println .}}{{end}}' | grep DATABASE_URL
-docker exec postgres-staging pg_isready -U aiops_user -d aiops_db
-
-# Sua DATABASE_URL trong release/docker-compose.staging.yml
-
-docker-compose -p aws-hybrid-staging-core \
-  --env-file release/.env.staging \
-  -f release/docker-compose.staging.yml \
-  up -d --force-recreate payment-api
-
+docker ps --filter name=payment-api-staging
+docker inspect payment-api-staging \
+  --format '{{range $name, $network := .NetworkSettings.Networks}}{{println $name}}{{end}}'
+docker network connect aws-hybrid-staging-core_aiops-network payment-api-staging
 curl -i http://127.0.0.1:18080/api/health
 curl -i http://127.0.0.1:18080/api/ready
 ```
@@ -327,57 +317,50 @@ curl -i http://127.0.0.1:18080/api/ready
 ### Khoi phuc
 
 ```bash
-cp /tmp/docker-compose.staging.yml.demo-backup release/docker-compose.staging.yml
-
-docker-compose -p aws-hybrid-staging-core \
-  --env-file release/.env.staging \
-  -f release/docker-compose.staging.yml \
-  up -d --force-recreate payment-api
-
+docker network connect aws-hybrid-staging-core_aiops-network payment-api-staging
 curl -i http://127.0.0.1:18080/api/health
 curl -i http://127.0.0.1:18080/api/ready
-rm -f /tmp/docker-compose.staging.yml.demo-backup
 ```
 
-## 9. Kich ban 4: CriticalCPUUsage
+Neu ten network khac, lay ten chinh xac tu:
 
-Muc tieu: demo loi tai nguyen host, khong dung container va khong sua config.
+```bash
+docker network ls | grep aws-hybrid-staging-core
+```
+
+## 9. Kich ban 4: PostgreSQL bi pause
+
+Muc tieu: demo database khong phan hoi trong khi container van ton tai. Cach xu ly la unpause database, khong start/stop va khong xoa volume.
 
 ### Gay loi
 
 Tren Core:
 
 ```bash
-rm -f /tmp/aiops-cpu-demo.pids
-for i in $(seq 1 "$(nproc)"); do
-  yes > /dev/null &
-  echo $! >> /tmp/aiops-cpu-demo.pids
-done
-
-top -b -n 1 | head -20
-ps -eo pid,ppid,cmd,%mem,%cpu --sort=-%cpu | head
+docker pause postgres-staging
+docker ps --filter name=postgres-staging
+docker exec postgres-staging pg_isready -U aiops_user -d aiops_db
 ```
 
-Ket qua mong doi sau khoang `1-2 phut`:
+Ket qua mong doi:
 
-- Telegram nhan `HighCPUUsage` hoac `CriticalCPUUsage` cho `bank-core-01`.
-- Agent de xuat `top`, `ps` va `docker stats`.
-- Telegram khong hien runbook Nginx, Redis hoac runbook khong lien quan.
-- Khong co container nao bi stop.
+- `postgres-staging` hien trang thai `Paused`.
+- Telegram chi nhan `PostgreSQLDown`.
+- Khong nhan `PaymentAPIEndpointDown` hoac `DockerContainerDown`.
+- Agent de xuat unpause va kiem tra `pg_isready`.
 
 Feedback mau:
 
 ```text
-/feedback <incident_id> Tim PID dung CPU cao bang top va ps, xac nhan day la process bat thuong, sau do dung dung PID va kiem tra CPU tro lai binh thuong.
+/feedback <incident_id> Container postgres-staging dang bi paused. Chay docker unpause postgres-staging, kiem tra pg_isready, sau do kiem tra lai Payment API /api/ready.
 ```
 
 ### Khoi phuc
 
 ```bash
-xargs -r kill < /tmp/aiops-cpu-demo.pids
-rm -f /tmp/aiops-cpu-demo.pids
-
-top -b -n 1 | head -20
+docker unpause postgres-staging
+docker exec postgres-staging pg_isready -U aiops_user -d aiops_db
+curl -i http://127.0.0.1:18080/api/ready
 ```
 
 ## 10. Kiem tra feedback va RAG
@@ -436,8 +419,15 @@ curl -i http://127.0.0.1:18081/api/ready
 Tren Core:
 
 ```bash
+docker unpause postgres-staging 2>/dev/null || true
 docker start postgres-staging
 docker start payment-api-staging
+
+docker inspect payment-api-staging \
+  --format '{{range $name, $network := .NetworkSettings.Networks}}{{println $name}}{{end}}' \
+  | grep -qx 'aws-hybrid-staging-core_aiops-network' \
+  || docker network connect aws-hybrid-staging-core_aiops-network payment-api-staging
+
 docker exec postgres-staging pg_isready -U aiops_user -d aiops_db
 curl -i http://127.0.0.1:18080/api/health
 curl -i http://127.0.0.1:18080/api/ready

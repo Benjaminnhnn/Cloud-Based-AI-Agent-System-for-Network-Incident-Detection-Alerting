@@ -132,7 +132,12 @@ groups:
           description: "Frontend proxy cannot reach {{ $labels.dependency }}, while the direct Payment API probe is healthy. Expected upstream: {{ $labels.expected_upstream }}"
 
       - alert: PaymentAPIEndpointDown
-        expr: probe_success{runbook="payment-api",component="payment-api-staging",instance="bank-core-01"} == 0
+        expr: |
+          probe_success{runbook="payment-api",component="payment-api-staging",instance="bank-core-01"} == 0
+          and on()
+          up{runbook="postgresql",component="postgres-staging",instance="bank-core-01"} == 1
+          and on()
+          pg_up{runbook="postgresql",component="postgres-staging",instance="bank-core-01"} == 1
         for: 30s
         labels:
           severity: critical
