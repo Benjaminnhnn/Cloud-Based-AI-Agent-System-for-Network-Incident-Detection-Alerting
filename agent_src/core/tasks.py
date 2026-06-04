@@ -989,6 +989,10 @@ async def verify_resolution(incident_id: str, alert_name: str, instance: str):
                 "Skipping scheduled verification for incident %s because its alert event is already resolved",
                 incident_id,
             )
+            try:
+                redis_client.delete(f"incident:{incident_id}")
+            except redis.RedisError as e:
+                logger.warning(f"Error deleting resolved incident from Redis: {e}")
             return
 
         # Query Prometheus metrics để kiểm lại
@@ -1036,11 +1040,12 @@ async def verify_resolution(incident_id: str, alert_name: str, instance: str):
             )
             logger.info(f"✅ Saved incident to ChromaDB with outcome: {outcome}")
 
-        # Cleanup Redis
-        try:
-            redis_client.delete(f"incident:{incident_id}")
-        except redis.RedisError as e:
-            logger.warning(f"Error deleting incident from Redis: {e}")
+        # Keep failed incidents available for admin feedback until their Redis TTL expires.
+        if is_resolved:
+            try:
+                redis_client.delete(f"incident:{incident_id}")
+            except redis.RedisError as e:
+                logger.warning(f"Error deleting resolved incident from Redis: {e}")
 
     except Exception as e:
         logger.error(f"Error during verification: {e}")

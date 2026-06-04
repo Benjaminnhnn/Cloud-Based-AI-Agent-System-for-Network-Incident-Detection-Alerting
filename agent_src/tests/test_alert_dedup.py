@@ -149,6 +149,55 @@ def test_verification_skips_incident_already_resolved_by_alertmanager() -> None:
     check_alert_resolved.assert_not_called()
     send_telegram_message.assert_not_called()
     get_rag_instance.assert_not_called()
+    redis_client.delete.assert_called_once_with("incident:incident-1")
+
+
+def test_verification_keeps_failed_incident_context_for_admin_feedback() -> None:
+    redis_client = Mock()
+    redis_client.get.return_value = json.dumps(
+        {
+            "alert_name": "WebEndpointDown",
+            "instance": "bank-web-01",
+            "status": "firing",
+            "incident_details": "web endpoint is down",
+            "ai_analysis": "check frontend container",
+            "proposal": {"action": "start_frontend"},
+        }
+    )
+
+    with (
+        patch.object(tasks, "redis_client", redis_client),
+        patch.object(tasks, "check_alert_resolved", return_value=False),
+        patch.object(tasks, "send_telegram_message"),
+        patch.object(tasks, "get_rag_instance", return_value=None),
+    ):
+        asyncio.run(tasks.verify_resolution("incident-1", "WebEndpointDown", "bank-web-01"))
+
+    redis_client.delete.assert_not_called()
+
+
+def test_verification_deletes_resolved_incident_context() -> None:
+    redis_client = Mock()
+    redis_client.get.return_value = json.dumps(
+        {
+            "alert_name": "WebEndpointDown",
+            "instance": "bank-web-01",
+            "status": "firing",
+            "incident_details": "web endpoint is down",
+            "ai_analysis": "check frontend container",
+            "proposal": {"action": "start_frontend"},
+        }
+    )
+
+    with (
+        patch.object(tasks, "redis_client", redis_client),
+        patch.object(tasks, "check_alert_resolved", return_value=True),
+        patch.object(tasks, "send_telegram_message"),
+        patch.object(tasks, "get_rag_instance", return_value=None),
+    ):
+        asyncio.run(tasks.verify_resolution("incident-1", "WebEndpointDown", "bank-web-01"))
+
+    redis_client.delete.assert_called_once_with("incident:incident-1")
 
 
 def test_web_endpoint_alert_context_includes_probe_target() -> None:
