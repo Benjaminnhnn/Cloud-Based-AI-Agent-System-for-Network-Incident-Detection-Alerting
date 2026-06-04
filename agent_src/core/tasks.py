@@ -349,6 +349,125 @@ def deterministic_diagnosis(alert: dict) -> tuple[str, dict | None]:
     return "", None
 
 
+def _incident_field(details: str, field_name: str, default: str = "unknown") -> str:
+    match = re.search(rf"^{re.escape(field_name)}:\s*(.+)$", details, flags=re.MULTILINE)
+    return match.group(1).strip() if match else default
+
+
+def _format_alert_report(alert: dict, incident_id: str, proposal: dict | None, ai_analysis: str) -> str:
+    labels = alert.get("labels", {})
+    annotations = alert.get("annotations", {})
+    alert_name = labels.get("alertname", "Unknown")
+    instance = labels.get("instance", "Unknown")
+    target = labels.get("target", labels.get("endpoint", "unknown"))
+    summary = annotations.get("summary", "")
+    environment = _alert_environment(labels, target)
+    action_name = proposal.get("action", "manual_fix") if proposal else "manual_fix"
+    state_file = f"release/.state/{environment}.tag"
+
+    def header(component: str) -> str:
+        return (
+            f"🚨 Sự cố: {alert_name}\n"
+            f"ID: {incident_id}\n"
+            f"Host: {instance}\n"
+            f"Component: {component}\n"
+            f"Target: {target}\n"
+            f"Action: {action_name}\n"
+            f"Tóm tắt: {summary or 'không có'}"
+        )
+
+    if alert_name == "WebEndpointDown":
+        component = _default_component(labels, environment, "frontend-web-prod", "frontend-web-staging")
+        local_health_url = "http://127.0.0.1:18081/health" if environment == "staging" else "http://127.0.0.1/health"
+        local_api_url = "http://127.0.0.1:18081/api/health" if environment == "staging" else "http://127.0.0.1/api/health"
+        role = "web"
+        commands = (
+            f"1. docker ps -a --filter name={component}\n"
+            f"2. docker logs --tail=100 {component}\n"
+            f"3. docker start {component}\n"
+            f"4. curl -i {local_health_url}\n"
+            f"5. curl -i {local_api_url}"
+        )
+    elif alert_name == "PostgreSQLDown":
+        component = _default_component(labels, environment, "postgres-prod", "postgres-staging")
+        api_health_url = "http://127.0.0.1:18080/api/health" if environment == "staging" else "http://127.0.0.1:8080/api/health"
+        role = "core"
+        commands = (
+            f"1. docker ps -a --filter name={component}\n"
+            f"2. docker logs --tail=100 {component}\n"
+            f"3. docker start {component}\n"
+            f"4. docker exec {component} pg_isready -U aiops_user -d aiops_db\n"
+            f"5. curl -i {api_health_url}"
+        )
+    elif alert_name == "RedisDown":
+        component = _default_component(labels, environment, "redis-cache-prod", "redis-cache-staging")
+        exporter_url = "http://127.0.0.1:19121/metrics" if environment == "staging" else "http://127.0.0.1:9121/metrics"
+        role = "monitor"
+        commands = (
+            f"1. docker ps -a --filter name={component}\n"
+            f"2. docker logs --tail=100 {component}\n"
+            f"3. docker start {component}\n"
+            f"4. docker exec {component} redis-cli ping\n"
+            f"5. curl -s {exporter_url} | head"
+        )
+    elif alert_name == "DockerContainerDown":
+        component = labels.get("component", "unknown-container")
+        role = _deploy_role_for_component(component)
+        commands = (
+            f"1. docker ps -a --filter name={component}\n"
+            f"2. docker logs --tail=100 {component} || true\n"
+            "3. df -h /\n"
+            "4. docker system df\n"
+            "5. redeploy bằng lệnh bên dưới nếu container đã bị xóa"
+        )
+    else:
+        component = labels.get("component", "unknown")
+        role = _deploy_role_for_component(component)
+        commands = _truncate_text(ai_analysis, 1200)
+
+    return (
+        f"{header(component)}\n\n"
+        f"✅ Làm ngay trên {instance}\n"
+        f"{commands}\n\n"
+        "Nếu vẫn lỗi hoặc container mất hẳn\n"
+        "cd /home/ec2-user/aws-hybrid\n"
+        f"TAG=$(cat {state_file})\n"
+        f"./automation/app-release-deploy.sh {environment} \"$TAG\" {role}\n\n"
+        "Agent sẽ tự kiểm tra lại sau 5 phút.\n"
+        f"Feedback: /feedback {incident_id} <góp ý>"
+    )
+
+
+def _compact_review_text(value: str, max_chars: int = 900) -> str:
+    cleaned = re.sub(r"REVIEW_JSON:\s*\{.*\}", "", value, flags=re.DOTALL).strip()
+    lines = [line.strip(" *") for line in cleaned.splitlines() if line.strip()]
+    compact = "\n".join(lines[:8]) if lines else cleaned
+    return _truncate_text(compact, max_chars)
+
+
+def _format_admin_feedback_response(
+    incident_id: str,
+    review_status: str,
+    saved: bool,
+    admin_message: str,
+    reviewed_solution: str,
+) -> str:
+    status_labels = {
+        "accepted": "accepted - dùng được",
+        "revised": "revised - đã chỉnh cho an toàn hơn",
+        "rejected": "rejected - không nên làm",
+    }
+    save_label = "yes" if saved else "no"
+    return (
+        "📝 Feedback reviewed\n"
+        f"Incident: {incident_id}\n"
+        f"Kết quả: {status_labels.get(review_status, review_status)}\n"
+        f"Lưu vào RAG: {save_label}\n\n"
+        f"Nhận xét ngắn:\n{_compact_review_text(admin_message, 500)}\n\n"
+        f"✅ Làm theo:\n{_compact_review_text(reviewed_solution, 900)}"
+    )
+
+
 def save_incident_to_redis(incident_id: str, context: dict, ttl: int = 86400):
     if redis_client is None:
         logger.error("Redis client unavailable, skipping incident save.")
@@ -450,6 +569,8 @@ Yêu cầu:
 - Nếu góp ý có ý đúng nhưng thiếu bước/thiếu an toàn: status = "revised" và viết lại giải pháp tốt hơn.
 - Nếu góp ý sai hoặc rủi ro: status = "rejected" và đưa giải pháp thay thế an toàn.
 - Không đề xuất thao tác phá dữ liệu nếu chưa có backup/xác nhận.
+- admin_message tối đa 2 câu, nói thẳng vì sao accepted/revised/rejected.
+- reviewed_solution tối đa 5 dòng, ưu tiên lệnh cần chạy ngay.
 - Dòng cuối cùng bắt buộc là:
 REVIEW_JSON: {{"status": "accepted|revised|rejected", "reviewed_solution": "...", "admin_message": "..."}}
 """
@@ -515,17 +636,12 @@ async def process_admin_feedback(incident_id: str, admin_feedback: str, chat_id:
         )
         saved = True
 
-    prefix = {
-        "accepted": "Đã chấp nhận góp ý và lưu vào RAG.",
-        "revised": "Agent đã chỉnh lại góp ý và lưu bản đã chỉnh vào RAG.",
-        "rejected": "Agent không lưu góp ý vì đánh giá là chưa phù hợp.",
-    }.get(review_status, "Agent đã xử lý góp ý.")
-    message = (
-        f"{prefix}\n"
-        f"Incident ID: {incident_id}\n"
-        f"Trạng thái: {review_status}\n\n"
-        f"{review.get('admin_message', '')}\n\n"
-        f"Giải pháp Agent dùng:\n{reviewed_solution}"
+    message = _format_admin_feedback_response(
+        incident_id=incident_id,
+        review_status=review_status,
+        saved=saved,
+        admin_message=str(review.get("admin_message", "")),
+        reviewed_solution=reviewed_solution,
     )
     send_telegram_message(message, chat_id=chat_id, parse_mode=None)
     return {"status": review_status, "saved": saved, "message": message}
@@ -713,18 +829,7 @@ async def process_single_alert(alert: dict) -> None:
         }
         save_incident_to_redis(incident_id, incident_context)
 
-        # PHASE 7: Format resolution guide (NO approval buttons)
-        action_name = proposal.get("action", "fix") if proposal else "xử lí"
-
-        report = (
-            f"🚨 SỰ CỐ: {alert_name}\n"
-            f"Server: {instance}\n"
-            f"ID: {incident_id}\n"
-            f"Hành động: {action_name}\n\n"
-            f"{ai_analysis}\n\n"
-            "Agent sẽ tự kiểm tra lại sau 5 phút.\n"
-            f"Admin có thể góp ý thêm bằng lệnh: /feedback {incident_id} <giải pháp>"
-        )
+        report = _format_alert_report(alert, incident_id, proposal, ai_analysis)
 
         # Gửi hướng dẫn cho admin (NO buttons)
         send_telegram_message(report, parse_mode=None)
