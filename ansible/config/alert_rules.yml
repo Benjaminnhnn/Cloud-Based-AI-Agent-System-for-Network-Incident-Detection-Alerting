@@ -98,7 +98,14 @@ groups:
           description: "{{ $labels.service }} on {{ $labels.instance }} failed health check"
 
       - alert: WebEndpointDown
-        expr: probe_success{runbook="nginx",component="frontend-web-staging",instance="bank-web-01"} == 0
+        expr: |
+          probe_success{runbook="nginx",component="frontend-web-staging",instance="bank-web-01"} == 0
+          and on()
+          (
+            time() - max by (instance) (
+              container_last_seen{name=~".*frontend-web-staging",instance="bank-web-01"}
+            ) < 20
+          )
         for: 30s
         labels:
           severity: critical
@@ -111,6 +118,8 @@ groups:
       - alert: FrontendAPIProxyDown
         expr: |
           probe_success{runbook="api-proxy",component="frontend-web-staging",instance="bank-web-01"} == 0
+          and on()
+          probe_success{runbook="nginx",component="frontend-web-staging",instance="bank-web-01"} == 1
           and on()
           probe_success{runbook="payment-api",component="payment-api-staging",instance="bank-core-01"} == 1
         for: 30s
