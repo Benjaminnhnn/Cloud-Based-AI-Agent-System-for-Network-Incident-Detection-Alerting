@@ -436,6 +436,7 @@ Kiem tra URL public tu may local:
 ```bash
 curl -i http://<web-public-ip>/
 curl -i http://<web-public-ip>/api/health
+curl -i http://<web-public-ip>/api/ready
 curl -i http://<web-public-ip>/docs
 
 curl -i http://<monitor-public-ip>:3000/api/health
@@ -448,6 +449,7 @@ URLs truy cap:
 ```text
 Web UI demo:  http://<web-public-ip>
 API health:   http://<web-public-ip>/api/health
+API ready:    http://<web-public-ip>/api/ready
 API docs:     http://<web-public-ip>/docs
 Grafana:      http://<monitor-public-ip>:3000
 Prometheus:   http://<monitor-public-ip>:9090
@@ -455,7 +457,10 @@ Alertmanager: http://<monitor-public-ip>:9093
 AI Agent:     http://<monitor-public-ip>:8000/health  # neu security group cho phep public access
 Frontend release health noi bo tren web host: http://127.0.0.1/health
 Backend release health noi bo tren core host: http://127.0.0.1:8080/api/health
+Backend release readiness noi bo tren core host: http://127.0.0.1:8080/api/ready
 ```
+
+`/api/health` la liveness cua API process. `/api/ready` kiem tra them ket noi PostgreSQL va duoc blackbox probe dung de phat hien dependency/configuration failure.
 
 URLs theo inventory hien tai:
 

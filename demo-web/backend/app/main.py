@@ -3,12 +3,14 @@ from fastapi import HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import PlainTextResponse
 from prometheus_client import Counter, Histogram, generate_latest, CollectorRegistry
+from sqlalchemy import text
 import os
 import time
 import urllib.error
 import urllib.request
 from app.routes import users
 from app.config import settings
+from app.database import engine
 
 NODE_EXPORTER_URL = os.getenv("NODE_EXPORTER_URL", "http://127.0.0.1:9100/metrics")
 
@@ -74,11 +76,27 @@ app.include_router(users.router)
 
 @app.get("/api/health")
 async def health_check():
-    """Health check endpoint"""
+    """Liveness check for the API process."""
     return {
         "status": "healthy",
         "environment": settings.ENVIRONMENT,
         "service": "AIOps Backend API"
+    }
+
+@app.get("/api/ready")
+async def readiness_check():
+    """Readiness check for dependencies required to serve API requests."""
+    try:
+        with engine.connect() as connection:
+            connection.execute(text("SELECT 1"))
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail="database unavailable") from exc
+
+    return {
+        "status": "ready",
+        "environment": settings.ENVIRONMENT,
+        "service": "AIOps Backend API",
+        "database": "reachable",
     }
 
 @app.get("/api/metrics", response_class=PlainTextResponse)
@@ -104,6 +122,7 @@ async def root():
         "docs": "/docs",
         "redoc": "/redoc",
         "health": "/api/health",
+        "ready": "/api/ready",
         "metrics": "/api/metrics"
     }
 

@@ -99,6 +99,7 @@ Kiem tra Core:
 ssh -i "$KEY" ec2-user@"$CORE"
 docker ps --format 'table {{.Names}}\t{{.Status}}'
 curl -i http://127.0.0.1:18080/api/health
+curl -i http://127.0.0.1:18080/api/ready
 ```
 
 Kiem tra Web:
@@ -108,6 +109,7 @@ ssh -i "$KEY" ec2-user@"$WEB"
 docker ps --format 'table {{.Names}}\t{{.Status}}'
 curl -i http://127.0.0.1:18081/health
 curl -i http://127.0.0.1:18081/api/health
+curl -i http://127.0.0.1:18081/api/ready
 ```
 
 Ket qua mong doi:
@@ -196,7 +198,175 @@ watch -n 5 "curl -s 'http://127.0.0.1:9090/api/v1/alerts' | jq '.data.alerts[] |
 
 Rule `DockerContainerDown` phat hien container da dung sau khoang `60-90 giay`. Moi alert co Incident ID rieng.
 
-## 7. Kich ban WebEndpointDown
+## 7. Kich ban cau hinh sai PAYMENT_API_UPSTREAM
+
+Kich ban nay khong dung container. Frontend va Payment API van chay, nhung Nginx proxy sai upstream.
+
+### Gay loi
+
+Tren Web:
+
+```bash
+cd /home/ec2-user/aws-hybrid
+cp release/.env.staging /tmp/.env.staging.demo-backup
+sed -i 's|^PAYMENT_API_UPSTREAM=.*|PAYMENT_API_UPSTREAM=http://127.0.0.1:9|' release/.env.staging
+
+docker compose -p aws-hybrid-staging-web \
+  --env-file release/.env.staging \
+  -f release/docker-compose.staging.yml \
+  up -d --force-recreate frontend-web
+
+curl -i http://127.0.0.1:18081/health
+curl -i http://127.0.0.1:18081/api/ready
+```
+
+Ket qua mong doi:
+
+- `/health` van tra `200`, chung minh frontend container dang chay.
+- `/api/ready` tra `502`.
+- Telegram nhan `FrontendAPIProxyDown`.
+- Telegram khong nhan `PaymentAPIEndpointDown`, vi backend truc tiep van khoe.
+- Agent uu tien kiem tra `PAYMENT_API_UPSTREAM`, Nginx logs va ket noi web-to-core.
+
+Feedback mau:
+
+```text
+/feedback <incident_id> Frontend health van 200 nhung /api/ready tra 502. Kiem tra PAYMENT_API_UPSTREAM va recreate frontend sau khi sua cau hinh.
+```
+
+### Khoi phuc
+
+```bash
+cp /tmp/.env.staging.demo-backup release/.env.staging
+
+docker compose -p aws-hybrid-staging-web \
+  --env-file release/.env.staging \
+  -f release/docker-compose.staging.yml \
+  up -d --force-recreate frontend-web
+
+curl -i http://127.0.0.1:18081/api/ready
+```
+
+## 8. Kich ban cau hinh sai DATABASE_URL
+
+Kich ban nay giu PostgreSQL va Payment API container dang chay, nhung Payment API khong ket noi duoc database.
+
+### Gay loi
+
+Tren Core:
+
+```bash
+cd /home/ec2-user/aws-hybrid
+cp release/docker-compose.staging.yml /tmp/docker-compose.staging.yml.demo-backup
+sed -i 's|postgresql://aiops_user:aiops_pass@postgres:5432/aiops_db|postgresql://aiops_user:wrong_password@postgres:5432/aiops_db|' release/docker-compose.staging.yml
+
+docker compose -p aws-hybrid-staging-core \
+  --env-file release/.env.staging \
+  -f release/docker-compose.staging.yml \
+  up -d --force-recreate payment-api
+
+docker ps --filter name=payment-api-staging
+curl -i http://127.0.0.1:18080/api/health
+curl -i http://127.0.0.1:18080/api/ready
+```
+
+Ket qua mong doi:
+
+- `/api/health` van tra `200`, chung minh API process dang song.
+- `/api/ready` tra `503`, chung minh dependency database bi loi.
+- Telegram nhan `PaymentAPIEndpointDown`.
+- Telegram co the nhan them `FrontendAPIProxyDown` vi frontend proxy toi API khong ready.
+- Agent uu tien kiem tra dependency, logs, endpoint va network thay vi chi `docker start`.
+
+Feedback mau:
+
+```text
+/feedback <incident_id> API process van healthy nhung readiness tra 503. Kiem tra DATABASE_URL va ket noi PostgreSQL truoc khi restart container.
+```
+
+### Khoi phuc
+
+```bash
+cp /tmp/docker-compose.staging.yml.demo-backup release/docker-compose.staging.yml
+
+docker compose -p aws-hybrid-staging-core \
+  --env-file release/.env.staging \
+  -f release/docker-compose.staging.yml \
+  up -d --force-recreate payment-api
+
+curl -i http://127.0.0.1:18080/api/ready
+```
+
+## 9. Kich ban CPU cao do process bat thuong
+
+Kich ban nay khong sua Docker. No tao mot process gay tai tren host de Prometheus phat hien `HighCPUUsage` hoac `CriticalCPUUsage`.
+
+### Gay loi
+
+Tren Core:
+
+```bash
+rm -f /tmp/aiops-cpu-demo.pids
+for i in $(seq 1 "$(nproc)"); do
+  yes > /dev/null &
+  echo $! >> /tmp/aiops-cpu-demo.pids
+done
+
+top -b -n 1 | head -20
+```
+
+Ket qua mong doi sau khoang `1-2 phut`:
+
+- Telegram nhan `HighCPUUsage` hoac `CriticalCPUUsage` cho `bank-core-01`.
+- Agent de xuat `top`, `ps`, `docker stats` va tim process gay tai.
+- Khong co container nao bi stop.
+
+Feedback mau:
+
+```text
+/feedback <incident_id> Tim process dung CPU cao bang top va ps, xac nhan day co phai workload hop le truoc khi kill process.
+```
+
+### Khoi phuc
+
+```bash
+xargs -r kill < /tmp/aiops-cpu-demo.pids
+rm -f /tmp/aiops-cpu-demo.pids
+top -b -n 1 | head -20
+```
+
+## 10. Kich ban phat hien loi tu log
+
+Kich ban nay khong dung service. `log-watcher-staging` phat hien loi ung dung tu noi dung log.
+
+### Gay loi
+
+Tren Monitor:
+
+```bash
+printf '%s\n' \
+  'CRITICAL payment gateway timeout: upstream returned 504 after 30 seconds' \
+  >> /tmp/aiops-test-syslog.log
+
+docker logs --tail=100 log-watcher-staging
+docker logs --tail=100 celery-worker-staging
+```
+
+Ket qua mong doi:
+
+- Telegram nhan `LogFileErrorDetected`.
+- Agent phan tich noi dung log va de xuat huong kiem tra.
+- Phu hop de demo phat hien loi ma metric/container chua thay doi.
+
+Feedback mau:
+
+```text
+/feedback <incident_id> Kiem tra latency va error rate cua payment gateway, doi chieu timeout trong log truoc khi retry request.
+```
+
+Luu y: log alert hien khong co resolved event tu Alertmanager, nen dung de demo phat hien va feedback.
+
+## 11. Kich ban WebEndpointDown
 
 ### Gay loi
 
@@ -229,7 +399,7 @@ curl -i http://127.0.0.1:18081/health
 curl -i http://127.0.0.1:18081/api/health
 ```
 
-## 8. Kich ban DockerContainerDown cho Payment API
+## 12. Kich ban DockerContainerDown cho Payment API
 
 ### Gay loi
 
@@ -260,7 +430,7 @@ docker start payment-api-staging
 curl -i http://127.0.0.1:18080/api/health
 ```
 
-## 9. Kich ban PostgreSQLDown
+## 13. Kich ban PostgreSQLDown
 
 ### Gay loi
 
@@ -290,7 +460,7 @@ docker exec postgres-staging pg_isready -U aiops_user -d aiops_db
 curl -i http://127.0.0.1:18080/api/health
 ```
 
-## 10. Kich ban RedisDown
+## 14. Kich ban RedisDown
 
 Dung `redis-cache-staging`, khong dung `redis-staging`. `redis-staging` la broker cua AI Agent va Celery.
 
@@ -321,7 +491,7 @@ docker start redis-cache-staging
 docker exec redis-cache-staging redis-cli ping
 ```
 
-## 11. Kich ban feedback va vong doi incident
+## 15. Kich ban feedback va vong doi incident
 
 ### Feedback hop le khi incident con loi
 
@@ -367,7 +537,7 @@ Ket qua mong doi:
 
 Incident da resolved se khong nhan feedback moi. Moi lan service tai phat phai tao Incident ID moi.
 
-## 12. Cac service khong nen dung trong demo
+## 16. Cac service khong nen dung trong demo
 
 Khong dung cac container sau neu van muon Telegram va feedback hoat dong:
 
@@ -379,11 +549,15 @@ redis-staging
 
 Day la ha tang nhan webhook, xu ly task va luu context incident.
 
-## 13. Final health check
+## 17. Final health check
 
 Khoi phuc cac service demo:
 
 ```bash
+# Neu da chay demo cau hinh sai
+test -f /tmp/.env.staging.demo-backup && cp /tmp/.env.staging.demo-backup release/.env.staging
+test -f /tmp/docker-compose.staging.yml.demo-backup && cp /tmp/docker-compose.staging.yml.demo-backup release/docker-compose.staging.yml
+
 # Web
 docker start frontend-web-staging
 
@@ -400,8 +574,10 @@ Kiem tra lai tren tung host:
 ```bash
 curl -i http://127.0.0.1:18000/health
 curl -i http://127.0.0.1:18080/api/health
+curl -i http://127.0.0.1:18080/api/ready
 curl -i http://127.0.0.1:18081/health
 curl -i http://127.0.0.1:18081/api/health
+curl -i http://127.0.0.1:18081/api/ready
 ```
 
 Kiem tra Prometheus tren Monitor:
@@ -415,7 +591,7 @@ curl -s http://127.0.0.1:9090/api/v1/alerts | jq '.data.alerts'
 
 Staging sach khi cac health endpoint tra ve `HTTP 200`, khong co Prometheus target `down` va khong con alert `firing`.
 
-## 14. Troubleshooting nhanh
+## 18. Troubleshooting nhanh
 
 Webhook tra ve `503 Service Unavailable`:
 

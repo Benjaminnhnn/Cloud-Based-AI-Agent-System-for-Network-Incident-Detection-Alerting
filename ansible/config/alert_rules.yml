@@ -4,8 +4,8 @@ groups:
     rules:
       # CPU Alerts
       - alert: HighCPUUsage
-        expr: (100 - (avg by (instance) (irate(node_cpu_seconds_total{mode="idle"}[5m])) * 100)) > 80
-        for: 2m
+        expr: (100 - (avg by (instance) (irate(node_cpu_seconds_total{mode="idle"}[1m])) * 100)) > 80
+        for: 1m
         labels:
           severity: warning
           service: system
@@ -14,8 +14,8 @@ groups:
           description: "CPU usage is {{ $value }}% on {{ $labels.instance }}"
       
       - alert: CriticalCPUUsage
-        expr: (100 - (avg by (instance) (irate(node_cpu_seconds_total{mode="idle"}[5m])) * 100)) > 95
-        for: 1m
+        expr: (100 - (avg by (instance) (irate(node_cpu_seconds_total{mode="idle"}[1m])) * 100)) > 95
+        for: 30s
         labels:
           severity: critical
           service: system
@@ -106,6 +106,28 @@ groups:
           runbook: nginx
         annotations:
           summary: "Web endpoint {{ $labels.component }} is DOWN on {{ $labels.instance }}"
+          description: "Blackbox probe failed for {{ $labels.target }}"
+
+      - alert: FrontendAPIProxyDown
+        expr: probe_success{runbook="api-proxy",component="frontend-web-staging",instance="bank-web-01"} == 0
+        for: 30s
+        labels:
+          severity: critical
+          service: api-proxy
+          runbook: api-proxy
+        annotations:
+          summary: "Frontend API proxy is DOWN on {{ $labels.instance }}"
+          description: "Frontend is reachable but {{ $labels.endpoint }} cannot reach {{ $labels.dependency }} at {{ $labels.target }}"
+
+      - alert: PaymentAPIEndpointDown
+        expr: probe_success{runbook="payment-api",component="payment-api-staging",instance="bank-core-01"} == 0
+        for: 30s
+        labels:
+          severity: critical
+          service: payment-api
+          runbook: payment-api
+        annotations:
+          summary: "Payment API endpoint is DOWN on {{ $labels.instance }}"
           description: "Blackbox probe failed for {{ $labels.target }}"
 
       - alert: PostgreSQLDown

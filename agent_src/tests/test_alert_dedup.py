@@ -234,6 +234,48 @@ def test_staging_web_endpoint_diagnosis_uses_staging_container_and_port() -> Non
     }
 
 
+def test_frontend_api_proxy_diagnosis_prioritizes_upstream_configuration() -> None:
+    alert = _runbook_alert("FrontendAPIProxyDown", "frontend-web-staging", "bank-web-01")
+    alert["labels"]["target"] = "http://13.250.87.160:18081/api/ready"
+    alert["labels"]["dependency"] = "payment-api-staging"
+
+    analysis, proposal = tasks.deterministic_diagnosis(alert)
+
+    assert "PAYMENT_API_UPSTREAM" in analysis
+    assert "frontend /health vẫn trả 200" in analysis
+    assert proposal == {
+        "action": "fix_frontend_web_staging_api_upstream",
+        "host": "bank-web-01",
+    }
+
+
+def test_payment_api_endpoint_diagnosis_includes_network_checks() -> None:
+    alert = _runbook_alert("PaymentAPIEndpointDown", "payment-api-staging", "bank-core-01")
+    alert["labels"]["target"] = "http://10.10.1.119:18080/api/ready"
+
+    analysis, proposal = tasks.deterministic_diagnosis(alert)
+
+    assert "Security Group, firewall hoặc route" in analysis
+    assert "iptables" in analysis
+    assert proposal == {
+        "action": "restore_payment_api_staging_endpoint",
+        "host": "bank-core-01",
+    }
+
+
+def test_high_cpu_diagnosis_uses_host_resource_checks() -> None:
+    alert = _runbook_alert("HighCPUUsage", "", "bank-core-01")
+
+    analysis, proposal = tasks.deterministic_diagnosis(alert)
+
+    assert "top -o %CPU" in analysis
+    assert "docker stats --no-stream" in analysis
+    assert proposal == {
+        "action": "reduce_cpu_usage",
+        "host": "bank-core-01",
+    }
+
+
 def test_postgresql_diagnosis_has_core_redeploy_steps() -> None:
     analysis, proposal = tasks.deterministic_diagnosis(
         _runbook_alert("PostgreSQLDown", "postgres-staging", "bank-core-01")

@@ -28,6 +28,25 @@ Hệ thống bao gồm 3 lớp chính:
 5.  **Analyze**: Gemini LLM sử dụng dữ liệu RAG và có thể gọi `diag_tools`, nhưng số lần gọi được giới hạn để tránh vượt quota.
 6.  **Notify & Verify**: Agent gửi hướng dẫn xử lý qua Telegram, lưu incident context vào Redis, sau đó lên lịch verify và lưu kết quả vào ChromaDB.
 
+### Các loại sự cố có runbook xác định
+
+Agent có hướng chẩn đoán và verify trực tiếp cho:
+
+*   `WebEndpointDown`: frontend `/health` không truy cập được.
+*   `FrontendAPIProxyDown`: frontend vẫn sống nhưng proxy `/api/ready` không truy cập được Payment API.
+*   `PaymentAPIEndpointDown`: Payment API `/api/ready` không sẵn sàng do ứng dụng, database hoặc network.
+*   `PostgreSQLDown`, `RedisDown`, `DockerContainerDown`.
+*   `HighCPUUsage`, `CriticalCPUUsage`, `HighMemoryUsage`, `CriticalMemoryUsage`, `HighDiskUsage`, `CriticalDiskUsage`.
+
+Payment API tách hai endpoint:
+
+```text
+/api/health  liveness của API process
+/api/ready   readiness, bao gồm kiểm tra kết nối PostgreSQL
+```
+
+Việc tách liveness/readiness cho phép phân biệt container vẫn chạy với dependency thực tế đang lỗi.
+
 ## 📝 Thay đổi gần đây & lý do
 
 ### Giảm số lần gọi Gemini cho mỗi alert

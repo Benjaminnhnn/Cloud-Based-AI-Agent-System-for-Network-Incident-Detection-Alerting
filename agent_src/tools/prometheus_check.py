@@ -95,11 +95,10 @@ class PrometheusChecker:
         Kiểm lại nếu alert đã resolve dựa trên alert name.
         
         Mapping:
-        - node_cpu_high: CPU < 80%
-        - node_memory_high: Memory < 85%
-        - node_disk_high: Disk < 85%
-        - service_down: port accessible
-        - network_packet_loss: Loss < 1%
+        - HTTP endpoint alerts: matching blackbox probe_success == 1
+        - DockerContainerDown: container_last_seen exists and is fresh
+        - PostgreSQLDown / RedisDown: exporter target and service metric are up
+        - Host resource alerts: current value is below its alert threshold
         """
         
         try:
@@ -111,9 +110,14 @@ class PrometheusChecker:
             component = self._label_value(labels, "component")
             runbook = self._label_value(labels, "runbook")
 
-            if alert_name == "WebEndpointDown":
+            if alert_name in {"WebEndpointDown", "FrontendAPIProxyDown", "PaymentAPIEndpointDown"}:
+                expected_runbook = {
+                    "WebEndpointDown": "nginx",
+                    "FrontendAPIProxyDown": "api-proxy",
+                    "PaymentAPIEndpointDown": "payment-api",
+                }[alert_name]
                 query = (
-                    f'probe_success{{runbook="nginx",component="{component}",'
+                    f'probe_success{{runbook="{runbook or expected_runbook}",component="{component}",'
                     f'instance="{self._label_value(labels, "instance", instance)}"}}'
                 )
                 value = self._first_value(self.query(query))
@@ -127,7 +131,12 @@ class PrometheusChecker:
                     f'container_last_seen{{name=~".*{component}",'
                     f'instance="{self._label_value(labels, "instance", instance)}"}}'
                 )
-                return bool(self.query(query))
+                last_seen = self._first_value(self.query(query))
+                if last_seen is None:
+                    return False
+                age_query = f'time() - {query}'
+                age_seconds = self._first_value(self.query(age_query))
+                return age_seconds is not None and age_seconds <= 30
 
             elif alert_name == "PostgreSQLDown":
                 instance_label = self._label_value(labels, "instance", instance)
@@ -145,22 +154,36 @@ class PrometheusChecker:
                 redis_up = self._first_value(self.query(f'redis_up{{instance="{instance_label}"{component_matcher}{runbook_matcher}}}'))
                 return up == 1 and redis_up == 1
 
-            elif alert_name == "node_cpu_high":
-                # Check if CPU is below 80%
-                cpu = self.get_metric(host, "node_cpu_usage_percent")
-                threshold = 80
+            elif alert_name in {"HighCPUUsage", "CriticalCPUUsage"}:
+                instance_label = self._label_value(labels, "instance", instance)
+                query = (
+                    '100 - (avg by (instance) '
+                    f'(irate(node_cpu_seconds_total{{mode="idle",instance="{instance_label}"}}[1m])) * 100)'
+                )
+                cpu = self._first_value(self.query(query))
+                threshold = 95 if alert_name == "CriticalCPUUsage" else 80
                 return cpu is not None and cpu < threshold
-            
-            elif alert_name == "node_memory_high":
-                # Check if Memory is below 85%
-                mem = self.get_metric(host, "node_memory_usage_percent")
-                threshold = 85
-                return mem is not None and mem < threshold
-            
-            elif alert_name == "node_disk_high":
-                # Check if Disk is below 85%
-                disk = self.get_metric(host, "node_disk_usage_percent")
-                threshold = 85
+
+            elif alert_name in {"HighMemoryUsage", "CriticalMemoryUsage"}:
+                instance_label = self._label_value(labels, "instance", instance)
+                query = (
+                    '100 - (node_memory_MemAvailable_bytes'
+                    f'{{instance="{instance_label}"}} / node_memory_MemTotal_bytes'
+                    f'{{instance="{instance_label}"}} * 100)'
+                )
+                memory = self._first_value(self.query(query))
+                threshold = 95 if alert_name == "CriticalMemoryUsage" else 85
+                return memory is not None and memory < threshold
+
+            elif alert_name in {"HighDiskUsage", "CriticalDiskUsage"}:
+                instance_label = self._label_value(labels, "instance", instance)
+                query = (
+                    '100 - (node_filesystem_avail_bytes'
+                    f'{{mountpoint="/",instance="{instance_label}"}} / node_filesystem_size_bytes'
+                    f'{{mountpoint="/",instance="{instance_label}"}} * 100)'
+                )
+                disk = self._first_value(self.query(query))
+                threshold = 90 if alert_name == "CriticalDiskUsage" else 80
                 return disk is not None and disk < threshold
             
             elif alert_name == "network_packet_loss":
