@@ -53,6 +53,10 @@ redis_client = redis.Redis(
 # ─────────────────────────────────────────────
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    rag = get_rag_instance()
+    if rag is None:
+        logger.warning("RAG Engine is unavailable; collections were not initialized.")
+
     if AI_AGENT_PUBLIC_URL:
         try:
             set_telegram_webhook(AI_AGENT_PUBLIC_URL)
