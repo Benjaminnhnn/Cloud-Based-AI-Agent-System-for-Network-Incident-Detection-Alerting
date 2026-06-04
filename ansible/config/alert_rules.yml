@@ -109,7 +109,10 @@ groups:
           description: "Blackbox probe failed for {{ $labels.target }}"
 
       - alert: FrontendAPIProxyDown
-        expr: probe_success{runbook="api-proxy",component="frontend-web-staging",instance="bank-web-01"} == 0
+        expr: |
+          probe_success{runbook="api-proxy",component="frontend-web-staging",instance="bank-web-01"} == 0
+          and on()
+          probe_success{runbook="payment-api",component="payment-api-staging",instance="bank-core-01"} == 1
         for: 30s
         labels:
           severity: critical
@@ -117,7 +120,7 @@ groups:
           runbook: api-proxy
         annotations:
           summary: "Frontend API proxy is DOWN on {{ $labels.instance }}"
-          description: "Frontend is reachable but {{ $labels.endpoint }} cannot reach {{ $labels.dependency }}. Expected upstream: {{ $labels.expected_upstream }}"
+          description: "Frontend proxy cannot reach {{ $labels.dependency }}, while the direct Payment API probe is healthy. Expected upstream: {{ $labels.expected_upstream }}"
 
       - alert: PaymentAPIEndpointDown
         expr: probe_success{runbook="payment-api",component="payment-api-staging",instance="bank-core-01"} == 0
@@ -160,7 +163,7 @@ groups:
         expr: |
           absent(container_last_seen{name=~".*frontend-web-staging",instance="bank-web-01"})
           or (time() - container_last_seen{name=~".*frontend-web-staging",instance="bank-web-01"} > 30)
-        for: 30s
+        for: 2m
         labels:
           severity: critical
           service: docker
@@ -176,7 +179,7 @@ groups:
         expr: |
           absent(container_last_seen{name=~".*payment-api-staging",instance="bank-core-01"})
           or (time() - container_last_seen{name=~".*payment-api-staging",instance="bank-core-01"} > 30)
-        for: 30s
+        for: 2m
         labels:
           severity: critical
           service: docker
@@ -192,7 +195,7 @@ groups:
         expr: |
           absent(container_last_seen{name=~".*postgres-staging",instance="bank-core-01"})
           or (time() - container_last_seen{name=~".*postgres-staging",instance="bank-core-01"} > 30)
-        for: 30s
+        for: 2m
         labels:
           severity: critical
           service: docker
@@ -208,7 +211,7 @@ groups:
         expr: |
           absent(container_last_seen{name=~".*ai-agent-staging",instance="monitor-ai-01"})
           or (time() - container_last_seen{name=~".*ai-agent-staging",instance="monitor-ai-01"} > 30)
-        for: 30s
+        for: 2m
         labels:
           severity: critical
           service: docker
@@ -224,7 +227,7 @@ groups:
         expr: |
           absent(container_last_seen{name=~".*redis-cache-staging",instance="monitor-ai-01"})
           or (time() - container_last_seen{name=~".*redis-cache-staging",instance="monitor-ai-01"} > 30)
-        for: 30s
+        for: 2m
         labels:
           severity: critical
           service: docker

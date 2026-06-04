@@ -245,6 +245,7 @@ def test_frontend_api_proxy_diagnosis_prioritizes_upstream_configuration() -> No
     assert "PAYMENT_API_UPSTREAM" in analysis
     assert "frontend /health vẫn trả 200" in analysis
     assert "PAYMENT_API_UPSTREAM=http://10.10.1.119:18080" in analysis
+    assert "Payment API readiness probe trực tiếp vẫn khỏe" in analysis
     assert proposal == {
         "action": "fix_frontend_web_staging_api_upstream",
         "host": "bank-web-01",

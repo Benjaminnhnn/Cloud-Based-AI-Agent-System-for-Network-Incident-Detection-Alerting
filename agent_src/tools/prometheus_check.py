@@ -110,10 +110,22 @@ class PrometheusChecker:
             component = self._label_value(labels, "component")
             runbook = self._label_value(labels, "runbook")
 
-            if alert_name in {"WebEndpointDown", "FrontendAPIProxyDown", "PaymentAPIEndpointDown"}:
+            if alert_name == "FrontendAPIProxyDown":
+                instance_label = self._label_value(labels, "instance", instance)
+                dependency = self._label_value(labels, "dependency", "payment-api-staging")
+                dependency_instance = self._label_value(labels, "dependency_instance", "bank-core-01")
+                condition_query = (
+                    f'probe_success{{runbook="api-proxy",component="{component}",'
+                    f'instance="{instance_label}"}} == 0 '
+                    'and on() '
+                    f'probe_success{{runbook="payment-api",component="{dependency}",'
+                    f'instance="{dependency_instance}"}} == 1'
+                )
+                return not bool(self.query(condition_query))
+
+            if alert_name in {"WebEndpointDown", "PaymentAPIEndpointDown"}:
                 expected_runbook = {
                     "WebEndpointDown": "nginx",
-                    "FrontendAPIProxyDown": "api-proxy",
                     "PaymentAPIEndpointDown": "payment-api",
                 }[alert_name]
                 query = (
