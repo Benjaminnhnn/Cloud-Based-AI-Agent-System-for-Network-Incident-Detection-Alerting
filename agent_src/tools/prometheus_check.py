@@ -25,6 +25,39 @@ class PrometheusChecker:
     def __init__(self, prometheus_url: str = PROMETHEUS_URL):
         self.base_url = prometheus_url.rstrip("/")
         self.query_url = f"{self.base_url}/api/v1/query"
+
+    def query(self, query: str) -> list[dict]:
+        try:
+            response = requests.get(
+                self.query_url,
+                params={"query": query},
+                timeout=PROMETHEUS_TIMEOUT,
+            )
+            response.raise_for_status()
+
+            data = response.json()
+            if data.get("status") != "success":
+                logger.error("Prometheus query failed: %s", data)
+                return []
+            return data.get("data", {}).get("result", [])
+        except Exception as e:
+            logger.error("Error querying Prometheus: query=%s error=%s", query, e)
+            return []
+
+    @staticmethod
+    def _label_value(labels: dict, key: str, default: str = "") -> str:
+        value = labels.get(key, default)
+        return str(value).replace("\\", "\\\\").replace('"', '\\"')
+
+    @staticmethod
+    def _first_value(results: list[dict]) -> Optional[float]:
+        if not results:
+            return None
+        value = results[0].get("value", [None, None])[1]
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return None
     
     def get_metric(self, instance: str, metric_name: str) -> Optional[float]:
         """
@@ -57,7 +90,7 @@ class PrometheusChecker:
             logger.error(f"Error querying Prometheus for {metric_name}: {e}")
             return None
     
-    def is_alert_resolved(self, alert_name: str, instance: str) -> bool:
+    def is_alert_resolved(self, alert_name: str, instance: str, labels: Optional[dict] = None) -> bool:
         """
         Kiểm lại nếu alert đã resolve dựa trên alert name.
         
@@ -74,7 +107,45 @@ class PrometheusChecker:
             # instance format: "10.10.1.68:9100" or "10.10.1.68"
             host = instance.split(":")[0]
             
-            if alert_name == "node_cpu_high":
+            labels = labels or {}
+            component = self._label_value(labels, "component")
+            runbook = self._label_value(labels, "runbook")
+
+            if alert_name == "WebEndpointDown":
+                query = (
+                    f'probe_success{{runbook="nginx",component="{component}",'
+                    f'instance="{self._label_value(labels, "instance", instance)}"}}'
+                )
+                value = self._first_value(self.query(query))
+                return value == 1
+
+            elif alert_name == "DockerContainerDown":
+                if not component:
+                    logger.warning("DockerContainerDown missing component label; cannot verify resolved")
+                    return False
+                query = (
+                    f'container_last_seen{{name=~".*{component}",'
+                    f'instance="{self._label_value(labels, "instance", instance)}"}}'
+                )
+                return bool(self.query(query))
+
+            elif alert_name == "PostgreSQLDown":
+                instance_label = self._label_value(labels, "instance", instance)
+                component_matcher = f',component="{component}"' if component else ""
+                runbook_matcher = f',runbook="{runbook or "postgresql"}"'
+                up = self._first_value(self.query(f'up{{instance="{instance_label}"{component_matcher}{runbook_matcher}}}'))
+                pg_up = self._first_value(self.query(f'pg_up{{instance="{instance_label}"{component_matcher}{runbook_matcher}}}'))
+                return up == 1 and pg_up == 1
+
+            elif alert_name == "RedisDown":
+                instance_label = self._label_value(labels, "instance", instance)
+                component_matcher = f',component="{component}"' if component else ""
+                runbook_matcher = f',runbook="{runbook or "redis"}"'
+                up = self._first_value(self.query(f'up{{instance="{instance_label}"{component_matcher}{runbook_matcher}}}'))
+                redis_up = self._first_value(self.query(f'redis_up{{instance="{instance_label}"{component_matcher}{runbook_matcher}}}'))
+                return up == 1 and redis_up == 1
+
+            elif alert_name == "node_cpu_high":
                 # Check if CPU is below 80%
                 cpu = self.get_metric(host, "node_cpu_usage_percent")
                 threshold = 80
@@ -101,13 +172,12 @@ class PrometheusChecker:
             elif alert_name == "service_down":
                 # Check if service is up (via port health check)
                 # This would require specific port configuration
-                logger.info(f"Service check for {host} - assuming resolved")
-                return True
+                logger.warning(f"Service check for {host} is not implemented; cannot verify resolved")
+                return False
             
             else:
-                # Default: assume resolved if we can't determine
                 logger.warning(f"Unknown alert type: {alert_name}")
-                return True
+                return False
         
         except Exception as e:
             logger.error(f"Error in is_alert_resolved: {e}")

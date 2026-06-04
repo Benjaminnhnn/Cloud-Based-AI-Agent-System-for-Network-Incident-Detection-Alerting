@@ -354,6 +354,22 @@ def _incident_field(details: str, field_name: str, default: str = "unknown") -> 
     return match.group(1).strip() if match else default
 
 
+def _labels_from_incident_context(ctx: dict) -> dict:
+    labels = ctx.get("labels")
+    if isinstance(labels, dict):
+        return labels
+
+    details = str(ctx.get("incident_details", ""))
+    labels_line = _incident_field(details, "Labels", "")
+    parsed = {}
+    for item in labels_line.split(", "):
+        if "=" not in item:
+            continue
+        key, value = item.split("=", 1)
+        parsed[key.strip()] = value.strip()
+    return parsed
+
+
 def _format_alert_report(alert: dict, incident_id: str, proposal: dict | None, ai_analysis: str) -> str:
     labels = alert.get("labels", {})
     annotations = alert.get("annotations", {})
@@ -822,6 +838,8 @@ async def process_single_alert(alert: dict) -> None:
         incident_context = {
             "alert_name": alert_name,
             "instance": instance,
+            "labels": alert.get("labels", {}),
+            "annotations": alert.get("annotations", {}),
             "incident_details": incident_details,
             "ai_analysis": ai_analysis,
             "proposal": proposal,
@@ -885,7 +903,7 @@ async def verify_resolution(incident_id: str, alert_name: str, instance: str):
         logger.info(f"📊 Checking current metrics for {instance}...")
 
         # Simulate health check (thực tế sẽ call Prometheus API hoặc diagnostic tools)
-        is_resolved = await check_alert_resolved(alert_name, instance)
+        is_resolved = await check_alert_resolved(alert_name, instance, ctx)
 
         if is_resolved:
             # Issue RESOLVED ✅
@@ -935,7 +953,7 @@ async def verify_resolution(incident_id: str, alert_name: str, instance: str):
         send_telegram_message(f"⚠️ Lỗi kiểm tra kết quả: {str(e)}")
 
 
-async def check_alert_resolved(alert_name: str, instance: str) -> bool:
+async def check_alert_resolved(alert_name: str, instance: str, incident_context: dict | None = None) -> bool:
     """
     Check nếu alert đã được resolve bằng cách query Prometheus.
 
@@ -953,7 +971,8 @@ async def check_alert_resolved(alert_name: str, instance: str) -> bool:
         logger.info(f"Checking if {alert_name} is resolved on {instance}...")
 
         checker = get_prometheus_checker()
-        is_resolved = checker.is_alert_resolved(alert_name, instance)
+        labels = _labels_from_incident_context(incident_context or {})
+        is_resolved = checker.is_alert_resolved(alert_name, instance, labels)
 
         if is_resolved:
             logger.info(f"✅ Alert {alert_name} is RESOLVED")
