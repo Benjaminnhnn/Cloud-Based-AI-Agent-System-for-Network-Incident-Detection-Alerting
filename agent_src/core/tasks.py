@@ -107,10 +107,17 @@ def _alert_cooldown_key(alert: dict) -> str:
     return f"alert-ai-cooldown:{_alert_identity(alert)}"
 
 
-def _alert_notification_key(alert: dict, notification_type: str) -> str:
+def _alert_event_hash(alert: dict) -> str:
     event_start = str(alert.get("startsAt") or "unknown-start")
-    event_hash = hashlib.sha256(event_start.encode("utf-8")).hexdigest()[:12]
-    return f"alert-ai-notification:{notification_type}:{_alert_identity(alert)}:{event_hash}"
+    return hashlib.sha256(event_start.encode("utf-8")).hexdigest()[:12]
+
+
+def _alert_notification_key(alert: dict, notification_type: str) -> str:
+    return f"alert-ai-notification:{notification_type}:{_alert_identity(alert)}:{_alert_event_hash(alert)}"
+
+
+def _active_incident_key(alert: dict) -> str:
+    return f"alert-ai-active-incident:{_alert_identity(alert)}:{_alert_event_hash(alert)}"
 
 
 def _reserve_alert_notification(alert: dict, notification_type: str) -> bool:
@@ -512,6 +519,38 @@ def _load_incident_from_redis(incident_id: str) -> dict | None:
         return None
 
 
+def _link_active_incident(alert: dict, incident_id: str, ttl: int = 86400) -> None:
+    if redis_client is None:
+        return
+    try:
+        redis_client.setex(_active_incident_key(alert), ttl, incident_id)
+    except redis.RedisError as e:
+        logger.warning("Unable to link active incident %s: %s", incident_id, e)
+
+
+def _mark_matching_incident_resolved(alert: dict) -> str | None:
+    if redis_client is None:
+        return None
+
+    active_key = _active_incident_key(alert)
+    try:
+        incident_id = redis_client.get(active_key)
+        if not incident_id:
+            return None
+
+        context = _load_incident_from_redis(incident_id)
+        if context is not None:
+            context["status"] = "resolved"
+            context["resolved_at"] = str(alert.get("endsAt") or datetime.now(VN_TZ).isoformat())
+            save_incident_to_redis(incident_id, context)
+
+        redis_client.delete(active_key)
+        return incident_id
+    except redis.RedisError as e:
+        logger.warning("Unable to mark matching incident resolved: %s", e)
+        return None
+
+
 def _parse_review_json(full_text: str) -> dict | None:
     match = re.search(r"REVIEW_JSON:\s*(\{.*\})", full_text, flags=re.DOTALL)
     if not match:
@@ -523,7 +562,44 @@ def _parse_review_json(full_text: str) -> dict | None:
         return None
 
 
+def _destructive_feedback_review(admin_feedback: str) -> dict | None:
+    feedback_lower = admin_feedback.lower()
+    destructive_markers = (
+        "xóa docker volume",
+        "xoa docker volume",
+        "docker volume rm",
+        "docker system prune --volumes",
+        "drop database",
+        "drop table",
+        "truncate table",
+        "rm -rf /var/lib",
+        "rm -rf /data",
+        "xóa dữ liệu",
+        "xoa du lieu",
+    )
+    if not any(marker in feedback_lower for marker in destructive_markers):
+        return None
+
+    return {
+        "status": "rejected",
+        "reviewed_solution": (
+            "Không thực hiện thao tác xóa dữ liệu hoặc Docker volume.\n"
+            "1. Kiểm tra trạng thái container và logs.\n"
+            "2. Thử start/restart hoặc redeploy đúng role.\n"
+            "3. Chỉ xóa dữ liệu khi có backup, xác nhận phạm vi ảnh hưởng và phê duyệt rõ ràng."
+        ),
+        "admin_message": (
+            "Góp ý chứa thao tác phá dữ liệu nhưng chưa có backup hoặc xác nhận rõ ràng. "
+            "Agent từ chối lưu góp ý này vào RAG."
+        ),
+    }
+
+
 def _basic_feedback_review(admin_feedback: str) -> dict:
+    destructive_review = _destructive_feedback_review(admin_feedback)
+    if destructive_review:
+        return destructive_review
+
     feedback = admin_feedback.strip()
     action_markers = (
         "check",
@@ -564,6 +640,10 @@ def _basic_feedback_review(admin_feedback: str) -> dict:
 
 
 async def review_admin_feedback(incident_context: dict, admin_feedback: str) -> dict:
+    destructive_review = _destructive_feedback_review(admin_feedback)
+    if destructive_review:
+        return destructive_review
+
     if not GEMINI_API_KEY:
         return _basic_feedback_review(admin_feedback)
 
@@ -584,7 +664,7 @@ Yêu cầu:
 - Nếu góp ý đúng, an toàn và hữu ích: status = "accepted".
 - Nếu góp ý có ý đúng nhưng thiếu bước/thiếu an toàn: status = "revised" và viết lại giải pháp tốt hơn.
 - Nếu góp ý sai hoặc rủi ro: status = "rejected" và đưa giải pháp thay thế an toàn.
-- Không đề xuất thao tác phá dữ liệu nếu chưa có backup/xác nhận.
+- Bất kỳ góp ý nào chứa thao tác phá dữ liệu mà chưa có backup/xác nhận rõ ràng đều bắt buộc status = "rejected", kể cả khi có phần khác hợp lý.
 - admin_message tối đa 2 câu, nói thẳng vì sao accepted/revised/rejected.
 - reviewed_solution tối đa 5 dòng, ưu tiên lệnh cần chạy ngay.
 - Dòng cuối cùng bắt buộc là:
@@ -791,6 +871,7 @@ async def process_single_alert(alert: dict) -> None:
 
         if alert.get("status") == "resolved":
             _clear_alert_cooldown(alert)
+            resolved_incident_id = _mark_matching_incident_resolved(alert)
             if not _reserve_alert_notification(alert, "resolved"):
                 logger.info(
                     "Skipping duplicate resolved notification: alert=%s instance=%s",
@@ -799,7 +880,8 @@ async def process_single_alert(alert: dict) -> None:
                 )
                 ALERTS_PROCESSED_TOTAL.labels(status='deduped').inc()
                 return
-            send_telegram_message(f"✅ *ĐÃ KHÔI PHỤC:* {alert_name} trên `{instance}`")
+            incident_suffix = f" (ID: `{resolved_incident_id}`)" if resolved_incident_id else ""
+            send_telegram_message(f"✅ *ĐÃ KHÔI PHỤC:* {alert_name} trên `{instance}`{incident_suffix}")
             ALERTS_PROCESSED_TOTAL.labels(status='resolved').inc()
             return
 
@@ -843,9 +925,14 @@ async def process_single_alert(alert: dict) -> None:
             "incident_details": incident_details,
             "ai_analysis": ai_analysis,
             "proposal": proposal,
-            "timestamp": datetime.now(VN_TZ).isoformat()
+            "alert_identity": _alert_identity(alert),
+            "starts_at": str(alert.get("startsAt") or ""),
+            "fingerprint": alert.get("fingerprint"),
+            "status": "firing",
+            "timestamp": datetime.now(VN_TZ).isoformat(),
         }
         save_incident_to_redis(incident_id, incident_context)
+        _link_active_incident(alert, incident_id)
 
         report = _format_alert_report(alert, incident_id, proposal, ai_analysis)
 
@@ -896,6 +983,13 @@ async def verify_resolution(incident_id: str, alert_name: str, instance: str):
             return
 
         ctx = json.loads(ctx_raw)
+
+        if ctx.get("status") == "resolved":
+            logger.info(
+                "Skipping scheduled verification for incident %s because its alert event is already resolved",
+                incident_id,
+            )
+            return
 
         # Query Prometheus metrics để kiểm lại
         # Cách 1: Gọi các diagnostic tools tương tự như AI analysis

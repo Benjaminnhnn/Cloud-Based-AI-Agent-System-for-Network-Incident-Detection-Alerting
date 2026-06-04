@@ -71,3 +71,31 @@ def test_process_admin_feedback_saves_reviewed_solution_to_rag() -> None:
     assert result["saved"] is True
     fake_rag.save_admin_solution.assert_called_once()
     send_message.assert_called_once()
+
+
+def test_destructive_feedback_is_rejected_and_not_saved() -> None:
+    context = {
+        "alert_name": "WebEndpointDown",
+        "incident_details": "Alert: WebEndpointDown\nInstance: bank-web-01",
+        "ai_analysis": "check frontend-web-staging",
+    }
+    fake_redis = Mock()
+    fake_redis.get.return_value = json.dumps(context)
+    fake_rag = Mock()
+
+    with (
+        patch.object(tasks, "redis_client", fake_redis),
+        patch.object(tasks, "GEMINI_API_KEY", "configured"),
+        patch.object(tasks, "get_rag_instance", return_value=fake_rag),
+        patch.object(tasks, "send_telegram_message") as send_message,
+    ):
+        result = asyncio.run(tasks.process_admin_feedback(
+            "abc12345",
+            "xóa Docker volume rồi deploy lại",
+            chat_id="123",
+        ))
+
+    assert result["status"] == "rejected"
+    assert result["saved"] is False
+    fake_rag.save_admin_solution.assert_not_called()
+    assert "Lưu vào RAG: no" in send_message.call_args.args[0]

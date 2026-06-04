@@ -191,13 +191,17 @@ core
 
 [all:vars]
 ansible_python_interpreter=/usr/bin/python3
-ansible_ssh_private_key_file=~/.ssh/aws-hybrid
+ansible_ssh_private_key_file=/home/<user>/.ssh/aws-hybrid
 ```
 
 Neu may dev doi IP sau nay, chay:
 
 ```bash
 bash automation/update-infrastructure.sh
+```
+Co the bo khau check keypair: 
+```bash
+ANSIBLE_HOST_KEY_CHECKING=False ansible all -i ansible/inventory.ini -m ping
 ```
 
 Script nay se cap nhat `my_ip_cidr`, apply Terraform va ghi lai `ansible/inventory.ini`.
