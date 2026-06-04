@@ -54,3 +54,38 @@ def test_query_knowledge_keeps_standard_and_dynamic_sources_separate() -> None:
     assert "[Nguồn: web_endpoint_down.md]" in result
     assert "Kinh nghiệm từ incident và feedback trước đây" in result
     assert "[Nguồn: admin_feedback]" in result
+
+
+def test_query_knowledge_filters_by_alert_name() -> None:
+    engine = RAGEngine.__new__(RAGEngine)
+    engine.standard_runbooks = Mock()
+    engine.standard_runbooks.count.return_value = 1
+    engine.standard_runbooks.query.return_value = {
+        "documents": [[]],
+        "metadatas": [[]],
+        "distances": [[]],
+    }
+    engine.incident_memory = Mock()
+    engine.incident_memory.count.return_value = 0
+
+    result = engine.query_knowledge("critical cpu usage", alert_name="CriticalCPUUsage")
+
+    assert result == ""
+    assert engine.standard_runbooks.query.call_args.kwargs["where"] == {
+        "alert_name": "CriticalCPUUsage"
+    }
+
+
+def test_retrieve_drops_documents_above_distance_threshold() -> None:
+    engine = RAGEngine.__new__(RAGEngine)
+    collection = Mock()
+    collection.count.return_value = 1
+    collection.query.return_value = {
+        "documents": [["unrelated nginx runbook"]],
+        "metadatas": [[{"source_file": "runbook_nginx.md"}]],
+        "distances": [[99.0]],
+    }
+
+    result = engine._retrieve(collection, "critical cpu usage", alert_name="CriticalCPUUsage")
+
+    assert result == ""

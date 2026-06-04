@@ -14,6 +14,13 @@ STANDARD_RUNBOOKS_COLLECTION = "standard_runbooks"
 INCIDENT_MEMORY_COLLECTION = "incident_memory"
 LEGACY_COLLECTION = "ops_runbooks"
 RUNBOOK_CHUNK_CHARS = int(os.getenv("RAG_RUNBOOK_CHUNK_CHARS", "1200"))
+RAG_MAX_DISTANCE = float(os.getenv("RAG_MAX_DISTANCE", "1.2"))
+RUNBOOK_ALERT_NAMES = {
+    "runbook_nginx.md": ("WebEndpointDown", "FrontendAPIProxyDown"),
+    "runbook_postgresql.md": ("PostgreSQLDown", "PaymentAPIEndpointDown"),
+    "runbook_redis.md": ("RedisDown",),
+    "runbook_docker.md": ("DockerContainerDown",),
+}
 
 
 def _chunk_markdown(content: str, max_chars: int = RUNBOOK_CHUNK_CHARS) -> list[tuple[str, str]]:
@@ -127,19 +134,22 @@ class RAGEngine:
             ids = []
             documents = []
             metadatas = []
-            for index, (heading, chunk) in enumerate(chunks):
-                digest = hashlib.sha256(chunk.encode("utf-8")).hexdigest()[:12]
-                ids.append(f"runbook::{filename}::{index:03d}::{digest}")
-                documents.append(chunk)
-                metadatas.append(
-                    {
-                        "source": filename,
-                        "source_file": filename,
-                        "document_type": "standard_runbook",
-                        "chunk_index": index,
-                        "heading": heading,
-                    }
-                )
+            alert_names = RUNBOOK_ALERT_NAMES.get(filename, ("Unknown",))
+            for alert_name in alert_names:
+                for index, (heading, chunk) in enumerate(chunks):
+                    digest = hashlib.sha256(chunk.encode("utf-8")).hexdigest()[:12]
+                    ids.append(f"runbook::{filename}::{alert_name}::{index:03d}::{digest}")
+                    documents.append(chunk)
+                    metadatas.append(
+                        {
+                            "source": filename,
+                            "source_file": filename,
+                            "document_type": "standard_runbook",
+                            "alert_name": alert_name,
+                            "chunk_index": index,
+                            "heading": heading,
+                        }
+                    )
 
             self.standard_runbooks.upsert(ids=ids, documents=documents, metadatas=metadatas)
             total_chunks += len(ids)
@@ -218,45 +228,61 @@ class RAGEngine:
         lower_document = document.lower()
         return sum(1 for keyword in keywords if keyword in lower_document)
 
-    def _retrieve(self, collection: Any, query_text: str, n_results: int = 3) -> str:
+    def _retrieve(
+        self,
+        collection: Any,
+        query_text: str,
+        n_results: int = 3,
+        alert_name: str | None = None,
+    ) -> str:
         try:
             total_count = collection.count()
             if total_count == 0:
-                return "Không tìm thấy thông tin phù hợp."
+                return ""
 
             results = collection.query(
                 query_texts=[query_text],
                 n_results=min(n_results, total_count),
-                include=["documents", "metadatas"],
+                where={"alert_name": alert_name} if alert_name else None,
+                include=["documents", "metadatas", "distances"],
             )
             documents = (results.get("documents") or [[]])[0]
             metadatas = (results.get("metadatas") or [[]])[0]
+            distances = (results.get("distances") or [[]])[0]
             if not documents:
-                return "Không tìm thấy thông tin phù hợp."
+                return ""
 
             keywords = set(re.findall(r"\w+", query_text.lower()))
+            candidates = []
+            for index, (document, metadata) in enumerate(zip(documents, metadatas)):
+                distance = distances[index] if index < len(distances) else 0.0
+                if distance is not None and float(distance) > RAG_MAX_DISTANCE:
+                    continue
+                candidates.append((document, metadata, float(distance or 0.0)))
+
             ranked = sorted(
-                zip(documents, metadatas),
-                key=lambda item: self._keyword_score(item[0], keywords),
-                reverse=True,
+                candidates,
+                key=lambda item: (-self._keyword_score(item[0], keywords), item[2]),
             )
             rendered = []
-            for document, metadata in ranked:
+            for document, metadata, _distance in ranked:
                 metadata = metadata or {}
                 source = metadata.get("source_file") or metadata.get("source") or "unknown"
                 rendered.append(f"[Nguồn: {source}]\n{document}")
             return "\n\n---\n\n".join(rendered)
         except Exception as exc:
             logger.error("RAG retrieval failed: %s", exc)
-            return "Không tìm thấy thông tin phù hợp."
+            return ""
 
-    def query_knowledge(self, alert_description: str) -> str:
-        runbook_text = self._retrieve(self.standard_runbooks, alert_description)
-        memory_text = self._retrieve(self.incident_memory, alert_description)
-        return (
-            f"## Quy trình chuẩn từ runbook\n{runbook_text}\n\n"
-            f"## Kinh nghiệm từ incident và feedback trước đây\n{memory_text}"
-        )
+    def query_knowledge(self, alert_description: str, alert_name: str | None = None) -> str:
+        runbook_text = self._retrieve(self.standard_runbooks, alert_description, alert_name=alert_name)
+        memory_text = self._retrieve(self.incident_memory, alert_description, alert_name=alert_name)
+        sections = []
+        if runbook_text:
+            sections.append(f"## Quy trình chuẩn từ runbook\n{runbook_text}")
+        if memory_text:
+            sections.append(f"## Kinh nghiệm từ incident và feedback trước đây\n{memory_text}")
+        return "\n\n".join(sections)
 
     def query_runbook(self, alert_description: str) -> str:
         """Backward-compatible alias for callers using the old method name."""

@@ -341,7 +341,7 @@ def test_known_runbook_alert_does_not_call_gemini() -> None:
     assert "redis-cache-staging" in send_telegram_message.call_args.args[0]
 
 
-def test_known_runbook_alert_adds_rag_context_to_incident() -> None:
+def test_known_runbook_alert_keeps_rag_context_out_of_telegram_report() -> None:
     alert = _runbook_alert("RedisDown", "redis-cache-staging", "monitor-ai-01")
     fake_rag = Mock()
     fake_rag.query_knowledge.return_value = "previous admin-reviewed Redis solution"
@@ -350,12 +350,17 @@ def test_known_runbook_alert_adds_rag_context_to_incident() -> None:
         patch.object(tasks, "redis_client", None),
         patch.object(tasks, "ALERT_DEDUP_ENABLED", False),
         patch.object(tasks, "get_rag_instance", return_value=fake_rag),
-        patch.object(tasks, "send_telegram_message"),
+        patch.object(tasks, "send_telegram_message") as send_telegram_message,
         patch.object(tasks, "save_incident_to_redis") as save_incident,
         patch.object(tasks.verify_resolution_task, "apply_async"),
     ):
         asyncio.run(tasks.process_single_alert(alert))
 
-    fake_rag.query_knowledge.assert_called_once()
+    fake_rag.query_knowledge.assert_called_once_with(
+        tasks.build_incident_details(alert),
+        alert_name="RedisDown",
+    )
     context = save_incident.call_args.args[1]
-    assert "previous admin-reviewed Redis solution" in context["ai_analysis"]
+    assert context["rag_context"] == "previous admin-reviewed Redis solution"
+    assert "previous admin-reviewed Redis solution" not in context["ai_analysis"]
+    assert "previous admin-reviewed Redis solution" not in send_telegram_message.call_args.args[0]

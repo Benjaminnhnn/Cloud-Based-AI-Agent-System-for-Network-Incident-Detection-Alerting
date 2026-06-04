@@ -825,6 +825,9 @@ Incident context:
 Phân tích ban đầu của Agent:
 {incident_context.get("ai_analysis", "")}
 
+Ngữ cảnh RAG liên quan:
+{incident_context.get("rag_context", "")}
+
 Góp ý của admin:
 {admin_feedback}
 
@@ -911,7 +914,7 @@ async def process_admin_feedback(incident_id: str, admin_feedback: str, chat_id:
     return {"status": review_status, "saved": saved, "message": message}
 
 
-async def run_agent_workflow(incident_details: str):
+async def run_agent_workflow(incident_details: str, alert_name: str | None = None):
     if not GEMINI_API_KEY:
         return "❌ Error: GEMINI_API_KEY not configured", None
 
@@ -920,7 +923,7 @@ async def run_agent_workflow(incident_details: str):
 
     runbook_context = "⚠️ RAG Engine không khả dụng."
     if rag:
-        runbook_context = rag.query_knowledge(incident_details)
+        runbook_context = rag.query_knowledge(incident_details, alert_name=alert_name)
 
     system_instruction = f"""
         Bạn là AI Ops Agent chuyên nghiệp, chuyên xử lý sự cố hạ tầng.
@@ -1074,20 +1077,17 @@ async def process_single_alert(alert: dict) -> None:
 
         incident_details = build_incident_details(alert)
         rule_analysis, rule_proposal = deterministic_diagnosis(alert)
+        rag_context = ""
 
         if rule_analysis:
             ai_analysis = rule_analysis
             rag = get_rag_instance()
-            rag_context = rag.query_knowledge(incident_details) if rag else ""
+            rag_context = rag.query_knowledge(incident_details, alert_name=alert_name) if rag else ""
             if rag_context:
-                ai_analysis += (
-                    "\n\nNgữ cảnh RAG tham khảo:\n"
-                    f"{_truncate_text(rag_context, 1800)}"
-                )
-                logger.info("Added RAG context to deterministic diagnosis for %s", alert_name)
+                logger.info("Retrieved RAG context for deterministic diagnosis: %s", alert_name)
             proposal = rule_proposal
         else:
-            ai_analysis, proposal = await run_agent_workflow(incident_details)
+            ai_analysis, proposal = await run_agent_workflow(incident_details, alert_name=alert_name)
         duration = time.time() - start_time
         AI_WORKFLOW_LATENCY_SECONDS.observe(duration)
         ALERTS_PROCESSED_TOTAL.labels(status='success').inc()
@@ -1100,6 +1100,7 @@ async def process_single_alert(alert: dict) -> None:
             "annotations": alert.get("annotations", {}),
             "incident_details": incident_details,
             "ai_analysis": ai_analysis,
+            "rag_context": rag_context,
             "proposal": proposal,
             "alert_identity": _alert_identity(alert),
             "starts_at": str(alert.get("startsAt") or ""),
