@@ -54,7 +54,10 @@ services:
       REDIS_HOST: redis
       REDIS_PORT: "6379"
       REDIS_DB: "0"
+      PROMETHEUS_URL: ${PROMETHEUS_URL:-http://host.docker.internal:9090}
       PYTHONUNBUFFERED: "1"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     ports:
       - "0.0.0.0:18000:8000"
     healthcheck:
@@ -79,7 +82,10 @@ services:
       REDIS_HOST: redis
       REDIS_PORT: "6379"
       REDIS_DB: "0"
+      PROMETHEUS_URL: ${PROMETHEUS_URL:-http://host.docker.internal:9090}
       PYTHONUNBUFFERED: "1"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     command: ["celery", "-A", "core.celery_app.celery_app", "worker", "--loglevel=INFO"]
     depends_on:
       redis:
