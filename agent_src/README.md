@@ -146,3 +146,30 @@ Hoặc chạy trực tiếp qua entrypoint:
 ```bash
 ./docker-entrypoint.sh
 ```
+
+## RAG data storage
+
+RAG uses two separate ChromaDB collections:
+
+* `standard_runbooks`: Markdown runbooks from `config/knowledge_base/*.md`, split into heading-aware chunks during startup.
+* `incident_memory`: resolved incident history and accepted/revised admin feedback.
+
+The source runbooks are Git-tracked files and can be viewed directly:
+
+```bash
+find config/knowledge_base -maxdepth 1 -type f -name '*.md'
+sed -n '1,200p' config/knowledge_base/<runbook-file>.md
+```
+
+Dynamic incident and feedback memory is not written back into Markdown files. It is stored in the ChromaDB directory configured by `VECTOR_DB_PATH`. In release deployments, `ai-agent` and `celery-worker` share the same persistent Docker volume mounted at `/app/vector_db`.
+
+Inspect the collections from a running release container:
+
+```bash
+docker exec celery-worker-staging python tools/inspect_rag_db.py
+docker exec celery-worker-staging python tools/inspect_rag_db.py --collection standard_runbooks
+docker exec celery-worker-staging python tools/inspect_rag_db.py --collection incident_memory
+docker exec celery-worker-staging python tools/inspect_rag_db.py --collection incident_memory --source admin_feedback
+```
+
+Do not commit the ChromaDB database files to Git. The Markdown runbooks are the reviewed source of truth; `incident_memory` is runtime learning data.

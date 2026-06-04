@@ -139,14 +139,11 @@ class PrometheusChecker:
                 if not component:
                     logger.warning("DockerContainerDown missing component label; cannot verify resolved")
                     return False
-                query = (
-                    f'container_last_seen{{name=~".*{component}",'
-                    f'instance="{self._label_value(labels, "instance", instance)}"}}'
+                age_query = (
+                    'time() - max by (instance) '
+                    f'(container_last_seen{{name=~".*{component}",'
+                    f'instance="{self._label_value(labels, "instance", instance)}"}})'
                 )
-                last_seen = self._first_value(self.query(query))
-                if last_seen is None:
-                    return False
-                age_query = f'time() - {query}'
                 age_seconds = self._first_value(self.query(age_query))
                 return age_seconds is not None and age_seconds <= 30
 

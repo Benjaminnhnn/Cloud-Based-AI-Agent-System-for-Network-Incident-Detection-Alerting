@@ -162,7 +162,7 @@ groups:
       - alert: DockerContainerDown
         expr: |
           absent(container_last_seen{name=~".*frontend-web-staging",instance="bank-web-01"})
-          or (time() - container_last_seen{name=~".*frontend-web-staging",instance="bank-web-01"} > 30)
+          or (time() - max by (instance) (container_last_seen{name=~".*frontend-web-staging",instance="bank-web-01"}) > 30)
         for: 2m
         labels:
           severity: critical
@@ -178,7 +178,7 @@ groups:
       - alert: DockerContainerDown
         expr: |
           absent(container_last_seen{name=~".*payment-api-staging",instance="bank-core-01"})
-          or (time() - container_last_seen{name=~".*payment-api-staging",instance="bank-core-01"} > 30)
+          or (time() - max by (instance) (container_last_seen{name=~".*payment-api-staging",instance="bank-core-01"}) > 30)
         for: 2m
         labels:
           severity: critical
@@ -194,7 +194,7 @@ groups:
       - alert: DockerContainerDown
         expr: |
           absent(container_last_seen{name=~".*postgres-staging",instance="bank-core-01"})
-          or (time() - container_last_seen{name=~".*postgres-staging",instance="bank-core-01"} > 30)
+          or (time() - max by (instance) (container_last_seen{name=~".*postgres-staging",instance="bank-core-01"}) > 30)
         for: 2m
         labels:
           severity: critical
@@ -210,7 +210,7 @@ groups:
       - alert: DockerContainerDown
         expr: |
           absent(container_last_seen{name=~".*ai-agent-staging",instance="monitor-ai-01"})
-          or (time() - container_last_seen{name=~".*ai-agent-staging",instance="monitor-ai-01"} > 30)
+          or (time() - max by (instance) (container_last_seen{name=~".*ai-agent-staging",instance="monitor-ai-01"}) > 30)
         for: 2m
         labels:
           severity: critical
@@ -226,7 +226,7 @@ groups:
       - alert: DockerContainerDown
         expr: |
           absent(container_last_seen{name=~".*redis-cache-staging",instance="monitor-ai-01"})
-          or (time() - container_last_seen{name=~".*redis-cache-staging",instance="monitor-ai-01"} > 30)
+          or (time() - max by (instance) (container_last_seen{name=~".*redis-cache-staging",instance="monitor-ai-01"}) > 30)
         for: 2m
         labels:
           severity: critical

@@ -920,7 +920,7 @@ async def run_agent_workflow(incident_details: str):
 
     runbook_context = "⚠️ RAG Engine không khả dụng."
     if rag:
-        runbook_context = rag.query_runbook(incident_details)
+        runbook_context = rag.query_knowledge(incident_details)
 
     system_instruction = f"""
         Bạn là AI Ops Agent chuyên nghiệp, chuyên xử lý sự cố hạ tầng.
@@ -1077,6 +1077,14 @@ async def process_single_alert(alert: dict) -> None:
 
         if rule_analysis:
             ai_analysis = rule_analysis
+            rag = get_rag_instance()
+            rag_context = rag.query_knowledge(incident_details) if rag else ""
+            if rag_context:
+                ai_analysis += (
+                    "\n\nNgữ cảnh RAG tham khảo:\n"
+                    f"{_truncate_text(rag_context, 1800)}"
+                )
+                logger.info("Added RAG context to deterministic diagnosis for %s", alert_name)
             proposal = rule_proposal
         else:
             ai_analysis, proposal = await run_agent_workflow(incident_details)

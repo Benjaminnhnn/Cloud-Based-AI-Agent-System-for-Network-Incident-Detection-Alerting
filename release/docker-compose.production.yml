@@ -55,7 +55,10 @@ services:
       REDIS_PORT: "6379"
       REDIS_DB: "0"
       PROMETHEUS_URL: ${PROMETHEUS_URL:-http://host.docker.internal:9090}
+      VECTOR_DB_PATH: /app/vector_db
       PYTHONUNBUFFERED: "1"
+    volumes:
+      - vector-db-prod:/app/vector_db
     extra_hosts:
       - "host.docker.internal:host-gateway"
     ports:
@@ -83,7 +86,10 @@ services:
       REDIS_PORT: "6379"
       REDIS_DB: "0"
       PROMETHEUS_URL: ${PROMETHEUS_URL:-http://host.docker.internal:9090}
+      VECTOR_DB_PATH: /app/vector_db
       PYTHONUNBUFFERED: "1"
+    volumes:
+      - vector-db-prod:/app/vector_db
     extra_hosts:
       - "host.docker.internal:host-gateway"
     command: ["celery", "-A", "core.celery_app.celery_app", "worker", "--loglevel=INFO"]
@@ -195,3 +201,4 @@ volumes:
   redis-data-prod:
   redis-cache-data-prod:
   postgres-data-prod:
+  vector-db-prod:

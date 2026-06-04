@@ -61,18 +61,12 @@ def test_docker_container_resolved_requires_fresh_container_metric() -> None:
     with patch.object(checker, "query", return_value=[]):
         assert checker.is_alert_resolved("DockerContainerDown", "bank-web-01", labels) is False
 
-    with patch.object(
-        checker,
-        "query",
-        side_effect=[[{"value": [1, "123"]}], [{"value": [1, "10"]}]],
-    ):
+    with patch.object(checker, "query", return_value=[{"value": [1, "10"]}]) as query:
         assert checker.is_alert_resolved("DockerContainerDown", "bank-web-01", labels) is True
 
-    with patch.object(
-        checker,
-        "query",
-        side_effect=[[{"value": [1, "123"]}], [{"value": [1, "45"]}]],
-    ):
+    assert "max by (instance)" in query.call_args.args[0]
+
+    with patch.object(checker, "query", return_value=[{"value": [1, "45"]}]):
         assert checker.is_alert_resolved("DockerContainerDown", "bank-web-01", labels) is False
 
 

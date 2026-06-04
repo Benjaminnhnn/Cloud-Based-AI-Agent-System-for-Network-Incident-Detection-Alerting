@@ -981,3 +981,25 @@ Khi ban giao cho dev khac, gui rieng:
 - Gia tri GitHub Secrets cho runtime release.
 - GitHub Secrets can update.
 - Public IP hien tai cua ha tang.
+
+## 17. RAG Persistent Storage
+
+The monitor role must deploy `ai-agent` and `celery-worker` with the same persistent ChromaDB volume mounted at `/app/vector_db`. The release compose files set `VECTOR_DB_PATH=/app/vector_db` and share:
+
+- Staging: `vector-db-staging`
+- Production: `vector-db-prod`
+
+The database contains two collections:
+
+- `standard_runbooks`: chunks loaded from `agent_src/config/knowledge_base/*.md`.
+- `incident_memory`: resolved incident history and accepted/revised admin feedback.
+
+Verify the staging mounts after deployment:
+
+```bash
+docker inspect ai-agent-staging --format '{{range .Mounts}}{{println .Name .Destination}}{{end}}'
+docker inspect celery-worker-staging --format '{{range .Mounts}}{{println .Name .Destination}}{{end}}'
+docker exec celery-worker-staging python tools/inspect_rag_db.py
+```
+
+ChromaDB files are runtime data and must not be committed to Git. Back up an existing `/app/vector_db` directory before the first recreate that introduces the shared named volume.

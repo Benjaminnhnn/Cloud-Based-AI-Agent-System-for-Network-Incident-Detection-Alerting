@@ -93,6 +93,7 @@ def test_resolved_alert_clears_firing_cooldown_without_resending_resolved() -> N
         patch.object(tasks, "ALERT_DEDUP_ENABLED", True),
         patch.object(tasks, "ALERT_AI_COOLDOWN_SECONDS", 60),
         patch.object(tasks, "ALERT_NOTIFICATION_TTL_SECONDS", 60),
+        patch.object(tasks, "get_rag_instance", return_value=None),
         patch.object(tasks, "run_agent_workflow", return_value=("analysis", {"action": "fix", "host": "bank-web-01"})),
         patch.object(tasks, "send_telegram_message") as send_telegram_message,
         patch.object(tasks, "save_incident_to_redis"),
@@ -327,6 +328,7 @@ def test_known_runbook_alert_does_not_call_gemini() -> None:
     with (
         patch.object(tasks, "redis_client", None),
         patch.object(tasks, "ALERT_DEDUP_ENABLED", False),
+        patch.object(tasks, "get_rag_instance", return_value=None),
         patch.object(tasks, "run_agent_workflow") as run_agent_workflow,
         patch.object(tasks, "send_telegram_message") as send_telegram_message,
         patch.object(tasks, "save_incident_to_redis"),
@@ -337,3 +339,23 @@ def test_known_runbook_alert_does_not_call_gemini() -> None:
     run_agent_workflow.assert_not_called()
     assert send_telegram_message.called
     assert "redis-cache-staging" in send_telegram_message.call_args.args[0]
+
+
+def test_known_runbook_alert_adds_rag_context_to_incident() -> None:
+    alert = _runbook_alert("RedisDown", "redis-cache-staging", "monitor-ai-01")
+    fake_rag = Mock()
+    fake_rag.query_knowledge.return_value = "previous admin-reviewed Redis solution"
+
+    with (
+        patch.object(tasks, "redis_client", None),
+        patch.object(tasks, "ALERT_DEDUP_ENABLED", False),
+        patch.object(tasks, "get_rag_instance", return_value=fake_rag),
+        patch.object(tasks, "send_telegram_message"),
+        patch.object(tasks, "save_incident_to_redis") as save_incident,
+        patch.object(tasks.verify_resolution_task, "apply_async"),
+    ):
+        asyncio.run(tasks.process_single_alert(alert))
+
+    fake_rag.query_knowledge.assert_called_once()
+    context = save_incident.call_args.args[1]
+    assert "previous admin-reviewed Redis solution" in context["ai_analysis"]

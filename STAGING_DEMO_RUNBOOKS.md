@@ -206,7 +206,7 @@ Tren Monitor:
 watch -n 5 "curl -s 'http://127.0.0.1:9090/api/v1/alerts' | jq '.data.alerts[] | {state, alertname:.labels.alertname, component:.labels.component, instance:.labels.instance, activeAt}'"
 ```
 
-Rule `DockerContainerDown` co `for: 2m` de bo qua khoang trong metric ngan khi deploy recreate container. Khi container thuc su dung, canh bao thuong xuat hien sau khoang `2-3 phut`. Moi alert co Incident ID rieng.
+Rule `DockerContainerDown` dung `max by (instance) (container_last_seen...)` de chi danh gia series cAdvisor moi nhat, tranh bao sai tu container cu sau recreate. Rule co `for: 2m` de bo qua khoang trong metric ngan khi deploy. Khi container thuc su dung, canh bao thuong xuat hien sau khoang `2-3 phut`. Moi alert co Incident ID rieng.
 
 ### Nguyen tac chay tung kich ban tach roi
 
@@ -605,6 +605,44 @@ Ket qua mong doi:
 ```
 
 Incident da resolved se khong nhan feedback moi. Moi lan service tai phat phai tao Incident ID moi.
+
+### Xem du lieu RAG
+
+Runbook chuan la cac file co trong repo:
+
+```bash
+find agent_src/config/knowledge_base -maxdepth 1 -type f -name '*.md'
+sed -n '1,200p' agent_src/config/knowledge_base/<runbook-file>.md
+```
+
+Feedback duoc chap nhan hoac revised khong ghi nguoc vao file Markdown. Du lieu nay duoc luu trong collection `incident_memory` cua ChromaDB. Runbook duoc chunk va nap vao collection `standard_runbooks`.
+
+Tren monitor host:
+
+```bash
+cd /home/ec2-user/aws-hybrid
+
+docker exec celery-worker-staging python tools/inspect_rag_db.py
+docker exec celery-worker-staging python tools/inspect_rag_db.py --collection standard_runbooks
+docker exec celery-worker-staging python tools/inspect_rag_db.py --collection incident_memory
+docker exec celery-worker-staging python tools/inspect_rag_db.py --collection incident_memory --source admin_feedback
+```
+
+Xac nhan `ai-agent` va `celery-worker` dang mount cung mot volume tai `/app/vector_db`:
+
+```bash
+docker inspect ai-agent-staging --format '{{range .Mounts}}{{println .Name .Destination}}{{end}}'
+docker inspect celery-worker-staging --format '{{range .Mounts}}{{println .Name .Destination}}{{end}}'
+docker volume inspect aws-hybrid-staging-monitor_vector-db-staging
+```
+
+Ten volume co the khac neu Compose project name khac. Lay ten chinh xac tu ket qua `docker inspect`.
+
+Neu staging da co feedback trong ChromaDB cu truoc khi them shared volume, backup truoc khi recreate container:
+
+```bash
+docker cp celery-worker-staging:/app/vector_db /home/ec2-user/rag-vector-db-backup
+```
 
 ## 16. Cac service khong nen dung trong demo
 
