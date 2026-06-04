@@ -211,7 +211,7 @@ cd /home/ec2-user/aws-hybrid
 cp release/.env.staging /tmp/.env.staging.demo-backup
 sed -i 's|^PAYMENT_API_UPSTREAM=.*|PAYMENT_API_UPSTREAM=http://127.0.0.1:9|' release/.env.staging
 
-docker compose -p aws-hybrid-staging-web \
+docker-compose -p aws-hybrid-staging-web \
   --env-file release/.env.staging \
   -f release/docker-compose.staging.yml \
   up -d --force-recreate frontend-web
@@ -226,23 +226,26 @@ Ket qua mong doi:
 - `/api/ready` tra `502`.
 - Telegram nhan `FrontendAPIProxyDown`.
 - Telegram khong nhan `PaymentAPIEndpointDown`, vi backend truc tiep van khoe.
-- Agent uu tien kiem tra `PAYMENT_API_UPSTREAM`, Nginx logs va ket noi web-to-core.
+- Agent hien thi upstream mong doi tu inventory va dua lenh sua `PAYMENT_API_UPSTREAM` cu the.
+- Release script khong tu suy ra upstream dung; neu `.env.staging` van sai thi redeploy van tiep tuc loi.
 
 Feedback mau:
 
 ```text
-/feedback <incident_id> Frontend health van 200 nhung /api/ready tra 502. Kiem tra PAYMENT_API_UPSTREAM va recreate frontend sau khi sua cau hinh.
+/feedback <incident_id> Frontend health van 200 nhung /api/ready tra 502. Sua PAYMENT_API_UPSTREAM ve http://10.10.1.119:18080, sau do redeploy web va kiem tra lai readiness.
 ```
 
 ### Khoi phuc
 
 ```bash
 cp /tmp/.env.staging.demo-backup release/.env.staging
+grep '^PAYMENT_API_UPSTREAM=' release/.env.staging
 
-docker compose -p aws-hybrid-staging-web \
-  --env-file release/.env.staging \
-  -f release/docker-compose.staging.yml \
-  up -d --force-recreate frontend-web
+# Neu backup khong dung, sua truc tiep theo core private IP hien tai:
+sed -i 's|^PAYMENT_API_UPSTREAM=.*|PAYMENT_API_UPSTREAM=http://10.10.1.119:18080|' release/.env.staging
+
+TAG=$(cat release/.state/staging.tag)
+./automation/app-release-deploy.sh staging "$TAG" web
 
 curl -i http://127.0.0.1:18081/api/ready
 ```
@@ -260,7 +263,7 @@ cd /home/ec2-user/aws-hybrid
 cp release/docker-compose.staging.yml /tmp/docker-compose.staging.yml.demo-backup
 sed -i 's|postgresql://aiops_user:aiops_pass@postgres:5432/aiops_db|postgresql://aiops_user:wrong_password@postgres:5432/aiops_db|' release/docker-compose.staging.yml
 
-docker compose -p aws-hybrid-staging-core \
+docker-compose -p aws-hybrid-staging-core \
   --env-file release/.env.staging \
   -f release/docker-compose.staging.yml \
   up -d --force-recreate payment-api
@@ -289,7 +292,7 @@ Feedback mau:
 ```bash
 cp /tmp/docker-compose.staging.yml.demo-backup release/docker-compose.staging.yml
 
-docker compose -p aws-hybrid-staging-core \
+docker-compose -p aws-hybrid-staging-core \
   --env-file release/.env.staging \
   -f release/docker-compose.staging.yml \
   up -d --force-recreate payment-api

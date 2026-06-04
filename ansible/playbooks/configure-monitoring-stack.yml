@@ -258,6 +258,7 @@
                     service: 'api-proxy'
                     component: 'frontend-web-staging'
                     dependency: 'payment-api-staging'
+                    expected_upstream: 'http://{{ hostvars[groups["core"][0]].ansible_default_ipv4.address }}:18080'
                     environment: 'staging'
                     runbook: 'api-proxy'
                     endpoint: '/api/ready'

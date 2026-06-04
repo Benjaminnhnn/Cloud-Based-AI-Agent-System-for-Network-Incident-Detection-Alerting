@@ -238,11 +238,13 @@ def test_frontend_api_proxy_diagnosis_prioritizes_upstream_configuration() -> No
     alert = _runbook_alert("FrontendAPIProxyDown", "frontend-web-staging", "bank-web-01")
     alert["labels"]["target"] = "http://13.250.87.160:18081/api/ready"
     alert["labels"]["dependency"] = "payment-api-staging"
+    alert["labels"]["expected_upstream"] = "http://10.10.1.119:18080"
 
     analysis, proposal = tasks.deterministic_diagnosis(alert)
 
     assert "PAYMENT_API_UPSTREAM" in analysis
     assert "frontend /health vẫn trả 200" in analysis
+    assert "PAYMENT_API_UPSTREAM=http://10.10.1.119:18080" in analysis
     assert proposal == {
         "action": "fix_frontend_web_staging_api_upstream",
         "host": "bank-web-01",

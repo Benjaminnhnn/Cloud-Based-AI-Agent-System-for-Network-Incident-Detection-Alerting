@@ -99,3 +99,23 @@ def test_destructive_feedback_is_rejected_and_not_saved() -> None:
     assert result["saved"] is False
     fake_rag.save_admin_solution.assert_not_called()
     assert "Lưu vào RAG: no" in send_message.call_args.args[0]
+
+
+def test_vague_upstream_feedback_is_revised_with_expected_value() -> None:
+    context = {
+        "alert_name": "FrontendAPIProxyDown",
+        "labels": {
+            "expected_upstream": "http://10.10.1.119:18080",
+        },
+        "incident_details": "Alert: FrontendAPIProxyDown\nInstance: bank-web-01",
+        "ai_analysis": "check PAYMENT_API_UPSTREAM",
+    }
+
+    review = asyncio.run(tasks.review_admin_feedback(
+        context,
+        "Kiểm tra PAYMENT_API_UPSTREAM, nếu sai thì chỉnh sửa rồi redeploy web.",
+    ))
+
+    assert review["status"] == "revised"
+    assert "PAYMENT_API_UPSTREAM=http://10.10.1.119:18080" in review["reviewed_solution"]
+    assert "api/ready" in review["reviewed_solution"]

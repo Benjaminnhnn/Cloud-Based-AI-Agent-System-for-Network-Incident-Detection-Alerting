@@ -117,7 +117,7 @@ groups:
           runbook: api-proxy
         annotations:
           summary: "Frontend API proxy is DOWN on {{ $labels.instance }}"
-          description: "Frontend is reachable but {{ $labels.endpoint }} cannot reach {{ $labels.dependency }} at {{ $labels.target }}"
+          description: "Frontend is reachable but {{ $labels.endpoint }} cannot reach {{ $labels.dependency }}. Expected upstream: {{ $labels.expected_upstream }}"
 
       - alert: PaymentAPIEndpointDown
         expr: probe_success{runbook="payment-api",component="payment-api-staging",instance="bank-core-01"} == 0

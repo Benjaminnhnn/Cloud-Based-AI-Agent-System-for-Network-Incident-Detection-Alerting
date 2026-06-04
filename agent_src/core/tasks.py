@@ -278,12 +278,14 @@ def deterministic_diagnosis(alert: dict) -> tuple[str, dict | None]:
     if alert_name == "FrontendAPIProxyDown":
         component = _default_component(labels, environment, "frontend-web-prod", "frontend-web-staging")
         dependency = labels.get("dependency", "payment-api")
+        expected_upstream = labels.get("expected_upstream", "http://<core-private-ip>:18080")
         local_health_url = "http://127.0.0.1:18081/health" if environment == "staging" else "http://127.0.0.1/health"
         local_api_url = "http://127.0.0.1:18081/api/ready" if environment == "staging" else "http://127.0.0.1/api/ready"
         analysis = (
             "Chẩn đoán: frontend vẫn có thể chạy nhưng Nginx proxy không nhận HTTP 2xx từ API upstream.\n"
             f"Component: {component}\n"
             f"Dependency: {dependency}\n"
+            f"Expected upstream: {expected_upstream}\n"
             f"Target: {target}\n"
             f"Tóm tắt: {summary or 'không có'}\n\n"
             "Nguyên nhân ưu tiên:\n"
@@ -299,6 +301,7 @@ def deterministic_diagnosis(alert: dict) -> tuple[str, dict | None]:
             "Khôi phục cấu hình:\n"
             "cd /home/ec2-user/aws-hybrid\n"
             "grep '^PAYMENT_API_UPSTREAM=' release/.env.staging\n"
+            f"sed -i 's|^PAYMENT_API_UPSTREAM=.*|PAYMENT_API_UPSTREAM={expected_upstream}|' release/.env.staging\n"
             f"TAG=$(cat {state_file})\n"
             f"./automation/app-release-deploy.sh {environment} \"$TAG\" web"
         )
@@ -495,6 +498,7 @@ def _format_alert_report(alert: dict, incident_id: str, proposal: dict | None, a
         )
     elif alert_name == "FrontendAPIProxyDown":
         component = _default_component(labels, environment, "frontend-web-prod", "frontend-web-staging")
+        expected_upstream = labels.get("expected_upstream", "http://<core-private-ip>:18080")
         local_health_url = "http://127.0.0.1:18081/health" if environment == "staging" else "http://127.0.0.1/health"
         local_api_url = "http://127.0.0.1:18081/api/ready" if environment == "staging" else "http://127.0.0.1/api/ready"
         role = "web"
@@ -503,7 +507,7 @@ def _format_alert_report(alert: dict, incident_id: str, proposal: dict | None, a
             f"2. docker logs --tail=100 {component}\n"
             f"3. curl -i {local_health_url}\n"
             f"4. curl -i {local_api_url}\n"
-            "5. grep '^PAYMENT_API_UPSTREAM=' release/.env.staging"
+            f"5. sed -i 's|^PAYMENT_API_UPSTREAM=.*|PAYMENT_API_UPSTREAM={expected_upstream}|' release/.env.staging"
         )
     elif alert_name == "PaymentAPIEndpointDown":
         component = _default_component(labels, environment, "payment-api-prod", "payment-api-staging")
@@ -725,6 +729,35 @@ def _destructive_feedback_review(admin_feedback: str) -> dict | None:
     }
 
 
+def _configuration_feedback_review(incident_context: dict, admin_feedback: str) -> dict | None:
+    if incident_context.get("alert_name") != "FrontendAPIProxyDown":
+        return None
+
+    labels = _labels_from_incident_context(incident_context)
+    expected_upstream = str(labels.get("expected_upstream", "")).strip()
+    feedback_lower = admin_feedback.lower()
+    if not expected_upstream or "payment_api_upstream" not in feedback_lower:
+        return None
+    if expected_upstream.lower() in feedback_lower:
+        return None
+
+    return {
+        "status": "revised",
+        "reviewed_solution": (
+            "cd /home/ec2-user/aws-hybrid\n"
+            "grep '^PAYMENT_API_UPSTREAM=' release/.env.staging\n"
+            f"sed -i 's|^PAYMENT_API_UPSTREAM=.*|PAYMENT_API_UPSTREAM={expected_upstream}|' release/.env.staging\n"
+            "TAG=$(cat release/.state/staging.tag)\n"
+            "./automation/app-release-deploy.sh staging \"$TAG\" web\n"
+            "curl -i http://127.0.0.1:18081/api/ready"
+        ),
+        "admin_message": (
+            "Góp ý đúng hướng nhưng chưa nêu giá trị PAYMENT_API_UPSTREAM cần khôi phục. "
+            "Agent đã bổ sung upstream mong đợi từ alert context."
+        ),
+    }
+
+
 def _basic_feedback_review(admin_feedback: str) -> dict:
     destructive_review = _destructive_feedback_review(admin_feedback)
     if destructive_review:
@@ -773,6 +806,10 @@ async def review_admin_feedback(incident_context: dict, admin_feedback: str) -> 
     destructive_review = _destructive_feedback_review(admin_feedback)
     if destructive_review:
         return destructive_review
+
+    configuration_review = _configuration_feedback_review(incident_context, admin_feedback)
+    if configuration_review:
+        return configuration_review
 
     if not GEMINI_API_KEY:
         return _basic_feedback_review(admin_feedback)
