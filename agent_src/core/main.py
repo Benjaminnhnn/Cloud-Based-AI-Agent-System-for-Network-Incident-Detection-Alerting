@@ -2,14 +2,15 @@
 import os
 import logging
 import redis
+import re
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from pydantic import BaseModel
 from typing import List, Optional
 from dotenv import load_dotenv
 
-from core.tasks import process_alerts_task
-from utils.telegram_bot import send_telegram_message, set_telegram_webhook
+from core.tasks import process_admin_feedback_task, process_alerts_task
+from utils.telegram_bot import TELEGRAM_CHAT_ID, send_telegram_message, set_telegram_webhook
 from core.rag_engine import get_rag_instance
 from core.metrics import get_metrics_response
 
@@ -79,6 +80,54 @@ class AlertmanagerPayload(BaseModel):
     alerts: List[Alert]
     status: str
 
+
+def _extract_incident_id(text: str) -> str | None:
+    patterns = (
+        r"(?:^|\s)/feedback\s+([a-fA-F0-9]{6,16})\b",
+        r"(?:^|\s)feedback\s+([a-fA-F0-9]{6,16})\b",
+        r"(?:^|\s)ID\s*:\s*([a-fA-F0-9]{6,16})\b",
+    )
+    for pattern in patterns:
+        match = re.search(pattern, text, flags=re.IGNORECASE)
+        if match:
+            return match.group(1)
+    return None
+
+
+def _extract_feedback_payload(message: dict) -> tuple[str | None, str | None]:
+    text = (message.get("text") or message.get("caption") or "").strip()
+    reply_text = ((message.get("reply_to_message") or {}).get("text") or "").strip()
+
+    incident_id = _extract_incident_id(text) or _extract_incident_id(reply_text)
+    if not incident_id:
+        return None, None
+
+    feedback = text
+    command_match = re.search(
+        r"(?:^|\s)/feedback\s+[a-fA-F0-9]{6,16}\s*(.*)$",
+        text,
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+    plain_match = re.search(
+        r"(?:^|\s)feedback\s+[a-fA-F0-9]{6,16}\s*(.*)$",
+        text,
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+    if command_match:
+        feedback = command_match.group(1).strip()
+    elif plain_match:
+        feedback = plain_match.group(1).strip()
+
+    if _extract_incident_id(text) and feedback == text:
+        feedback = re.sub(
+            r"(?:^|\s)ID\s*:\s*[a-fA-F0-9]{6,16}\b",
+            " ",
+            feedback,
+            flags=re.IGNORECASE,
+        ).strip()
+
+    return incident_id, feedback or None
+
 # ─────────────────────────────────────────────
 # ENDPOINTS
 # ─────────────────────────────────────────────
@@ -92,6 +141,37 @@ async def prometheus_webhook(payload: AlertmanagerPayload):
     """
     process_alerts_task.delay(payload.model_dump())  # model_dump() đúng chuẩn Pydantic v2
     return {"status": "enqueued", "alert_count": len(payload.alerts)}
+
+
+@app.post("/telegram/webhook")
+async def telegram_webhook(update: dict):
+    """
+    Nhận tin nhắn Telegram của admin để góp ý thêm giải pháp cho một incident.
+    Cú pháp: /feedback <incident_id> <góp ý>
+    """
+    message = update.get("message") or update.get("edited_message") or {}
+    chat = message.get("chat") or {}
+    chat_id = chat.get("id")
+
+    if TELEGRAM_CHAT_ID and str(chat_id) != str(TELEGRAM_CHAT_ID):
+        logger.warning("Ignored Telegram message from unauthorized chat_id=%s", chat_id)
+        return {"status": "ignored"}
+
+    incident_id, feedback = _extract_feedback_payload(message)
+    if not incident_id or not feedback:
+        send_telegram_message(
+            "Gửi góp ý theo cú pháp: /feedback <incident_id> <giải pháp>",
+            chat_id=str(chat_id) if chat_id is not None else None,
+            parse_mode=None,
+        )
+        return {"status": "ignored", "reason": "missing_feedback"}
+
+    process_admin_feedback_task.delay(
+        incident_id,
+        feedback,
+        str(chat_id) if chat_id is not None else None,
+    )
+    return {"status": "enqueued", "incident_id": incident_id}
 
 
 @app.get("/metrics")

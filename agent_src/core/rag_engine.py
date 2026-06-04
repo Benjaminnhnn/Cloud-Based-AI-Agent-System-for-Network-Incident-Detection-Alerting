@@ -70,6 +70,41 @@ class RAGEngine:
         )
         logger.info(f"✅ Đã lưu incident '{alert_name}' vào RAG DB (outcome={outcome})")
 
+    def save_admin_solution(
+        self,
+        incident_id: str,
+        alert_name: str,
+        incident_details: str,
+        admin_feedback: str,
+        reviewed_solution: str,
+        review_status: str,
+    ):
+        doc_id = f"admin_feedback_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{incident_id}"
+        document = (
+            f"# Admin Feedback: {alert_name}\n"
+            f"Incident ID: {incident_id}\n\n"
+            f"## Incident context\n{incident_details}\n\n"
+            f"## Admin suggestion\n{admin_feedback}\n\n"
+            f"## Agent-reviewed solution\n{reviewed_solution}\n\n"
+            f"## Review status\n{review_status}\n"
+        )
+        self.collection.upsert(
+            ids=[doc_id],
+            documents=[document],
+            metadatas=[{
+                "source": "admin_feedback",
+                "alert_name": alert_name,
+                "incident_id": incident_id,
+                "timestamp": datetime.now().isoformat(),
+                "review_status": review_status,
+            }]
+        )
+        logger.info(
+            "Saved admin feedback for incident '%s' into RAG DB (status=%s)",
+            incident_id,
+            review_status,
+        )
+
     def query_runbook(self, alert_description: str) -> str:
         try:
             total_count = self.collection.count()
