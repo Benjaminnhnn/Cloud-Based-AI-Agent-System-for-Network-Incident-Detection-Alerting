@@ -7,7 +7,7 @@ import redis
 import re
 import requests
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, Header, HTTPException, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from typing import List, Optional
@@ -25,6 +25,13 @@ from core.runbook_registry import (
     publish_runbook_draft,
     save_tool_revision,
     update_draft_status,
+)
+from core.tool_auto_discovery import (
+    changed_files_from_github_event,
+    detect_ci_toolchain,
+    github_token,
+    register_discovered_ci_toolchain,
+    verify_github_signature,
 )
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -46,6 +53,7 @@ def valid_env_value(value: str | None) -> str | None:
 
 AI_AGENT_PORT       = int(os.getenv("AI_AGENT_PORT", "8000"))
 AI_AGENT_PUBLIC_URL = valid_env_value(os.getenv("AI_AGENT_PUBLIC_URL"))
+GITHUB_WEBHOOK_SECRET = valid_env_value(os.getenv("GITHUB_WEBHOOK_SECRET"))
 
 REDIS_HOST = os.getenv("REDIS_HOST", "localhost")
 REDIS_PORT = int(os.getenv("REDIS_PORT", "6379"))
@@ -270,6 +278,49 @@ async def metrics():
     except redis.RedisError:
         logger.warning("Unable to refresh Celery queue depth metric")
     return get_metrics_response()
+
+
+@app.post("/github/webhook", status_code=202)
+async def github_webhook(
+    request: Request,
+    x_github_event: Optional[str] = Header(default=None),
+    x_hub_signature_256: Optional[str] = Header(default=None),
+):
+    """Auto-discover CI/IaC tooling changes from GitHub push or PR webhooks."""
+    body = await request.body()
+    if not verify_github_signature(GITHUB_WEBHOOK_SECRET, body, x_hub_signature_256):
+        raise HTTPException(status_code=401, detail="Invalid GitHub webhook signature")
+
+    try:
+        payload = json.loads(body.decode("utf-8"))
+    except json.JSONDecodeError as e:
+        raise HTTPException(status_code=400, detail="Invalid JSON payload") from e
+
+    event = x_github_event or payload.get("event") or ""
+    if event not in {"push", "pull_request"}:
+        return {"status": "ignored", "reason": f"unsupported event: {event or 'unknown'}"}
+
+    try:
+        files = changed_files_from_github_event(event, payload, token=github_token())
+    except requests.RequestException as e:
+        logger.error("Failed to fetch GitHub changed files: %s", e)
+        raise HTTPException(status_code=502, detail="Unable to fetch GitHub changed files") from e
+
+    detection = detect_ci_toolchain(files)
+    if not detection:
+        return {"status": "ignored", "reason": "no watched CI toolchain change", "files_checked": len(files)}
+
+    actor = "github-webhook"
+    sender = payload.get("sender") or {}
+    if sender.get("login"):
+        actor = f"github:{sender['login']}"
+
+    result = register_discovered_ci_toolchain(payload, detection, actor=actor)
+    return {
+        **result,
+        "discovered_tools": detection["discovered_tools"],
+        "changed_files": detection["changed_files"],
+    }
 
 
 @app.post("/api/tools", status_code=202)

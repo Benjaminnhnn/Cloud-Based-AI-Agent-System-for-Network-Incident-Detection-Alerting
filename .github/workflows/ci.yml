@@ -73,3 +73,13 @@ jobs:
           chmod +x automation/notify.sh
           FAILED_STEP=$(echo "${{ job.status }}" | tr '[:upper:]' '[:lower:]')
           ./automation/notify.sh "CI Pipeline" "$FAILED_STEP" "Lint/Test/Build validation failed for ${{ github.ref_name }} by ${{ github.actor }}"
+
+          
+      - name: Trivy image scan
+        run: trivy image ghcr.io/${{ github.repository }}:${{ github.sha }}
+
+      - name: Terraform validate
+        run: terraform validate
+
+      - name: Ansible lint
+        run: ansible-lint ansible/playbooks
