@@ -244,8 +244,8 @@ def deterministic_diagnosis(alert: dict) -> tuple[str, dict | None]:
 
     if alert_name == "WebEndpointDown":
         component = _default_component(labels, environment, "frontend-web-prod", "frontend-web-staging")
-        local_health_url = "http://127.0.0.1:18081/health" if environment == "staging" else "http://127.0.0.1/health"
-        local_api_url = "http://127.0.0.1:18081/api/health" if environment == "staging" else "http://127.0.0.1/api/health"
+        local_health_url = "http://127.0.0.1:18081/health" if environment == "staging" else "http://127.0.0.1:3000/health"
+        local_api_url = "http://127.0.0.1:18081/api/health" if environment == "staging" else "http://127.0.0.1:3000/api/health"
         analysis = (
             "Chẩn đoán: Blackbox không nhận HTTP 2xx từ web endpoint.\n"
             f"Component: {component}\n"
@@ -274,8 +274,8 @@ def deterministic_diagnosis(alert: dict) -> tuple[str, dict | None]:
         component = _default_component(labels, environment, "frontend-web-prod", "frontend-web-staging")
         dependency = labels.get("dependency", "payment-api")
         expected_upstream = labels.get("expected_upstream", "http://<core-private-ip>:18080")
-        local_health_url = "http://127.0.0.1:18081/health" if environment == "staging" else "http://127.0.0.1/health"
-        local_api_url = "http://127.0.0.1:18081/api/ready" if environment == "staging" else "http://127.0.0.1/api/ready"
+        local_health_url = "http://127.0.0.1:18081/health" if environment == "staging" else "http://127.0.0.1:3000/health"
+        local_api_url = "http://127.0.0.1:18081/api/ready" if environment == "staging" else "http://127.0.0.1:3000/api/ready"
         analysis = (
             "Chẩn đoán: frontend vẫn có thể chạy nhưng Nginx proxy không nhận HTTP 2xx từ API upstream.\n"
             f"Component: {component}\n"
@@ -482,8 +482,8 @@ def _format_alert_report(alert: dict, incident_id: str, proposal: dict | None, a
 
     if alert_name == "WebEndpointDown":
         component = _default_component(labels, environment, "frontend-web-prod", "frontend-web-staging")
-        local_health_url = "http://127.0.0.1:18081/health" if environment == "staging" else "http://127.0.0.1/health"
-        local_api_url = "http://127.0.0.1:18081/api/health" if environment == "staging" else "http://127.0.0.1/api/health"
+        local_health_url = "http://127.0.0.1:18081/health" if environment == "staging" else "http://127.0.0.1:3000/health"
+        local_api_url = "http://127.0.0.1:18081/api/health" if environment == "staging" else "http://127.0.0.1:3000/api/health"
         role = "web"
         commands = (
             f"1. docker ps -a --filter name={component}\n"
@@ -495,8 +495,8 @@ def _format_alert_report(alert: dict, incident_id: str, proposal: dict | None, a
     elif alert_name == "FrontendAPIProxyDown":
         component = _default_component(labels, environment, "frontend-web-prod", "frontend-web-staging")
         expected_upstream = labels.get("expected_upstream", "http://<core-private-ip>:18080")
-        local_health_url = "http://127.0.0.1:18081/health" if environment == "staging" else "http://127.0.0.1/health"
-        local_api_url = "http://127.0.0.1:18081/api/ready" if environment == "staging" else "http://127.0.0.1/api/ready"
+        local_health_url = "http://127.0.0.1:18081/health" if environment == "staging" else "http://127.0.0.1:3000/health"
+        local_api_url = "http://127.0.0.1:18081/api/ready" if environment == "staging" else "http://127.0.0.1:3000/api/ready"
         role = "web"
         commands = (
             f"1. docker inspect -f '{{{{range .Config.Env}}}}{{{{println .}}}}{{{{end}}}}' {component} | grep PAYMENT_API_UPSTREAM\n"

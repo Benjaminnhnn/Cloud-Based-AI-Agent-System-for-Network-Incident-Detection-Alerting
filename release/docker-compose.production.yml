@@ -192,7 +192,7 @@ services:
     container_name: frontend-web-prod
     restart: always
     ports:
-      - "80:80"
+      - "127.0.0.1:${FRONTEND_PROD_HOST_PORT:-3000}:80"
     environment:
       PAYMENT_API_UPSTREAM: ${PAYMENT_API_UPSTREAM:-http://payment-api:8000}
     healthcheck:

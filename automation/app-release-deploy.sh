@@ -34,8 +34,8 @@ case "$ENVIRONMENT" in
     ENV_FILE="release/.env.production"
     AI_HEALTH_URL="http://127.0.0.1:8000/health"
     API_HEALTH_URL="http://127.0.0.1:8080/api/health"
-    WEB_HEALTH_URL="http://127.0.0.1/health"
-    WEB_API_HEALTH_URL="http://127.0.0.1/api/health"
+    WEB_HEALTH_URL="http://127.0.0.1:3000/health"
+    WEB_API_HEALTH_URL="http://127.0.0.1:3000/api/health"
     ;;
 esac
 

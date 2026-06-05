@@ -203,7 +203,7 @@ Health check:
 ```text
 AI Agent: http://127.0.0.1:8000/health
 Backend:  http://127.0.0.1:8080/api/health
-Frontend: http://127.0.0.1:8081/health
+Frontend: http://127.0.0.1:3000/health
 ```
 
 Nếu bất kỳ health check nào thất bại, script sẽ tự rollback về tag đã lưu trước đó.
@@ -251,7 +251,7 @@ Repository secrets trên GitHub cần có:
 | Prometheus | `http://<monitor-ip>:9090` |
 | Alertmanager | `http://<monitor-ip>:9093` |
 | AI Agent production | `http://<monitor-ip>:8000/health` |
-| Frontend release internal | `http://127.0.0.1:8081/health` |
+| Frontend release internal | `http://127.0.0.1:3000/health` |
 
 ---
 
