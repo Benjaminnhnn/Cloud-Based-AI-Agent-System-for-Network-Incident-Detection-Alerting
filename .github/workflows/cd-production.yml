@@ -102,9 +102,38 @@ jobs:
           import os
           from pathlib import Path
 
+          def inventory_host(group: str) -> str:
+              inventory = Path("ansible/inventory.ini")
+              if not inventory.exists():
+                  return ""
+
+              in_group = False
+              for line in inventory.read_text().splitlines():
+                  stripped = line.strip()
+                  if stripped == f"[{group}]":
+                      in_group = True
+                      continue
+                  if stripped.startswith("["):
+                      in_group = False
+                  if not in_group or "ansible_host=" not in stripped:
+                      continue
+                  for part in stripped.split():
+                      if part.startswith("ansible_host="):
+                          return part.split("=", 1)[1]
+              return ""
+
+          core_host = inventory_host("core")
+          payment_api_upstream = (
+              f"http://{core_host}:8080" if core_host else os.environ.get("PAYMENT_API_UPSTREAM")
+          )
+          if not payment_api_upstream:
+              raise SystemExit("Missing required environment variable: PAYMENT_API_UPSTREAM")
+          payment_api_upstream = payment_api_upstream.strip()
+          if not payment_api_upstream.startswith(("http://", "https://")):
+              raise SystemExit("PAYMENT_API_UPSTREAM must include http:// or https://")
           values = {
               "ENVIRONMENT": "production",
-              "PAYMENT_API_UPSTREAM": os.environ.get("PAYMENT_API_UPSTREAM") or "http://10.10.1.118:8080",
+              "PAYMENT_API_UPSTREAM": payment_api_upstream,
           }
           for key in (
               "GEMINI_API_KEY",

@@ -77,7 +77,7 @@ jobs:
                   "paths": ("demo-web/frontend/",),
               },
           }
-          shared_paths = ("release/", "automation/")
+          shared_paths = ("release/", "automation/", ".github/workflows/cd-staging.yml")
 
           build_all = event_name == "workflow_dispatch" or any(
               path.startswith(shared_paths) for path in changed
@@ -165,7 +165,33 @@ jobs:
           import os
           from pathlib import Path
 
-          payment_api_upstream = os.environ.get("STAGING_PAYMENT_API_UPSTREAM") or os.environ.get("PAYMENT_API_UPSTREAM")
+          def inventory_host(group: str) -> str:
+              inventory = Path("ansible/inventory.ini")
+              if not inventory.exists():
+                  return ""
+
+              in_group = False
+              for line in inventory.read_text().splitlines():
+                  stripped = line.strip()
+                  if stripped == f"[{group}]":
+                      in_group = True
+                      continue
+                  if stripped.startswith("["):
+                      in_group = False
+                  if not in_group or "ansible_host=" not in stripped:
+                      continue
+                  for part in stripped.split():
+                      if part.startswith("ansible_host="):
+                          return part.split("=", 1)[1]
+              return ""
+
+          core_host = inventory_host("core")
+          inventory_payment_api_upstream = f"http://{core_host}:18080" if core_host else ""
+          payment_api_upstream = (
+              inventory_payment_api_upstream
+              or os.environ.get("STAGING_PAYMENT_API_UPSTREAM")
+              or os.environ.get("PAYMENT_API_UPSTREAM")
+          )
           if not payment_api_upstream:
               raise SystemExit("Missing required environment variable: STAGING_PAYMENT_API_UPSTREAM")
           payment_api_upstream = payment_api_upstream.strip()
