@@ -1,5 +1,6 @@
 import hmac
 import hashlib
+import json
 import os
 import re
 from typing import Any
@@ -101,6 +102,7 @@ def changed_files_from_github_event(event: str, payload: dict[str, Any], token: 
 def detect_ci_toolchain(files: list[dict[str, Any]]) -> dict[str, Any] | None:
     watched = []
     discovered = set()
+    matched_commands = []
 
     for item in files:
         filename = str(item.get("filename") or item.get("path") or "")
@@ -109,18 +111,38 @@ def detect_ci_toolchain(files: list[dict[str, Any]]) -> dict[str, Any] | None:
 
         watched.append(filename)
         patch = str(item.get("patch") or "")
-        content = f"{filename}\n{patch}"
-        for key, pattern in DISCOVERY_PATTERNS.items():
-            if pattern.search(content):
-                discovered.add(key)
+        added_lines = []
+        for line in patch.splitlines():
+            if line.startswith("+") and not line.startswith("+++"):
+                added_lines.append(line[1:].strip())
+
+        # Fallback for synthetic tests or API payloads that provide full content instead of unified diff.
+        if not added_lines and not patch.startswith("@@"):
+            added_lines = [line.strip() for line in patch.splitlines() if line.strip()]
+
+        for line in added_lines:
+            content = f"{filename}\n{line}"
+            for key, pattern in DISCOVERY_PATTERNS.items():
+                if pattern.search(content):
+                    discovered.add(key)
+                    matched_commands.append(f"{filename}:{key}:{line}")
 
     if not discovered:
         return None
 
     ordered = [key for key in ("trivy", "terraform_validate", "ansible_lint") if key in discovered]
+    signature_payload = {
+        "discovered_tools": ordered,
+        "changed_files": sorted(set(watched)),
+        "matched_commands": sorted(set(matched_commands)),
+    }
     return {
         "discovered_tools": ordered,
         "changed_files": sorted(set(watched)),
+        "matched_commands": sorted(set(matched_commands)),
+        "discovery_signature": hashlib.sha256(
+            json.dumps(signature_payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        ).hexdigest()[:16],
     }
 
 
@@ -160,6 +182,8 @@ def build_ci_quality_gate_metadata(payload: dict[str, Any], detection: dict[str,
             "sha": sha,
             "changed_files": files,
             "discovered_tools": tools,
+            "matched_commands": detection.get("matched_commands", []),
+            "discovery_signature": detection.get("discovery_signature"),
         },
     }
 
@@ -167,6 +191,27 @@ def build_ci_quality_gate_metadata(payload: dict[str, Any], detection: dict[str,
 def register_discovered_ci_toolchain(payload: dict[str, Any], detection: dict[str, Any], actor: str) -> dict[str, Any]:
     metadata = build_ci_quality_gate_metadata(payload, detection, actor)
     current = get_current_tool_revision(metadata["name"])
+    current_signature = (current or {}).get("source", {}).get("discovery_signature")
+    next_signature = metadata.get("source", {}).get("discovery_signature")
+    if current and current_signature and current_signature == next_signature:
+        return {
+            "status": "unchanged",
+            "tool_name": metadata["name"],
+            "revision_id": current["revision_id"],
+            "review_status": "not_queued",
+        }
+    current_source = (current or {}).get("source", {})
+    next_source = metadata.get("source", {})
+    if current and not current_signature and (
+        current_source.get("discovered_tools") == next_source.get("discovered_tools")
+        and current_source.get("changed_files") == next_source.get("changed_files")
+    ):
+        return {
+            "status": "unchanged",
+            "tool_name": metadata["name"],
+            "revision_id": current["revision_id"],
+            "review_status": "not_queued",
+        }
     if current and current.get("version") == metadata["version"]:
         return {
             "status": "unchanged",
