@@ -111,6 +111,33 @@ ansible-lint
 
 Neu push khong chua cac pattern nay, webhook van tra ve `202`, nhung Agent se bo qua va khong tao runbook draft.
 
+Agent co co che chong lap de tranh vong lap alert Telegram:
+
+```text
+1. Chi phat hien pattern tren dong moi duoc them/sua trong diff.
+2. Khong quet cac dong context cu trong patch.
+3. Luu discovery_signature cho bo cong cu + file + command da phat hien.
+4. Neu push moi van la cung toolchain da ghi nhan, Agent tra ve unchanged va khong enqueue Celery.
+```
+
+Ket qua mong doi khi push lai workflow van chua pattern cu nhung khong them tool moi:
+
+```json
+{
+  "status": "unchanged",
+  "review_status": "not_queued"
+}
+```
+
+Ket qua mong doi khi pattern cu chi xuat hien trong context cua diff:
+
+```json
+{
+  "status": "ignored",
+  "reason": "no watched CI toolchain change"
+}
+```
+
 Vi du:
 
 ```text
@@ -163,13 +190,15 @@ Ket qua duoc tao qua 5 buoc:
 
 3. **Agent phan tich diff**
 
-   Agent doc `filename` va `patch` de tim cac lenh:
+   Agent doc `filename` va `patch` de tim cac lenh moi duoc them/sua:
 
    ```text
    trivy
    terraform validate
    ansible-lint
    ```
+
+   Luu y: cac lenh da ton tai tu truoc va chi xuat hien trong context cua diff se khong kich hoat draft moi.
 
 4. **Agent tao metadata cho Tool Registry**
 
@@ -848,6 +877,42 @@ Sau khi bo sung pattern, luong runbook draft van giu nguyen:
 
 ```text
 Webhook -> Auto-Discovery -> Tool Registry -> Draft -> Telegram approval -> Publish version moi
+```
+
+## Kiem tra co bi lap Telegram hay khong
+
+Gui lai push co cung bo toolchain da duoc ghi nhan. Agent phai tra ve:
+
+```text
+status: unchanged
+review_status: not_queued
+```
+
+Kiem log worker:
+
+```bash
+docker logs --since 2m celery-worker-staging | grep "review_tool_change_task"
+```
+
+Neu khong co task moi, nghia la Agent khong tao draft/Telegram lap lai.
+
+Kiem tra diff chi co pattern cu trong context:
+
+```text
+Patch co dong context:
+  - run: trivy ...
+  - run: terraform validate
+  - run: ansible-lint ...
+
+Nhung dong moi them la:
+  + run: pytest tests
+```
+
+Ket qua dung:
+
+```text
+status: ignored
+reason: no watched CI toolchain change
 ```
 
 ## Checklist nhanh truoc khi demo
