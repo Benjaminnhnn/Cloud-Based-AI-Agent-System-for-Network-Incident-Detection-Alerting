@@ -149,3 +149,23 @@ def test_known_runbook_alert_does_not_call_gemini() -> None:
     run_agent_workflow.assert_not_called()
     assert send_telegram_message.called
     assert "redis-cache-staging" in send_telegram_message.call_args.args[0]
+
+
+def test_alert_batch_concurrency_is_bounded() -> None:
+    active = 0
+    peak = 0
+
+    async def fake_process_single_alert(alert: dict) -> None:
+        nonlocal active, peak
+        active += 1
+        peak = max(peak, active)
+        await asyncio.sleep(0.01)
+        active -= 1
+
+    with (
+        patch.object(tasks, "ALERT_BATCH_CONCURRENCY", 2),
+        patch.object(tasks, "process_single_alert", side_effect=fake_process_single_alert),
+    ):
+        tasks.process_alerts_task.run({"alerts": [{"id": i} for i in range(6)]})
+
+    assert peak == 2

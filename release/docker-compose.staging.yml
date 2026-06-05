@@ -3,7 +3,7 @@ services:
     image: redis:7-alpine
     container_name: redis-staging
     restart: unless-stopped
-    command: ["redis-server", "--appendonly", "yes"]
+    command: ["redis-server", "--appendonly", "yes", "--maxmemory", "${REDIS_BROKER_MAXMEMORY:-512mb}", "--maxmemory-policy", "noeviction"]
     volumes:
       - redis-data-staging:/data
     healthcheck:
@@ -18,7 +18,7 @@ services:
     image: redis:7-alpine
     container_name: redis-cache-staging
     restart: unless-stopped
-    command: ["redis-server", "--appendonly", "yes"]
+    command: ["redis-server", "--appendonly", "yes", "--maxmemory", "${REDIS_CACHE_MAXMEMORY:-256mb}", "--maxmemory-policy", "allkeys-lru"]
     volumes:
       - redis-cache-data-staging:/data
     healthcheck:
@@ -41,6 +41,20 @@ services:
       - aiops-network
     depends_on:
       redis-cache:
+        condition: service_healthy
+
+  redis-broker-exporter:
+    image: oliver006/redis_exporter:v1.67.0
+    container_name: redis-broker-exporter-staging
+    restart: unless-stopped
+    environment:
+      REDIS_ADDR: redis://redis:6379
+    ports:
+      - "19122:9121"
+    networks:
+      - aiops-network
+    depends_on:
+      redis:
         condition: service_healthy
 
   ai-agent:
@@ -80,7 +94,7 @@ services:
       REDIS_PORT: "6379"
       REDIS_DB: "0"
       PYTHONUNBUFFERED: "1"
-    command: ["celery", "-A", "core.celery_app.celery_app", "worker", "--loglevel=INFO"]
+    command: ["celery", "-A", "core.celery_app.celery_app", "worker", "--loglevel=INFO", "--concurrency=${CELERY_WORKER_CONCURRENCY:-2}"]
     depends_on:
       redis:
         condition: service_healthy

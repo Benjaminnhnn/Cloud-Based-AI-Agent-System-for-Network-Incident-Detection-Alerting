@@ -134,6 +134,30 @@ groups:
           summary: "Redis {{ $labels.component }} is DOWN on {{ $labels.instance }}"
           description: "redis_exporter reports redis_up=0 for {{ $labels.component }}"
 
+      - alert: RedisBrokerDown
+        expr: |
+          up{runbook="redis",component="redis-staging",instance="monitor-ai-01"} == 0
+          or redis_up{runbook="redis",component="redis-staging",instance="monitor-ai-01"} == 0
+        for: 30s
+        labels:
+          severity: critical
+          service: redis-broker
+          runbook: redis
+        annotations:
+          summary: "Redis broker {{ $labels.component }} is DOWN on {{ $labels.instance }}"
+          description: "Celery queue broker is unavailable. New AI Ops alerts will be retried upstream."
+
+      - alert: CeleryQueueBacklogHigh
+        expr: aiops_celery_queue_depth >= 800
+        for: 2m
+        labels:
+          severity: warning
+          service: ai-agent
+          runbook: redis
+        annotations:
+          summary: "Celery queue backlog is high on {{ $labels.instance }}"
+          description: "Celery queue has {{ $value }} waiting tasks. Capacity guard starts rejecting at 1000."
+
       - alert: DockerContainerDown
         expr: absent(container_last_seen{name=~".*frontend-web-staging",instance="bank-web-01"})
         for: 30s

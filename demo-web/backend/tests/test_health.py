@@ -18,4 +18,4 @@ def test_backend_root_endpoint() -> None:
 
     assert response.status_code == 200
     data = response.json()
-    assert data["message"] == "AIOps Demo API"
+    assert data["message"] == "VietTien Digital Banking API"

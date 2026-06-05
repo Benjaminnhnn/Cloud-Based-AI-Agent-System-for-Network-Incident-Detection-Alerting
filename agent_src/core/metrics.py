@@ -10,6 +10,12 @@ ALERTS_PROCESSED_TOTAL = Counter(
     ['status'] # success, failure, resolved, deduped
 )
 
+WEBHOOK_EVENTS_TOTAL = Counter(
+    'aiops_webhook_events_total',
+    'Tong so alerts nhan tai webhook theo ket qua enqueue',
+    ['status']  # enqueued, deduped, rejected, error
+)
+
 AI_WORKFLOW_LATENCY_SECONDS = Histogram(
     'aiops_ai_workflow_duration_seconds', 
     'Thời gian hoàn tất workflow AI (RAG + LLM)',
@@ -20,6 +26,11 @@ AI_WORKFLOW_LATENCY_SECONDS = Histogram(
 ACTIVE_TASKS = Gauge(
     'aiops_active_tasks',
     'Số lượng alert đang được phân tích đồng thời'
+)
+
+CELERY_QUEUE_DEPTH = Gauge(
+    'aiops_celery_queue_depth',
+    'So luong Celery tasks dang cho trong Redis broker'
 )
 
 def get_metrics_response():

@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 from app.models.user import User
-from app.schemas.user import UserCreate, User as UserSchema, UserUpdate
+from app.schemas.user import UserCreate, UserLogin, User as UserSchema, UserUpdate
 from app.services.user_service import UserService
 from app.database import get_db
 
@@ -26,8 +26,32 @@ async def register_user(user: UserCreate, db: Session = Depends(get_db)):
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Username already taken"
         )
-    
+
     return user_service.create_user(db, user)
+
+
+@router.post("/login", response_model=UserSchema)
+async def login_user(credentials: UserLogin, db: Session = Depends(get_db)):
+    """Authenticate a user with email and password."""
+    user = user_service.get_user_by_email(db, credentials.email)
+    if not user or not user.is_active or not user_service.verify_password(credentials.password, user.password_hash):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid email or password"
+        )
+    return user
+
+
+@router.get("/lookup/by-email", response_model=UserSchema)
+async def get_user_by_email(email: str, db: Session = Depends(get_db)):
+    """Get user by email"""
+    user = user_service.get_user_by_email(db, email)
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="User not found"
+        )
+    return user
 
 @router.get("/{user_id}", response_model=UserSchema)
 async def get_user(user_id: int, db: Session = Depends(get_db)):

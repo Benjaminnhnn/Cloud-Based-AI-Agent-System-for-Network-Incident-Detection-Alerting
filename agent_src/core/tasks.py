@@ -19,6 +19,7 @@ from google.genai import types
 from core.celery_app import celery_app
 from core.metrics import ACTIVE_TASKS, AI_WORKFLOW_LATENCY_SECONDS, ALERTS_PROCESSED_TOTAL
 from core.rag_engine import get_rag_instance
+from core.runbook_registry import create_runbook_draft
 from tools.diag_tools import AGENT_TOOLS
 from tools.prometheus_check import get_prometheus_checker
 from utils.telegram_bot import send_telegram_message
@@ -52,6 +53,7 @@ GEMINI_MAX_REMOTE_CALLS = int(os.getenv("GEMINI_MAX_REMOTE_CALLS", "1"))
 GEMINI_RETRY_BASE_SECONDS = float(os.getenv("GEMINI_RETRY_BASE_SECONDS", "2"))
 ALERT_AI_COOLDOWN_SECONDS = int(os.getenv("ALERT_AI_COOLDOWN_SECONDS", "900"))
 ALERT_DEDUP_ENABLED = os.getenv("ALERT_DEDUP_ENABLED", "true").lower() not in {"0", "false", "no"}
+ALERT_BATCH_CONCURRENCY = max(int(os.getenv("ALERT_BATCH_CONCURRENCY", "4")), 1)
 VN_TZ = ZoneInfo("Asia/Ho_Chi_Minh")
 
 # Redis Configuration (để lưu incident context)
@@ -332,6 +334,32 @@ def save_incident_to_redis(incident_id: str, context: dict, ttl: int = 86400):
         logger.error(f"Error writing to Redis: {e}")
 
 
+def _runbook_approval_keyboard(draft_id: str) -> dict:
+    return {
+        "inline_keyboard": [
+            [
+                {"text": "Duyệt", "callback_data": f"runbook:approve:{draft_id}"},
+                {"text": "Từ chối", "callback_data": f"runbook:reject:{draft_id}"},
+            ]
+        ]
+    }
+
+
+def notify_runbook_draft_for_approval(draft: dict) -> bool:
+    content_preview = _truncate_text(draft.get("content", ""), 1200)
+    message = (
+        "RUNBOOK DRAFT CAN DUYET\n"
+        f"Draft ID: {draft['draft_id']}\n"
+        f"Tool: {draft['tool_name']}\n"
+        f"Change type: {draft['change_type']}\n"
+        f"Runbook slug: {draft['runbook_slug']}\n\n"
+        "Preview:\n"
+        f"{content_preview}\n\n"
+        "Bam Duyet de publish version moi, hoac Tu choi de giu nguyen runbook hien tai."
+    )
+    return bool(send_telegram_message(message, reply_markup=_runbook_approval_keyboard(draft["draft_id"]), parse_mode=None))
+
+
 async def run_agent_workflow(incident_details: str):
     if not GEMINI_API_KEY:
         return "❌ Error: GEMINI_API_KEY not configured", None
@@ -441,15 +469,6 @@ async def run_agent_workflow(incident_details: str):
 
 
 async def process_single_alert(alert: dict) -> None:
-    """
-    Xử lý logic cho một alert đơn lẻ (async).
-
-    NEW WORKFLOW (Phase 7):
-    - AI phân tích sự cố
-    - Gửi hướng dẫn xử lí chi tiết cho Admin (không có buttons)
-    - Lưu context vào Redis để verify sau
-    - Kích hoạt task verification sau 5-10 phút
-    """
     ACTIVE_TASKS.inc()
     start_time = time.time()
     try:
@@ -667,6 +686,25 @@ def verify_resolution_task(self, incident_id: str, alert_name: str, instance: st
         logger.error(f"Verification task failed: {e}")
         # Retry 1 lần sau 1 phút
         raise self.retry(exc=e, countdown=60)
+
+
+@celery_app.task(name="review_tool_change_task", bind=True, max_retries=2)
+def review_tool_change_task(self, tool_name: str, revision_id: str):
+    """Create a runbook draft for a registered tool revision.
+
+    This task never publishes or overwrites active runbooks. It only creates a
+    pending_approval draft for an admin to review.
+    """
+    try:
+        draft = create_runbook_draft(tool_name=tool_name, revision_id=revision_id)
+        notification_sent = notify_runbook_draft_for_approval(draft)
+        logger.info("Created runbook draft %s for tool %s revision %s", draft["draft_id"], tool_name, revision_id)
+        return {"status": "draft_created", "draft_id": draft["draft_id"], "notification_sent": notification_sent}
+    except Exception as e:
+        logger.error("Tool change review failed: tool=%s revision=%s error=%s", tool_name, revision_id, e)
+        raise self.retry(exc=e, countdown=30)
+
+
 # - FIX #2: Chạy TẤT CẢ alerts trong một lần asyncio.run() duy nhất với gather()
 #   thay vì gọi asyncio.run() lặp lại trong vòng for → tốn tài nguyên tạo/hủy event loop
 # - FIX #1: Tách xử lý lỗi per-alert ra khỏi retry của toàn bộ task.
@@ -682,9 +720,15 @@ def process_alerts_task(self, payload_dict: dict):
         return
 
     async def _run_all():
+        semaphore = asyncio.Semaphore(ALERT_BATCH_CONCURRENCY)
+
+        async def _run_bounded(alert: dict):
+            async with semaphore:
+                return await process_single_alert(alert)
+
         # gather với return_exceptions=True để không dừng lại khi 1 alert lỗi
         results = await asyncio.gather(
-            *[process_single_alert(alert) for alert in alerts],
+            *[_run_bounded(alert) for alert in alerts],
             return_exceptions=True
         )
         # Ghi log các alert bị lỗi mà không làm ảnh hưởng đến alert khác

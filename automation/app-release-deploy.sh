@@ -84,33 +84,33 @@ STALE_CONTAINER_NAMES=()
 
 case "$DEPLOY_ROLE:$ENVIRONMENT" in
   monitor:staging)
-    CONTAINER_NAMES=(redis-staging redis-cache-staging redis-exporter-staging ai-agent-staging celery-worker-staging log-watcher-staging)
+    CONTAINER_NAMES=(redis-staging redis-cache-staging redis-exporter-staging redis-broker-exporter-staging ai-agent-staging celery-worker-staging log-watcher-staging)
     STALE_CONTAINER_NAMES=(payment-api-staging postgres-staging postgres-exporter-staging frontend-web-staging payment-api-prod postgres-prod postgres-exporter-prod frontend-web-prod)
-    SERVICE_NAMES=(redis redis-cache redis-exporter ai-agent celery-worker log-watcher)
+    SERVICE_NAMES=(redis redis-cache redis-exporter redis-broker-exporter ai-agent celery-worker log-watcher)
     ;;
   monitor:production)
-    CONTAINER_NAMES=(redis-prod redis-cache-prod redis-exporter-prod ai-agent-prod celery-worker-prod log-watcher-prod)
+    CONTAINER_NAMES=(redis-prod redis-cache-prod redis-exporter-prod redis-broker-exporter-prod ai-agent-prod celery-worker-prod log-watcher-prod)
     STALE_CONTAINER_NAMES=(payment-api-staging postgres-staging postgres-exporter-staging frontend-web-staging payment-api-prod postgres-prod postgres-exporter-prod frontend-web-prod)
-    SERVICE_NAMES=(redis redis-cache redis-exporter ai-agent celery-worker log-watcher)
+    SERVICE_NAMES=(redis redis-cache redis-exporter redis-broker-exporter ai-agent celery-worker log-watcher)
     ;;
   web:staging)
     CONTAINER_NAMES=(frontend-web-staging)
-    STALE_CONTAINER_NAMES=(redis-staging redis-cache-staging redis-exporter-staging ai-agent-staging celery-worker-staging log-watcher-staging payment-api-staging postgres-staging postgres-exporter-staging redis-prod redis-cache-prod redis-exporter-prod ai-agent-prod celery-worker-prod log-watcher-prod payment-api-prod postgres-prod postgres-exporter-prod)
+    STALE_CONTAINER_NAMES=(redis-staging redis-cache-staging redis-exporter-staging redis-broker-exporter-staging ai-agent-staging celery-worker-staging log-watcher-staging payment-api-staging postgres-staging postgres-exporter-staging redis-prod redis-cache-prod redis-exporter-prod redis-broker-exporter-prod ai-agent-prod celery-worker-prod log-watcher-prod payment-api-prod postgres-prod postgres-exporter-prod)
     SERVICE_NAMES=(frontend-web)
     ;;
   web:production)
     CONTAINER_NAMES=(frontend-web-prod)
-    STALE_CONTAINER_NAMES=(redis-staging redis-cache-staging redis-exporter-staging ai-agent-staging celery-worker-staging log-watcher-staging payment-api-staging postgres-staging postgres-exporter-staging redis-prod redis-cache-prod redis-exporter-prod ai-agent-prod celery-worker-prod log-watcher-prod payment-api-prod postgres-prod postgres-exporter-prod)
+    STALE_CONTAINER_NAMES=(redis-staging redis-cache-staging redis-exporter-staging redis-broker-exporter-staging ai-agent-staging celery-worker-staging log-watcher-staging payment-api-staging postgres-staging postgres-exporter-staging redis-prod redis-cache-prod redis-exporter-prod redis-broker-exporter-prod ai-agent-prod celery-worker-prod log-watcher-prod payment-api-prod postgres-prod postgres-exporter-prod)
     SERVICE_NAMES=(frontend-web)
     ;;
   core:staging)
     CONTAINER_NAMES=(postgres-staging postgres-exporter-staging payment-api-staging)
-    STALE_CONTAINER_NAMES=(redis-staging redis-cache-staging redis-exporter-staging ai-agent-staging celery-worker-staging log-watcher-staging frontend-web-staging redis-prod redis-cache-prod redis-exporter-prod ai-agent-prod celery-worker-prod log-watcher-prod frontend-web-prod)
+    STALE_CONTAINER_NAMES=(redis-staging redis-cache-staging redis-exporter-staging redis-broker-exporter-staging ai-agent-staging celery-worker-staging log-watcher-staging frontend-web-staging redis-prod redis-cache-prod redis-exporter-prod redis-broker-exporter-prod ai-agent-prod celery-worker-prod log-watcher-prod frontend-web-prod)
     SERVICE_NAMES=(postgres postgres-exporter payment-api)
     ;;
   core:production)
     CONTAINER_NAMES=(postgres-prod postgres-exporter-prod payment-api-prod)
-    STALE_CONTAINER_NAMES=(redis-staging redis-cache-staging redis-exporter-staging ai-agent-staging celery-worker-staging log-watcher-staging frontend-web-staging redis-prod redis-cache-prod redis-exporter-prod ai-agent-prod celery-worker-prod log-watcher-prod frontend-web-prod)
+    STALE_CONTAINER_NAMES=(redis-staging redis-cache-staging redis-exporter-staging redis-broker-exporter-staging ai-agent-staging celery-worker-staging log-watcher-staging frontend-web-staging redis-prod redis-cache-prod redis-exporter-prod redis-broker-exporter-prod ai-agent-prod celery-worker-prod log-watcher-prod frontend-web-prod)
     SERVICE_NAMES=(postgres postgres-exporter payment-api)
     ;;
 esac

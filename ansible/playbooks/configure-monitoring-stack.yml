@@ -184,6 +184,28 @@
               scrape_interval: 15s
               scrape_timeout: 10s
 
+            - job_name: 'redis_broker_exporter_monitor_staging'
+              static_configs:
+                - targets: ['localhost:19122']
+                  labels:
+                    instance: 'monitor-ai-01'
+                    service: 'redis-broker'
+                    component: 'redis-staging'
+                    environment: 'staging'
+                    runbook: 'redis'
+              scrape_interval: 15s
+              scrape_timeout: 10s
+
+            - job_name: 'ai_agent_monitor_staging'
+              static_configs:
+                - targets: ['localhost:18000']
+                  labels:
+                    instance: 'monitor-ai-01'
+                    service: 'ai-agent'
+                    environment: 'staging'
+              scrape_interval: 15s
+              scrape_timeout: 10s
+
             - job_name: 'postgres_exporter_core_staging'
               static_configs:
                 - targets: ['{{ hostvars[groups["core"][0]].ansible_default_ipv4.address }}:19187']
@@ -604,6 +626,8 @@
         - 9100  # Node Exporter
         - 9121  # Redis Exporter
         - 19121 # Redis Exporter staging
+        - 9122  # Redis Broker Exporter
+        - 19122 # Redis Broker Exporter staging
         - 8088  # cAdvisor
       when: inventory_hostname == 'monitor-ai-01'
 

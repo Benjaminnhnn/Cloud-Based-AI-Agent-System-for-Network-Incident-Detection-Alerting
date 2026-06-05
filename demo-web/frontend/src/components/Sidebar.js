@@ -1,22 +1,28 @@
 import React from 'react';
 import { Link, useLocation } from 'react-router-dom';
-import { FaThLarge, FaExchangeAlt, FaHistory, FaUser, FaCog, FaLink } from 'react-icons/fa';
+import { FaThLarge, FaExchangeAlt, FaHistory, FaUser, FaCog, FaHeadset } from 'react-icons/fa';
 import '../styles/sidebar.css';
 
 export default function Sidebar() {
   const location = useLocation();
 
   const menuItems = [
-    { path: '/dashboard', label: 'Dashboard', icon: FaThLarge },
-    { path: '/transfer', label: 'Transfer', icon: FaExchangeAlt },
-    { path: '/transactions', label: 'Transactions', icon: FaHistory },
-    { path: '/profile', label: 'Profile', icon: FaUser },
-    { path: '/settings', label: 'Settings', icon: FaCog },
+    { path: '/dashboard', label: 'Tổng quan', icon: FaThLarge },
+    { path: '/transfer', label: 'Chuyển tiền', icon: FaExchangeAlt },
+    { path: '/transactions', label: 'Lịch sử giao dịch', icon: FaHistory },
+    { path: '/profile', label: 'Thông tin cá nhân', icon: FaUser },
+    { path: '/settings', label: 'Cài đặt', icon: FaCog },
   ];
 
   return (
     <aside className="sidebar">
-      <div className="sidebar-brand">VB</div>
+      <Link to="/dashboard" className="sidebar-brand" aria-label="Ngân hàng số VietTien">
+        <img className="brand-mark" src="/viettien-logo.svg" alt="" />
+        <span className="brand-copy">
+          <strong>VietTien</strong>
+          <small>Ngân hàng số</small>
+        </span>
+      </Link>
 
       <nav className="sidebar-nav">
         {menuItems.map((item) => {
@@ -31,14 +37,16 @@ export default function Sidebar() {
               title={item.label}
             >
               <IconComponent className="sidebar-icon" />
+              <span>{item.label}</span>
             </Link>
           );
         })}
       </nav>
 
       <div className="sidebar-footer">
-        <button className="sidebar-link" type="button" title="Connect">
-          <FaLink className="sidebar-icon" />
+        <button className="sidebar-link support-link" type="button" title="Hỗ trợ khách hàng">
+          <FaHeadset className="sidebar-icon" />
+          <span>Hỗ trợ</span>
         </button>
       </div>
     </aside>

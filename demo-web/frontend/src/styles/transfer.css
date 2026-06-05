@@ -1,76 +1,103 @@
 .transfer {
-  color: var(--text-primary);
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  gap: 18px;
+  color: var(--text-primary);
 }
 
 .transfer-header h1 {
-  font-size: clamp(1.45rem, 2.3vw, 2rem);
   margin-bottom: 4px;
+  font-size: 1.65rem;
 }
 
-.transfer-header p {
+.transfer-header > p:last-child {
   color: var(--text-secondary);
+  font-size: 0.9rem;
 }
 
 .transfer-container {
   display: grid;
-  grid-template-columns: minmax(0, 1.8fr) minmax(270px, 1fr);
+  grid-template-columns: minmax(0, 1.65fr) minmax(280px, 0.75fr);
   gap: 16px;
+  align-items: start;
 }
 
-.transfer-form-wrapper,
-.transfer-info,
-.transfer-success .success-card {
+.transfer-form,
+.transfer-summary,
+.transfer-note,
+.success-card {
+  border: 1px solid var(--border);
   border-radius: var(--radius-lg);
-  border: 1px solid var(--glass-border);
-  background: var(--glass-card);
+  background: var(--surface);
   box-shadow: var(--shadow-soft);
 }
 
 .transfer-form {
-  padding: 16px;
+  padding: 18px;
+  display: grid;
+  gap: 16px;
+}
+
+.transfer-section {
   display: grid;
   gap: 14px;
+  padding-bottom: 16px;
+  border-bottom: 1px solid var(--border);
 }
 
-.transfer .form-section {
-  border: 1px solid rgba(121, 138, 178, 0.3);
-  border-radius: 14px;
-  padding: 14px;
+.section-heading {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
 }
 
-.transfer .form-section legend {
-  color: #c5d1ef;
-  font-weight: 700;
-  padding: 0 8px;
+.section-heading > span {
+  width: 24px;
+  height: 24px;
+  flex: 0 0 24px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: var(--green-600);
+  color: #fff;
+  font-size: 0.74rem;
+  font-weight: 800;
+}
+
+.section-heading h2 {
+  margin-bottom: 3px;
+  font-size: 0.98rem;
+}
+
+.section-heading p {
+  color: var(--text-secondary);
+  font-size: 0.78rem;
 }
 
 .transfer .form-group {
-  display: flex;
-  flex-direction: column;
+  display: grid;
   gap: 6px;
 }
 
 .transfer .form-group label {
-  color: #d6e0f8;
-  font-size: 0.88rem;
+  color: var(--text-primary);
+  font-size: 0.82rem;
+  font-weight: 700;
 }
 
 .transfer .form-row {
   display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 10px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
 }
 
 .transfer .input-group,
-.transfer .form-group input,
-.transfer .form-group textarea,
-.transfer .account-select {
-  border: 1px solid rgba(127, 145, 184, 0.35);
-  background: rgba(23, 30, 48, 0.8);
-  border-radius: 12px;
+.transfer .account-select,
+.transfer textarea {
+  min-height: 42px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md);
+  background: var(--surface);
 }
 
 .transfer .input-group {
@@ -80,155 +107,325 @@
   padding: 0 10px;
 }
 
+.transfer .input-group:focus-within,
+.transfer .account-select:focus,
+.transfer textarea:focus {
+  border-color: var(--green-500);
+  box-shadow: 0 0 0 3px var(--green-100);
+}
+
 .transfer .input-icon,
 .transfer .currency-symbol {
-  color: var(--text-secondary);
+  color: var(--text-muted);
 }
 
 .transfer .input-group input,
-.transfer .form-group input,
-.transfer .form-group textarea,
-.transfer .account-select {
+.transfer .account-select,
+.transfer textarea {
   width: 100%;
   border: 0;
+  outline: 0;
   background: transparent;
   color: var(--text-primary);
-  outline: none;
+}
+
+.transfer .input-group input {
+  padding: 10px 0;
+}
+
+.transfer .account-select,
+.transfer textarea {
   padding: 10px;
 }
 
-.transfer .transfer-summary {
-  border: 1px solid rgba(124, 142, 180, 0.3);
-  border-radius: 14px;
-  padding: 12px;
-  background: rgba(23, 31, 47, 0.75);
+.transfer textarea {
+  resize: vertical;
 }
 
-.transfer .transfer-summary h3 {
-  margin-bottom: 8px;
-}
-
-.transfer .summary-item {
-  display: flex;
-  justify-content: space-between;
-  padding: 7px 0;
-  color: var(--text-secondary);
-}
-
-.transfer .summary-item.total {
-  color: #e8efff;
+.amount-input input {
+  font-size: 1.1rem;
   font-weight: 700;
 }
 
-.transfer .summary-divider {
-  border-top: 1px solid rgba(126, 143, 181, 0.35);
+.currency-symbol {
+  font-size: 0.82rem;
+  font-weight: 800;
 }
 
-.transfer .form-actions {
+.source-account-card {
+  min-height: 76px;
   display: flex;
-  gap: 8px;
-}
-
-.transfer .transfer-btn,
-.transfer .reset-btn,
-.transfer .recipient-btn,
-.transfer .danger-btn {
-  border-radius: 12px;
-  padding: 10px 14px;
-}
-
-.transfer .transfer-btn {
-  flex: 1;
-  display: inline-flex;
-  justify-content: center;
   align-items: center;
-  gap: 8px;
-  color: #f0f5ff;
-  font-weight: 700;
-  background: linear-gradient(135deg, var(--green-300), var(--green-500));
+  gap: 11px;
+  padding: 13px;
+  border: 1px solid var(--green-300);
+  border-radius: var(--radius-md);
+  background: var(--green-50);
 }
 
-.transfer .transfer-btn:disabled {
-  opacity: 0.6;
+.source-account-icon {
+  width: 38px;
+  height: 38px;
+  flex: 0 0 38px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: var(--green-600);
+  color: #fff;
+}
+
+.source-account-card > div {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.source-account-card small {
+  color: var(--text-secondary);
+  font-size: 0.75rem;
+}
+
+.source-account-card strong {
+  color: var(--green-800);
+  font-size: 0.9rem;
+}
+
+.source-account-balance {
+  margin-left: auto;
+  text-align: right;
+}
+
+.account-number-input {
+  padding-right: 4px !important;
+}
+
+.account-number-input button {
+  min-height: 34px;
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 10px;
+  border-radius: var(--radius-md);
+  background: var(--green-600);
+  color: #fff;
+  font-size: 0.76rem;
+  font-weight: 800;
+}
+
+.account-number-input button:disabled {
+  opacity: 0.55;
   cursor: not-allowed;
 }
 
-.transfer .reset-btn {
-  border: 1px solid rgba(126, 143, 180, 0.4);
-  background: rgba(28, 35, 54, 0.8);
-  color: #d3dcf8;
-}
-
-.transfer .transfer-info {
-  padding: 16px;
-  display: grid;
-  gap: 10px;
-  align-content: start;
-}
-
-.transfer .info-card,
-.transfer .recent-recipients {
-  border-radius: 12px;
-  border: 1px solid rgba(119, 138, 178, 0.3);
-  background: rgba(25, 33, 52, 0.82);
-  padding: 12px;
-}
-
-.transfer .info-card h3,
-.transfer .recent-recipients h3 {
-  margin-bottom: 6px;
-  font-size: 0.98rem;
-}
-
-.transfer .info-card p {
-  color: var(--text-secondary);
-  font-size: 0.88rem;
-}
-
-.transfer .recipient-list {
+.recipient-verified {
   display: flex;
-  gap: 8px;
-  flex-wrap: wrap;
+  align-items: center;
+  gap: 9px;
+  padding: 10px 12px;
+  border: 1px solid var(--green-300);
+  border-radius: var(--radius-md);
+  background: var(--green-50);
+  color: var(--green-700);
 }
 
-.transfer .recipient-btn {
-  border: 1px solid rgba(124, 142, 181, 0.4);
-  background: rgba(31, 39, 59, 0.88);
-  color: #d8e2fd;
+.recipient-verified div {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.recipient-verified span {
+  color: var(--text-secondary);
+  font-size: 0.72rem;
+}
+
+.recipient-verified strong {
+  font-size: 0.84rem;
+}
+
+.transfer-error,
+.transactions-error {
+  padding: 10px 12px;
+  border: 1px solid #edc4ca;
+  border-radius: var(--radius-md);
+  background: #fff4f5;
+  color: var(--danger);
+  font-size: 0.86rem;
+}
+
+.form-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 9px;
+}
+
+.reset-btn,
+.transfer-btn {
+  min-height: 40px;
+  padding: 0 16px;
+  border-radius: var(--radius-md);
+  font-weight: 800;
+  font-size: 0.86rem;
+}
+
+.reset-btn {
+  border: 1px solid var(--border-strong);
+  background: var(--surface);
+  color: var(--text-secondary);
+}
+
+.transfer-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--green-600);
+  color: #fff;
+}
+
+.transfer-btn:hover {
+  background: var(--green-700);
+}
+
+.transfer-btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.transfer-sidebar {
+  display: grid;
+  gap: 12px;
+}
+
+.transfer-summary,
+.transfer-note {
+  padding: 16px;
+}
+
+.transfer-summary h2,
+.transfer-note h2 {
+  margin-bottom: 11px;
+  font-size: 0.94rem;
+}
+
+.transfer-summary > div {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 9px 0;
+  border-top: 1px solid var(--border);
+}
+
+.transfer-summary span {
+  color: var(--text-secondary);
+  font-size: 0.78rem;
+}
+
+.transfer-summary strong {
+  max-width: 55%;
+  text-align: right;
+  font-size: 0.8rem;
+}
+
+.transfer-summary .summary-amount {
+  color: var(--green-700);
+}
+
+.transfer-note {
+  box-shadow: none;
+}
+
+.transfer-note h2 {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--green-700);
+}
+
+.transfer-note p {
+  color: var(--text-secondary);
+  font-size: 0.8rem;
+  line-height: 1.55;
 }
 
 .transfer-success {
-  min-height: calc(100vh - 150px);
+  min-height: calc(100vh - 180px);
   display: grid;
   place-items: center;
 }
 
-.transfer-success .success-card {
-  padding: 28px;
+.success-card {
+  width: min(100%, 460px);
+  padding: 30px;
   text-align: center;
 }
 
 .success-icon {
-  color: var(--green-100);
+  margin-bottom: 12px;
+  color: var(--green-600);
   font-size: 3rem;
-  margin-bottom: 10px;
 }
 
-.success-ref,
-.success-time {
+.success-card h2 {
+  margin-bottom: 8px;
+  font-size: 1.35rem;
+}
+
+.success-card > p {
+  color: var(--text-secondary);
+  font-size: 0.88rem;
+  line-height: 1.6;
+}
+
+.success-detail {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  margin: 18px 0;
+  padding: 12px 0;
+  border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+  font-size: 0.84rem;
+}
+
+.success-detail span {
   color: var(--text-secondary);
 }
 
-@media (max-width: 1024px) {
+.success-card button {
+  min-height: 40px;
+  padding: 0 14px;
+  border-radius: var(--radius-md);
+  background: var(--green-600);
+  color: #fff;
+  font-weight: 800;
+}
+
+@media (max-width: 1020px) {
   .transfer-container {
     grid-template-columns: 1fr;
   }
 }
 
-@media (max-width: 760px) {
-  .transfer .form-row,
-  .transfer .form-actions {
+@media (max-width: 650px) {
+  .transfer .form-row {
     grid-template-columns: 1fr;
-    display: grid;
+  }
+
+  .source-account-card {
+    align-items: flex-start;
+    flex-wrap: wrap;
+  }
+
+  .source-account-balance {
+    width: 100%;
+    margin-left: 49px;
+    text-align: left;
+  }
+
+  .account-number-input {
+    align-items: stretch !important;
+    flex-direction: column;
+    padding: 8px !important;
   }
 }

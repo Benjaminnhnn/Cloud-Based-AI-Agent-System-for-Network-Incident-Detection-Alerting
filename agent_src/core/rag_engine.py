@@ -3,6 +3,7 @@ import os
 import logging
 import re
 from datetime import datetime
+from pathlib import Path
 from typing import Union, Any, Dict, Optional
 import chromadb
 from chromadb.utils import embedding_functions
@@ -30,17 +31,47 @@ class RAGEngine:
         if not os.path.exists(kb_path):
             logger.warning(f"KB path not found: {kb_path}")
             return
-        for filename in os.listdir(kb_path):
-            if filename.endswith(".md"):
-                file_path = os.path.join(kb_path, filename)
-                with open(file_path, "r", encoding="utf-8") as f:
-                    content = f.read()
-                self.collection.upsert(
-                    ids=[filename],
-                    documents=[content],
-                    metadatas=[{"source": filename}]
-                )
+        for file_path in self._iter_knowledge_base_files(Path(kb_path)):
+            self.ingest_runbook_file(str(file_path))
         logger.info(f"✅ Đã nạp tri thức từ {kb_path}")
+
+    def _iter_knowledge_base_files(self, kb_path: Path):
+        for file_path in kb_path.glob("*.md"):
+            yield file_path
+
+        published_root = kb_path / "published"
+        if not published_root.exists():
+            return
+
+        for current_path in published_root.glob("*/current.json"):
+            try:
+                import json
+
+                current = json.loads(current_path.read_text(encoding="utf-8"))
+                current_file = Path(current["current_path"])
+                if current_file.exists():
+                    yield current_file
+            except Exception as e:
+                logger.warning(f"Skipping invalid published runbook pointer {current_path}: {e}")
+
+    def ingest_runbook_file(self, file_path: str):
+        path = Path(file_path)
+        content = path.read_text(encoding="utf-8")
+        kb_root = Path(os.path.dirname(__file__)).parent / "config" / "knowledge_base"
+        try:
+            doc_id = str(path.relative_to(kb_root))
+        except ValueError:
+            doc_id = str(path)
+
+        metadata = {"source": doc_id}
+        if "published" in path.parts:
+            metadata["source_type"] = "published_runbook"
+
+        self.collection.upsert(
+            ids=[doc_id],
+            documents=[content],
+            metadatas=[metadata]
+        )
 
     def save_incident(
         self,
