@@ -146,11 +146,35 @@ jobs:
           DEPLOY_ROLE: ${{ matrix.role }}
         run: |
           set -euo pipefail
+          inventory_host() {
+            local group="$1"
+            awk -v group="[$group]" '
+              $0 == group { in_group=1; next }
+              /^\[/ { in_group=0 }
+              in_group && /ansible_host=/ {
+                for (i = 1; i <= NF; i++) {
+                  if ($i ~ /^ansible_host=/) {
+                    sub(/^ansible_host=/, "", $i)
+                    print $i
+                    exit
+                  }
+                }
+              }
+            ' ansible/inventory.ini
+          }
+
           case "$DEPLOY_ROLE" in
-            monitor) host="$MONITOR_SSH_HOST" ;;
-            core) host="$CORE_SSH_HOST" ;;
-            web) host="$WEB_SSH_HOST" ;;
+            monitor) host="$(inventory_host monitor)" ;;
+            core) host="$(inventory_host core)" ;;
+            web) host="$(inventory_host web)" ;;
           esac
+          if [ -z "$host" ]; then
+            case "$DEPLOY_ROLE" in
+              monitor) host="$MONITOR_SSH_HOST" ;;
+              core) host="$CORE_SSH_HOST" ;;
+              web) host="$WEB_SSH_HOST" ;;
+            esac
+          fi
           test -n "$host"
           echo "host=$host" >> "$GITHUB_OUTPUT"
 

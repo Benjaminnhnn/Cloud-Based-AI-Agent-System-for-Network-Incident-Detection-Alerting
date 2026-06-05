@@ -62,21 +62,14 @@ REDIS_HOST = os.getenv("REDIS_HOST", "localhost")
 REDIS_PORT = int(os.getenv("REDIS_PORT", "6379"))
 REDIS_DB   = int(os.getenv("REDIS_DB", "0"))
 
-# FIX #8: Thêm socket_timeout và xử lý lỗi khởi tạo Redis
-try:
-    redis_client = redis.Redis(
-        host=REDIS_HOST,
-        port=REDIS_PORT,
-        db=REDIS_DB,
-        decode_responses=True,
-        socket_timeout=5,
-        socket_connect_timeout=5,
-    )
-    redis_client.ping()
-    logger.info("✅ Redis connected successfully.")
-except redis.RedisError as e:
-    logger.error(f"❌ Redis connection failed: {e}")
-    redis_client = None  # type: ignore
+redis_client = redis.Redis(
+    host=REDIS_HOST,
+    port=REDIS_PORT,
+    db=REDIS_DB,
+    decode_responses=True,
+    socket_timeout=5,
+    socket_connect_timeout=5,
+)
 
 _local_alert_cooldowns: dict[str, float] = {}
 _local_alert_notifications: dict[str, float] = {}

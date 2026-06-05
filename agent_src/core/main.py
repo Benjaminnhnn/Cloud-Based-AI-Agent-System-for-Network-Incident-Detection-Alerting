@@ -14,7 +14,7 @@ from typing import List, Optional
 from dotenv import load_dotenv
 
 from core.tasks import process_admin_feedback_task, process_alerts_task, review_tool_change_task
-from utils.telegram_bot import send_telegram_message, set_telegram_webhook
+from utils.telegram_bot import TELEGRAM_CHAT_ID, send_telegram_message, set_telegram_webhook
 from utils import telegram_bot
 from core.rag_engine import get_rag_instance
 from core.metrics import CELERY_QUEUE_DEPTH, WEBHOOK_EVENTS_TOTAL, get_metrics_response
@@ -345,7 +345,7 @@ def _answer_telegram_callback(callback_query_id: str, text: str) -> None:
 
 
 def _telegram_callback_chat_allowed(callback_query: dict) -> bool:
-    expected = telegram_bot.TELEGRAM_CHAT_ID
+    expected = TELEGRAM_CHAT_ID
     if not expected:
         return False
     chat = callback_query.get("message", {}).get("chat", {})
@@ -369,7 +369,7 @@ async def telegram_webhook(payload: TelegramWebhookPayload):
         chat = message.get("chat") or {}
         chat_id = chat.get("id")
 
-        if telegram_bot.TELEGRAM_CHAT_ID and str(chat_id) != str(telegram_bot.TELEGRAM_CHAT_ID):
+        if TELEGRAM_CHAT_ID and str(chat_id) != str(TELEGRAM_CHAT_ID):
             logger.warning("Ignored Telegram message from unauthorized chat_id=%s", chat_id)
             return {"status": "ignored"}
 
