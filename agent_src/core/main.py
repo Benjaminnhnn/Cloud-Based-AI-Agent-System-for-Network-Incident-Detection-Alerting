@@ -54,6 +54,10 @@ CELERY_QUEUE_NAME = os.getenv("CELERY_QUEUE_NAME", "celery")
 CELERY_QUEUE_MAX_LENGTH = int(os.getenv("CELERY_QUEUE_MAX_LENGTH", "1000"))
 ALERT_INGRESS_DEDUP_SECONDS = int(os.getenv("ALERT_INGRESS_DEDUP_SECONDS", "60"))
 
+
+def _configured_telegram_chat_id() -> str | None:
+    return TELEGRAM_CHAT_ID or telegram_bot.TELEGRAM_CHAT_ID
+
 # FIX #9: Thêm socket_timeout để tránh treo khi Redis down
 redis_client = redis.Redis(
     host=REDIS_HOST,
@@ -345,7 +349,7 @@ def _answer_telegram_callback(callback_query_id: str, text: str) -> None:
 
 
 def _telegram_callback_chat_allowed(callback_query: dict) -> bool:
-    expected = TELEGRAM_CHAT_ID
+    expected = _configured_telegram_chat_id()
     if not expected:
         return False
     chat = callback_query.get("message", {}).get("chat", {})
@@ -368,8 +372,9 @@ async def telegram_webhook(payload: TelegramWebhookPayload):
         message = payload.message or payload.edited_message or {}
         chat = message.get("chat") or {}
         chat_id = chat.get("id")
+        expected_chat_id = _configured_telegram_chat_id()
 
-        if TELEGRAM_CHAT_ID and str(chat_id) != str(TELEGRAM_CHAT_ID):
+        if expected_chat_id and str(chat_id) != str(expected_chat_id):
             logger.warning("Ignored Telegram message from unauthorized chat_id=%s", chat_id)
             return {"status": "ignored"}
 
