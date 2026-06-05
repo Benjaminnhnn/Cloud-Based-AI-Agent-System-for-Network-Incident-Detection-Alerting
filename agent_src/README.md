@@ -28,6 +28,25 @@ Hệ thống bao gồm 3 lớp chính:
 5.  **Analyze**: Gemini LLM sử dụng dữ liệu RAG và có thể gọi `diag_tools`, nhưng số lần gọi được giới hạn để tránh vượt quota.
 6.  **Notify & Verify**: Agent gửi hướng dẫn xử lý qua Telegram, lưu incident context vào Redis, sau đó lên lịch verify và lưu kết quả vào ChromaDB.
 
+### Các loại sự cố có runbook xác định
+
+Agent có hướng chẩn đoán và verify trực tiếp cho:
+
+*   `WebEndpointDown`: frontend `/health` không truy cập được.
+*   `FrontendAPIProxyDown`: frontend vẫn sống nhưng proxy `/api/ready` không truy cập được Payment API.
+*   `PaymentAPIEndpointDown`: Payment API `/api/ready` không sẵn sàng do ứng dụng, database hoặc network.
+*   `PostgreSQLDown`, `RedisDown`, `DockerContainerDown`.
+*   `HighCPUUsage`, `CriticalCPUUsage`, `HighMemoryUsage`, `CriticalMemoryUsage`, `HighDiskUsage`, `CriticalDiskUsage`.
+
+Payment API tách hai endpoint:
+
+```text
+/api/health  liveness của API process
+/api/ready   readiness, bao gồm kiểm tra kết nối PostgreSQL
+```
+
+Việc tách liveness/readiness cho phép phân biệt container vẫn chạy với dependency thực tế đang lỗi.
+
 ## 📝 Thay đổi gần đây & lý do
 
 ### Giảm số lần gọi Gemini cho mỗi alert
@@ -75,6 +94,30 @@ ALERT_AI_COOLDOWN_SECONDS=900
 ALERT_DEDUP_ENABLED=true
 ```
 
+### Góp ý giải pháp qua Telegram
+
+Khi Agent gửi báo cáo sự cố, tin nhắn sẽ có `ID` của incident và hướng dẫn:
+
+```text
+/feedback <incident_id> <giải pháp hoặc góp ý của admin>
+```
+
+Admin cũng có thể reply vào tin báo có dòng `ID: ...`; Agent sẽ lấy ID từ tin được reply và dùng nội dung reply làm góp ý.
+
+Luồng xử lý:
+
+*   FastAPI nhận tin tại `/telegram/webhook`.
+*   Chỉ chat có `TELEGRAM_CHAT_ID` mới được gửi góp ý.
+*   Agent lấy context incident từ Redis, đánh giá góp ý bằng Gemini nếu có API key.
+*   Nếu góp ý đúng hoặc cần chỉnh nhẹ, Agent lưu bản đã duyệt/chỉnh vào ChromaDB để RAG dùng cho incident tương tự.
+*   Nếu góp ý chưa phù hợp, Agent nhắn lại lý do và giải pháp thay thế an toàn hơn cho admin.
+
+Để Telegram gọi được webhook, cần cấu hình `AI_AGENT_PUBLIC_URL` là URL HTTPS public của agent; startup sẽ đăng ký webhook tới:
+
+```text
+<AI_AGENT_PUBLIC_URL>/telegram/webhook
+```
+
 Default hiện tại ưu tiên an toàn khi demo/production có quota Gemini thấp. Nếu dùng API key có billing/quota cao hơn, có thể tăng `GEMINI_MAX_ATTEMPTS` hoặc thêm fallback model một cách chủ động.
 
 ### Kiểm thử
@@ -103,3 +146,30 @@ Hoặc chạy trực tiếp qua entrypoint:
 ```bash
 ./docker-entrypoint.sh
 ```
+
+## RAG data storage
+
+RAG uses two separate ChromaDB collections:
+
+* `standard_runbooks`: Markdown runbooks from `config/knowledge_base/*.md`, split into heading-aware chunks during startup.
+* `incident_memory`: resolved incident history and accepted/revised admin feedback.
+
+The source runbooks are Git-tracked files and can be viewed directly:
+
+```bash
+find config/knowledge_base -maxdepth 1 -type f -name '*.md'
+sed -n '1,200p' config/knowledge_base/<runbook-file>.md
+```
+
+Dynamic incident and feedback memory is not written back into Markdown files. It is stored in the ChromaDB directory configured by `VECTOR_DB_PATH`. In release deployments, `ai-agent` and `celery-worker` share the same persistent Docker volume mounted at `/app/vector_db`.
+
+Inspect the collections from a running release container:
+
+```bash
+docker exec celery-worker-staging python tools/inspect_rag_db.py
+docker exec celery-worker-staging python tools/inspect_rag_db.py --collection standard_runbooks
+docker exec celery-worker-staging python tools/inspect_rag_db.py --collection incident_memory
+docker exec celery-worker-staging python tools/inspect_rag_db.py --collection incident_memory --source admin_feedback
+```
+
+Do not commit the ChromaDB database files to Git. The Markdown runbooks are the reviewed source of truth; `incident_memory` is runtime learning data.

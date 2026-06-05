@@ -102,6 +102,24 @@ async def health_check():
         "service": "AIOps Backend API"
     }
 
+
+@app.get("/api/ready")
+async def readiness_check():
+    """Readiness check for dependencies required to serve API requests."""
+    try:
+        with engine.connect() as connection:
+            connection.execute(text("SELECT 1"))
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail="database unavailable") from exc
+
+    return {
+        "status": "ready",
+        "environment": settings.ENVIRONMENT,
+        "service": "AIOps Backend API",
+        "database": "reachable",
+    }
+
+
 @app.get("/api/metrics", response_class=PlainTextResponse)
 async def metrics():
     """Prometheus metrics endpoint"""
@@ -125,6 +143,7 @@ async def root():
         "docs": "/docs",
         "redoc": "/redoc",
         "health": "/api/health",
+        "ready": "/api/ready",
         "metrics": "/api/metrics"
     }
 

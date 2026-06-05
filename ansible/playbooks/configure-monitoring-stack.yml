@@ -268,6 +268,51 @@
                   replacement: localhost:9115
                 - source_labels: [__param_target]
                   target_label: target
+
+            - job_name: 'blackbox_http_web_api_staging'
+              metrics_path: /probe
+              params:
+                module: [http_2xx]
+              static_configs:
+                - targets: ['http://{{ hostvars[groups["web"][0]].ansible_host }}:18081/api/ready']
+                  labels:
+                    instance: 'bank-web-01'
+                    service: 'api-proxy'
+                    component: 'frontend-web-staging'
+                    dependency: 'payment-api-staging'
+                    dependency_instance: 'bank-core-01'
+                    expected_upstream: 'http://{{ hostvars[groups["core"][0]].ansible_default_ipv4.address }}:18080'
+                    environment: 'staging'
+                    runbook: 'api-proxy'
+                    endpoint: '/api/ready'
+              relabel_configs:
+                - source_labels: [__address__]
+                  target_label: __param_target
+                - target_label: __address__
+                  replacement: localhost:9115
+                - source_labels: [__param_target]
+                  target_label: target
+
+            - job_name: 'blackbox_http_payment_api_staging'
+              metrics_path: /probe
+              params:
+                module: [http_2xx]
+              static_configs:
+                - targets: ['http://{{ hostvars[groups["core"][0]].ansible_default_ipv4.address }}:18080/api/ready']
+                  labels:
+                    instance: 'bank-core-01'
+                    service: 'payment-api'
+                    component: 'payment-api-staging'
+                    environment: 'staging'
+                    runbook: 'payment-api'
+                    endpoint: '/api/ready'
+              relabel_configs:
+                - source_labels: [__address__]
+                  target_label: __param_target
+                - target_label: __address__
+                  replacement: localhost:9115
+                - source_labels: [__param_target]
+                  target_label: target
         dest: /opt/prometheus/prometheus.yml
         owner: nobody
         group: nobody

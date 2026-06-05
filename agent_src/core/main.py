@@ -4,6 +4,7 @@ import logging
 import hashlib
 import json
 import redis
+import re
 import requests
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException
@@ -12,7 +13,7 @@ from pydantic import BaseModel
 from typing import List, Optional
 from dotenv import load_dotenv
 
-from core.tasks import process_alerts_task, review_tool_change_task
+from core.tasks import process_admin_feedback_task, process_alerts_task, review_tool_change_task
 from utils.telegram_bot import send_telegram_message, set_telegram_webhook
 from utils import telegram_bot
 from core.rag_engine import get_rag_instance
@@ -68,6 +69,10 @@ redis_client = redis.Redis(
 # ─────────────────────────────────────────────
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    rag = get_rag_instance()
+    if rag is None:
+        logger.warning("RAG Engine is unavailable; collections were not initialized.")
+
     if AI_AGENT_PUBLIC_URL:
         try:
             set_telegram_webhook(AI_AGENT_PUBLIC_URL)
@@ -160,6 +165,56 @@ class DraftDecisionRequest(BaseModel):
 class TelegramWebhookPayload(BaseModel):
     update_id: Optional[int] = None
     callback_query: Optional[dict] = None
+    message: Optional[dict] = None
+    edited_message: Optional[dict] = None
+
+
+def _extract_incident_id(text: str) -> str | None:
+    patterns = (
+        r"(?:^|\s)/feedback\s+([a-fA-F0-9]{6,16})\b",
+        r"(?:^|\s)feedback\s+([a-fA-F0-9]{6,16})\b",
+        r"(?:^|\s)ID\s*:\s*([a-fA-F0-9]{6,16})\b",
+    )
+    for pattern in patterns:
+        match = re.search(pattern, text, flags=re.IGNORECASE)
+        if match:
+            return match.group(1)
+    return None
+
+
+def _extract_feedback_payload(message: dict) -> tuple[str | None, str | None]:
+    text = (message.get("text") or message.get("caption") or "").strip()
+    reply_text = ((message.get("reply_to_message") or {}).get("text") or "").strip()
+
+    incident_id = _extract_incident_id(text) or _extract_incident_id(reply_text)
+    if not incident_id:
+        return None, None
+
+    feedback = text
+    command_match = re.search(
+        r"(?:^|\s)/feedback\s+[a-fA-F0-9]{6,16}\s*(.*)$",
+        text,
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+    plain_match = re.search(
+        r"(?:^|\s)feedback\s+[a-fA-F0-9]{6,16}\s*(.*)$",
+        text,
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+    if command_match:
+        feedback = command_match.group(1).strip()
+    elif plain_match:
+        feedback = plain_match.group(1).strip()
+
+    if _extract_incident_id(text) and feedback == text:
+        feedback = re.sub(
+            r"(?:^|\s)ID\s*:\s*[a-fA-F0-9]{6,16}\b",
+            " ",
+            feedback,
+            flags=re.IGNORECASE,
+        ).strip()
+
+    return incident_id, feedback or None
 
 # ─────────────────────────────────────────────
 # ENDPOINTS
@@ -310,7 +365,29 @@ def _publish_draft_from_callback(draft_id: str, actor: str) -> dict:
 async def telegram_webhook(payload: TelegramWebhookPayload):
     callback_query = payload.callback_query
     if not callback_query:
-        return {"status": "ignored"}
+        message = payload.message or payload.edited_message or {}
+        chat = message.get("chat") or {}
+        chat_id = chat.get("id")
+
+        if telegram_bot.TELEGRAM_CHAT_ID and str(chat_id) != str(telegram_bot.TELEGRAM_CHAT_ID):
+            logger.warning("Ignored Telegram message from unauthorized chat_id=%s", chat_id)
+            return {"status": "ignored"}
+
+        incident_id, feedback = _extract_feedback_payload(message)
+        if not incident_id or not feedback:
+            send_telegram_message(
+                "Gửi góp ý theo cú pháp: /feedback <incident_id> <giải pháp>",
+                chat_id=str(chat_id) if chat_id is not None else None,
+                parse_mode=None,
+            )
+            return {"status": "ignored", "reason": "missing_feedback"}
+
+        process_admin_feedback_task.delay(
+            incident_id,
+            feedback,
+            str(chat_id) if chat_id is not None else None,
+        )
+        return {"status": "enqueued", "incident_id": incident_id}
 
     callback_id = callback_query.get("id", "")
     if not _telegram_callback_chat_allowed(callback_query):

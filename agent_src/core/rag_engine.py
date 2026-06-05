@@ -1,77 +1,202 @@
-# rag_engine.py
-import os
+import hashlib
 import logging
+import os
 import re
 from datetime import datetime
-from pathlib import Path
-from typing import Union, Any, Dict, Optional
+from typing import Any
+
 import chromadb
 from chromadb.utils import embedding_functions
-from chromadb import Where
 
 logger = logging.getLogger(__name__)
 
+STANDARD_RUNBOOKS_COLLECTION = "standard_runbooks"
+INCIDENT_MEMORY_COLLECTION = "incident_memory"
+LEGACY_COLLECTION = "ops_runbooks"
+RUNBOOK_CHUNK_CHARS = int(os.getenv("RAG_RUNBOOK_CHUNK_CHARS", "1200"))
+RAG_MAX_DISTANCE = float(os.getenv("RAG_MAX_DISTANCE", "1.2"))
+RUNBOOK_ALERT_NAMES = {
+    "runbook_nginx.md": ("WebEndpointDown", "FrontendAPIProxyDown"),
+    "runbook_postgresql.md": ("PostgreSQLDown", "PaymentAPIEndpointDown"),
+    "runbook_redis.md": ("RedisDown",),
+    "runbook_docker.md": ("DockerContainerDown",),
+}
+
+
+def _chunk_markdown(content: str, max_chars: int = RUNBOOK_CHUNK_CHARS) -> list[tuple[str, str]]:
+    """Split Markdown into heading-aware chunks with stable, bounded sizes."""
+    sections = re.split(r"(?=^#{1,6}\s+)", content.strip(), flags=re.MULTILINE)
+    chunks: list[tuple[str, str]] = []
+
+    for section in sections:
+        section = section.strip()
+        if not section:
+            continue
+
+        first_line = section.splitlines()[0].strip()
+        heading = first_line.lstrip("#").strip() if first_line.startswith("#") else "Overview"
+        paragraphs = [part.strip() for part in re.split(r"\n\s*\n", section) if part.strip()]
+        current = ""
+
+        for paragraph in paragraphs:
+            candidate = f"{current}\n\n{paragraph}".strip() if current else paragraph
+            if current and len(candidate) > max_chars:
+                chunks.append((heading, current))
+                current = paragraph
+            else:
+                current = candidate
+
+            while len(current) > max_chars:
+                chunks.append((heading, current[:max_chars].rstrip()))
+                current = current[max_chars:].lstrip()
+
+        if current:
+            chunks.append((heading, current))
+
+    return chunks
+
 
 class RAGEngine:
-    def __init__(self, db_path="./vector_db"):
+    def __init__(self, db_path: str = "./vector_db"):
+        self.db_path = db_path
         self.client = chromadb.PersistentClient(path=db_path)
-
-        # FIX #7: Khởi tạo embedding_fn bên trong class thay vì global
-        # để tránh lỗi import-time khi thiếu dependency
         self._embedding_fn = embedding_functions.DefaultEmbeddingFunction()
-
-        self.collection = self.client.get_or_create_collection(
-            name="ops_runbooks",
-            embedding_function=self._embedding_fn  # type: ignore
+        self.standard_runbooks = self.client.get_or_create_collection(
+            name=STANDARD_RUNBOOKS_COLLECTION,
+            embedding_function=self._embedding_fn,  # type: ignore[arg-type]
         )
+        self.incident_memory = self.client.get_or_create_collection(
+            name=INCIDENT_MEMORY_COLLECTION,
+            embedding_function=self._embedding_fn,  # type: ignore[arg-type]
+        )
+        self._migrate_legacy_collection()
         self._ingest_initial_data()
 
-    def _ingest_initial_data(self):
+    def _migrate_legacy_collection(self) -> None:
+        """Copy dynamic legacy memory into the new incident collection."""
+        try:
+            legacy = self.client.get_collection(
+                name=LEGACY_COLLECTION,
+                embedding_function=self._embedding_fn,  # type: ignore[arg-type]
+            )
+        except Exception:
+            return
+
+        try:
+            data = legacy.get(include=["documents", "metadatas"])
+            ids = data.get("ids") or []
+            documents = data.get("documents") or []
+            metadatas = data.get("metadatas") or []
+            migrated_count = 0
+            for doc_id, document, metadata in zip(ids, documents, metadatas):
+                metadata = metadata or {}
+                source = str(metadata.get("source", "legacy_runbook"))
+                if source not in {"incident_history", "admin_feedback"}:
+                    continue
+                migrated_metadata = dict(metadata)
+                migrated_metadata["migrated_from"] = LEGACY_COLLECTION
+                migrated_metadata.setdefault("document_type", source)
+                self.incident_memory.upsert(
+                    ids=[f"legacy::{doc_id}"],
+                    documents=[document],
+                    metadatas=[migrated_metadata],
+                )
+                migrated_count += 1
+            if migrated_count:
+                logger.info("Migrated %s legacy RAG documents from %s", migrated_count, LEGACY_COLLECTION)
+        except Exception as exc:
+            logger.warning("Unable to migrate legacy RAG collection: %s", exc)
+
+    def _ingest_initial_data(self) -> None:
         kb_path = os.path.join(os.path.dirname(__file__), "..", "config", "knowledge_base")
         if not os.path.exists(kb_path):
-            logger.warning(f"KB path not found: {kb_path}")
-            return
-        for file_path in self._iter_knowledge_base_files(Path(kb_path)):
-            self.ingest_runbook_file(str(file_path))
-        logger.info(f"✅ Đã nạp tri thức từ {kb_path}")
-
-    def _iter_knowledge_base_files(self, kb_path: Path):
-        for file_path in kb_path.glob("*.md"):
-            yield file_path
-
-        published_root = kb_path / "published"
-        if not published_root.exists():
+            logger.warning("KB path not found: %s", kb_path)
             return
 
-        for current_path in published_root.glob("*/current.json"):
+        total_chunks = 0
+        for filename in sorted(os.listdir(kb_path)):
+            if not filename.endswith(".md"):
+                continue
+
+            file_path = os.path.join(kb_path, filename)
+            with open(file_path, "r", encoding="utf-8") as file:
+                content = file.read()
+
             try:
-                import json
+                self.standard_runbooks.delete(where={"source_file": filename})
+            except Exception:
+                pass
 
-                current = json.loads(current_path.read_text(encoding="utf-8"))
-                current_file = Path(current["current_path"])
-                if current_file.exists():
-                    yield current_file
-            except Exception as e:
-                logger.warning(f"Skipping invalid published runbook pointer {current_path}: {e}")
+            chunks = _chunk_markdown(content)
+            if not chunks:
+                continue
 
-    def ingest_runbook_file(self, file_path: str):
-        path = Path(file_path)
-        content = path.read_text(encoding="utf-8")
-        kb_root = Path(os.path.dirname(__file__)).parent / "config" / "knowledge_base"
+            ids = []
+            documents = []
+            metadatas = []
+            alert_names = RUNBOOK_ALERT_NAMES.get(filename, ("Unknown",))
+            for alert_name in alert_names:
+                for index, (heading, chunk) in enumerate(chunks):
+                    digest = hashlib.sha256(chunk.encode("utf-8")).hexdigest()[:12]
+                    ids.append(f"runbook::{filename}::{alert_name}::{index:03d}::{digest}")
+                    documents.append(chunk)
+                    metadatas.append(
+                        {
+                            "source": filename,
+                            "source_file": filename,
+                            "document_type": "standard_runbook",
+                            "alert_name": alert_name,
+                            "chunk_index": index,
+                            "heading": heading,
+                        }
+                    )
+
+            self.standard_runbooks.upsert(ids=ids, documents=documents, metadatas=metadatas)
+            total_chunks += len(ids)
+
+        logger.info("Loaded %s runbook chunks from %s", total_chunks, kb_path)
+
+    def ingest_runbook_file(self, file_path: str) -> None:
+        """Add or refresh one runbook file, including admin-published drafts."""
+        if not os.path.exists(file_path):
+            logger.warning("Runbook file not found: %s", file_path)
+            return
+
+        with open(file_path, "r", encoding="utf-8") as file:
+            content = file.read()
+
+        source = os.path.basename(file_path)
+        kb_root = os.path.join(os.path.dirname(__file__), "..", "config", "knowledge_base")
+        source_file = os.path.relpath(file_path, kb_root)
+        document_type = "published_runbook" if "published" in file_path.split(os.sep) else "standard_runbook"
+
         try:
-            doc_id = str(path.relative_to(kb_root))
-        except ValueError:
-            doc_id = str(path)
+            self.standard_runbooks.delete(where={"source_file": source_file})
+        except Exception:
+            pass
 
-        metadata = {"source": doc_id}
-        if "published" in path.parts:
-            metadata["source_type"] = "published_runbook"
+        ids = []
+        documents = []
+        metadatas = []
+        alert_names = RUNBOOK_ALERT_NAMES.get(source, ("Unknown",))
+        for alert_name in alert_names:
+            for index, (heading, chunk) in enumerate(_chunk_markdown(content)):
+                digest = hashlib.sha256(chunk.encode("utf-8")).hexdigest()[:12]
+                ids.append(f"runbook::{source_file}::{alert_name}::{index:03d}::{digest}")
+                documents.append(chunk)
+                metadatas.append(
+                    {
+                        "source": source,
+                        "source_file": source_file,
+                        "document_type": document_type,
+                        "alert_name": alert_name,
+                        "chunk_index": index,
+                        "heading": heading,
+                    }
+                )
 
-        self.collection.upsert(
-            ids=[doc_id],
-            documents=[content],
-            metadatas=[metadata]
-        )
+        if ids:
+            self.standard_runbooks.upsert(ids=ids, documents=documents, metadatas=metadatas)
 
     def save_incident(
         self,
@@ -79,9 +204,10 @@ class RAGEngine:
         description: str,
         ai_analysis: str,
         resolution: str,
-        outcome: str
-    ):
-        doc_id = f"incident_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{alert_name}"
+        outcome: str,
+    ) -> None:
+        timestamp = datetime.now()
+        doc_id = f"incident_{timestamp.strftime('%Y%m%d_%H%M%S_%f')}_{alert_name}"
         document = (
             f"# Incident: {alert_name}\n"
             f"Mô tả: {description}\n\n"
@@ -89,78 +215,124 @@ class RAGEngine:
             f"## Hành động đã thực hiện: {resolution}\n\n"
             f"## Kết quả: {outcome}\n"
         )
-        self.collection.upsert(
+        self.incident_memory.upsert(
             ids=[doc_id],
             documents=[document],
-            metadatas=[{
-                "source": "incident_history",
-                "alert_name": alert_name,
-                "timestamp": datetime.now().isoformat(),
-                "outcome": outcome
-            }]
+            metadatas=[
+                {
+                    "source": "incident_history",
+                    "document_type": "incident_history",
+                    "alert_name": alert_name,
+                    "timestamp": timestamp.isoformat(),
+                    "outcome": outcome,
+                }
+            ],
         )
-        logger.info(f"✅ Đã lưu incident '{alert_name}' vào RAG DB (outcome={outcome})")
+        logger.info("Saved incident '%s' into incident memory (outcome=%s)", alert_name, outcome)
+
+    def save_admin_solution(
+        self,
+        incident_id: str,
+        alert_name: str,
+        incident_details: str,
+        admin_feedback: str,
+        reviewed_solution: str,
+        review_status: str,
+    ) -> None:
+        timestamp = datetime.now()
+        doc_id = f"admin_feedback_{timestamp.strftime('%Y%m%d_%H%M%S_%f')}_{incident_id}"
+        document = (
+            f"# Admin Feedback: {alert_name}\n"
+            f"Incident ID: {incident_id}\n\n"
+            f"## Incident context\n{incident_details}\n\n"
+            f"## Admin suggestion\n{admin_feedback}\n\n"
+            f"## Agent-reviewed solution\n{reviewed_solution}\n\n"
+            f"## Review status\n{review_status}\n"
+        )
+        self.incident_memory.upsert(
+            ids=[doc_id],
+            documents=[document],
+            metadatas=[
+                {
+                    "source": "admin_feedback",
+                    "document_type": "admin_feedback",
+                    "alert_name": alert_name,
+                    "incident_id": incident_id,
+                    "timestamp": timestamp.isoformat(),
+                    "review_status": review_status,
+                }
+            ],
+        )
+        logger.info("Saved admin feedback for incident '%s' into incident memory", incident_id)
+
+    @staticmethod
+    def _keyword_score(document: str, keywords: set[str]) -> int:
+        lower_document = document.lower()
+        return sum(1 for keyword in keywords if keyword in lower_document)
+
+    def _retrieve(
+        self,
+        collection: Any,
+        query_text: str,
+        n_results: int = 3,
+        alert_name: str | None = None,
+    ) -> str:
+        try:
+            total_count = collection.count()
+            if total_count == 0:
+                return ""
+
+            results = collection.query(
+                query_texts=[query_text],
+                n_results=min(n_results, total_count),
+                where={"alert_name": alert_name} if alert_name else None,
+                include=["documents", "metadatas", "distances"],
+            )
+            documents = (results.get("documents") or [[]])[0]
+            metadatas = (results.get("metadatas") or [[]])[0]
+            distances = (results.get("distances") or [[]])[0]
+            if not documents:
+                return ""
+
+            keywords = set(re.findall(r"\w+", query_text.lower()))
+            candidates = []
+            for index, (document, metadata) in enumerate(zip(documents, metadatas)):
+                distance = distances[index] if index < len(distances) else 0.0
+                if distance is not None and float(distance) > RAG_MAX_DISTANCE:
+                    continue
+                candidates.append((document, metadata, float(distance or 0.0)))
+
+            ranked = sorted(
+                candidates,
+                key=lambda item: (-self._keyword_score(item[0], keywords), item[2]),
+            )
+            rendered = []
+            for document, metadata, _distance in ranked:
+                metadata = metadata or {}
+                source = metadata.get("source_file") or metadata.get("source") or "unknown"
+                rendered.append(f"[Nguồn: {source}]\n{document}")
+            return "\n\n---\n\n".join(rendered)
+        except Exception as exc:
+            logger.error("RAG retrieval failed: %s", exc)
+            return ""
+
+    def query_knowledge(self, alert_description: str, alert_name: str | None = None) -> str:
+        runbook_text = self._retrieve(self.standard_runbooks, alert_description, alert_name=alert_name)
+        memory_text = self._retrieve(self.incident_memory, alert_description, alert_name=alert_name)
+        sections = []
+        if runbook_text:
+            sections.append(f"## Quy trình chuẩn từ runbook\n{runbook_text}")
+        if memory_text:
+            sections.append(f"## Kinh nghiệm từ incident và feedback trước đây\n{memory_text}")
+        return "\n\n".join(sections)
 
     def query_runbook(self, alert_description: str) -> str:
-        try:
-            total_count = self.collection.count()
-            if total_count == 0:
-                return "Kho tri thức đang trống."
-
-            keywords = set(re.findall(r'\w+', alert_description.lower()))
-
-            def hybrid_retrieve(where_clause: Where, n: int = 3) -> str:
-                # FIX lỗi 2: results có thể None → guard trước khi subscript
-                results = None
-                try:
-                    results = self.collection.query(
-                        query_texts=[alert_description],
-                        n_results=min(n, total_count),
-                        where=where_clause  # FIX lỗi 1: truyền thẳng Where, không wrap thêm
-                    )
-                except Exception as e:
-                    logger.warning(f"RAG query failed ({e}), retrying with n=1")
-                    try:
-                        results = self.collection.query(
-                            query_texts=[alert_description],
-                            n_results=1,
-                            where=where_clause
-                        )
-                    except Exception as e2:
-                        logger.error(f"RAG fallback query also failed: {e2}")
-                        return "Không tìm thấy thông tin phù hợp."
-
-                # FIX lỗi 2: kiểm tra None trước khi subscript
-                if results is None:
-                    return "Không tìm thấy thông tin phù hợp."
-                
-                docs = (results.get("documents") or [[]])[0]
-                if not docs:
-                    return "Không tìm thấy thông tin phù hợp."
-
-                scored_docs = []
-                for doc in docs:
-                    score = sum(1 for kw in keywords if kw in doc.lower())
-                    scored_docs.append((score, doc))
-
-                scored_docs.sort(key=lambda x: x[0], reverse=True)
-                return scored_docs[0][1]
-
-            # FIX lỗi 1: Tạo Where dict đúng chuẩn ChromaDB và truyền trực tiếp
-            runbook_filter: Where = {"source": {"$ne": "incident_history"}}
-            history_filter: Where = {"source": {"$eq": "incident_history"}}
-
-            runbook_text = hybrid_retrieve(runbook_filter)
-            history_text = hybrid_retrieve(history_filter)
-
-            return f"## Quy trình chuẩn:\n{runbook_text}\n\n## Incident tương tự trước đây:\n{history_text}"
-
-        except Exception as e:
-            logger.error(f"RAG Query Error: {e}")
-            return "Lỗi khi truy xuất kho tri thức."
+        """Backward-compatible alias for callers using the old method name."""
+        return self.query_knowledge(alert_description)
 
 
 _rag_instance = None
+
 
 def get_rag_instance() -> RAGEngine | None:
     global _rag_instance
@@ -168,8 +340,8 @@ def get_rag_instance() -> RAGEngine | None:
         try:
             db_path = os.getenv("VECTOR_DB_PATH", "./vector_db")
             _rag_instance = RAGEngine(db_path=db_path)
-            logger.info("✅ RAG Engine initialized successfully.")
-        except Exception as e:
-            logger.error(f"❌ Failed to initialize RAG Engine: {e}")
+            logger.info("RAG Engine initialized successfully at %s", db_path)
+        except Exception as exc:
+            logger.error("Failed to initialize RAG Engine: %s", exc)
             return None
     return _rag_instance

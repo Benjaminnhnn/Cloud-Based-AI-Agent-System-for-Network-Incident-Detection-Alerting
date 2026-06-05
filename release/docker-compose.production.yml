@@ -94,6 +94,10 @@ services:
       REDIS_PORT: "6379"
       REDIS_DB: "0"
       PYTHONUNBUFFERED: "1"
+    volumes:
+      - vector-db-prod:/app/vector_db
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     command: ["celery", "-A", "core.celery_app.celery_app", "worker", "--loglevel=INFO", "--concurrency=${CELERY_WORKER_CONCURRENCY:-2}"]
     depends_on:
       redis:
