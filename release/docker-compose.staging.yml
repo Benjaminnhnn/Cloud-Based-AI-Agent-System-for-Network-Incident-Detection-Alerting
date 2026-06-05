@@ -207,3 +207,4 @@ volumes:
   redis-data-staging:
   redis-cache-data-staging:
   postgres-data-staging:
+  vector-db-staging:

@@ -207,3 +207,4 @@ volumes:
   redis-data-prod:
   redis-cache-data-prod:
   postgres-data-prod:
+  vector-db-prod:
