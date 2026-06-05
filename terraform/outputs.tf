@@ -41,13 +41,13 @@ output "ssh_commands" {
 output "ansible_inventory" {
   value = <<-EOT
   [monitor]
-  monitor-ai-01 ansible_host=${aws_eip.monitor.public_ip} ansible_user=${var.ssh_user}
+  monitor-ai-01 ansible_host=${aws_eip.monitor.public_ip} private_ip=${aws_instance.monitor.private_ip} ansible_user=${var.ssh_user}
 
   [web]
-  bank-web-01 ansible_host=${aws_eip.web.public_ip} ansible_user=${var.ssh_user}
+  bank-web-01 ansible_host=${aws_eip.web.public_ip} private_ip=${aws_instance.web.private_ip} ansible_user=${var.ssh_user}
 
   [core]
-  bank-core-01 ansible_host=${aws_eip.core.public_ip} ansible_user=${var.ssh_user}
+  bank-core-01 ansible_host=${aws_eip.core.public_ip} private_ip=${aws_instance.core.private_ip} ansible_user=${var.ssh_user}
 
   [app:children]
   web

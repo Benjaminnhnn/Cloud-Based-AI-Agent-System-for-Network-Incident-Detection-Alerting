@@ -102,7 +102,7 @@ jobs:
           import os
           from pathlib import Path
 
-          def inventory_host(group: str) -> str:
+          def inventory_value(group: str, key: str) -> str:
               inventory = Path("ansible/inventory.ini")
               if not inventory.exists():
                   return ""
@@ -118,11 +118,11 @@ jobs:
                   if not in_group or "ansible_host=" not in stripped:
                       continue
                   for part in stripped.split():
-                      if part.startswith("ansible_host="):
+                      if part.startswith(f"{key}="):
                           return part.split("=", 1)[1]
               return ""
 
-          core_host = inventory_host("core")
+          core_host = inventory_value("core", "private_ip") or inventory_value("core", "ansible_host")
           payment_api_upstream = (
               f"http://{core_host}:8080" if core_host else os.environ.get("PAYMENT_API_UPSTREAM")
           )
