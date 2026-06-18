@@ -192,6 +192,7 @@ services:
     container_name: frontend-web-staging
     restart: unless-stopped
     ports:
+      - "80:80"
       - "18081:80"
     environment:
       PAYMENT_API_UPSTREAM: ${PAYMENT_API_UPSTREAM:-http://payment-api:8000}

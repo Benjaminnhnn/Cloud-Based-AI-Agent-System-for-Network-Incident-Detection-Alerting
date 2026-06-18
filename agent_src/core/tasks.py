@@ -231,181 +231,121 @@ def _action_component(component: str) -> str:
     return component.replace("-", "_").replace(".", "_")
 
 
-def deterministic_diagnosis(alert: dict) -> tuple[str, dict | None]:
+RUNBOOK_FILES_BY_ALERT = {
+    "WebEndpointDown": "runbook_nginx.md",
+    "FrontendAPIProxyDown": "runbook_nginx.md",
+    "PaymentAPIEndpointDown": "runbook_postgresql.md",
+    "PostgreSQLDown": "runbook_postgresql.md",
+    "RedisDown": "runbook_redis.md",
+    "RedisBrokerDown": "runbook_redis.md",
+    "DockerContainerDown": "runbook_docker.md",
+}
+
+
+def _knowledge_base_path(filename: str) -> str:
+    return os.path.join(os.path.dirname(__file__), "..", "config", "knowledge_base", filename)
+
+
+def _load_runbook_section(filename: str, alert_name: str) -> str:
+    path = _knowledge_base_path(filename)
+    try:
+        with open(path, "r", encoding="utf-8") as file:
+            content = file.read()
+    except OSError as exc:
+        logger.warning("Unable to read runbook file %s: %s", path, exc)
+        return ""
+
+    section_pattern = rf"^##\s+{re.escape(alert_name)}\s*$"
+    match = re.search(section_pattern, content, flags=re.MULTILINE)
+    if not match:
+        return content.strip()
+
+    next_match = re.search(r"^##\s+", content[match.end():], flags=re.MULTILINE)
+    end = match.end() + next_match.start() if next_match else len(content)
+    return content[match.start():end].strip()
+
+
+def _render_runbook_template(template: str, values: dict[str, str]) -> str:
+    rendered = template
+    for key, value in values.items():
+        rendered = rendered.replace(f"{{{{{key}}}}}", str(value))
+    return rendered.strip()
+
+
+def _diagnosis_values(alert: dict) -> dict[str, str]:
     labels = alert.get("labels", {})
     annotations = alert.get("annotations", {})
     alert_name = labels.get("alertname", "Unknown")
     instance = labels.get("instance", "Unknown")
     target = labels.get("target", "unknown")
-    endpoint = labels.get("endpoint", "/health")
     summary = annotations.get("summary", "")
     environment = _alert_environment(labels, target)
     state_file = f"release/.state/{environment}.tag"
 
-    if alert_name == "WebEndpointDown":
+    component = labels.get("component", "unknown")
+    role = _deploy_role_for_component(component)
+    if alert_name in {"WebEndpointDown", "FrontendAPIProxyDown"}:
         component = _default_component(labels, environment, "frontend-web-prod", "frontend-web-staging")
-        local_health_url = "http://127.0.0.1:18081/health" if environment == "staging" else "http://127.0.0.1:3000/health"
-        local_api_url = "http://127.0.0.1:18081/api/health" if environment == "staging" else "http://127.0.0.1:3000/api/health"
-        analysis = (
-            "Chẩn đoán: Blackbox không nhận HTTP 2xx từ web endpoint.\n"
-            f"Component: {component}\n"
-            f"Target: {target}\n"
-            f"Tóm tắt: {summary or 'không có'}\n\n"
-            "Nguyên nhân ưu tiên:\n"
-            f"1. {component} stopped/unhealthy.\n"
-            "2. Nginx không trả /health hoặc container không bind đúng port.\n"
-            "3. Firewall/Security Group/route chặn monitor.\n"
-            "4. Nếu /health OK nhưng /api lỗi: kiểm tra PAYMENT_API_UPSTREAM và backend core.\n\n"
-            "Kiểm tra trên bank-web-01:\n"
-            f"docker ps -a --filter name={component}\n"
-            f"docker inspect -f '{{{{.State.Status}}}} {{{{if .State.Health}}}}{{{{.State.Health.Status}}}}{{{{end}}}}' {component} || true\n"
-            f"docker logs --tail=100 {component}\n"
-            f"curl -i {local_health_url}\n"
-            f"curl -i {local_api_url}\n\n"
-            "Khôi phục nhanh:\n"
-            f"docker start {component}\n"
-            "cd /home/ec2-user/aws-hybrid\n"
-            f"TAG=$(cat {state_file})\n"
-            f"./automation/app-release-deploy.sh {environment} \"$TAG\" web"
-        )
-        return analysis, {"action": f"check_or_start_{_action_component(component)}", "host": instance}
-
-    if alert_name == "FrontendAPIProxyDown":
-        component = _default_component(labels, environment, "frontend-web-prod", "frontend-web-staging")
-        dependency = labels.get("dependency", "payment-api")
-        expected_upstream = labels.get("expected_upstream", "http://<core-private-ip>:18080")
-        local_health_url = "http://127.0.0.1:18081/health" if environment == "staging" else "http://127.0.0.1:3000/health"
-        local_api_url = "http://127.0.0.1:18081/api/ready" if environment == "staging" else "http://127.0.0.1:3000/api/ready"
-        analysis = (
-            "Chẩn đoán: frontend vẫn có thể chạy nhưng Nginx proxy không nhận HTTP 2xx từ API upstream.\n"
-            f"Component: {component}\n"
-            f"Dependency: {dependency}\n"
-            f"Expected upstream: {expected_upstream}\n"
-            f"Target: {target}\n"
-            f"Tóm tắt: {summary or 'không có'}\n\n"
-            "Correlation: frontend /health vẫn trả 200 và Payment API readiness probe trực tiếp vẫn khỏe, "
-            "nên lỗi nằm ở cấu hình hoặc đường kết nối web-to-core.\n\n"
-            "Nguyên nhân ưu tiên:\n"
-            "1. PAYMENT_API_UPSTREAM sai host, sai port hoặc thiếu scheme http://.\n"
-            "2. Security Group, firewall hoặc route chặn kết nối từ web tới core.\n"
-            "3. Nginx chưa được recreate sau khi thay đổi cấu hình upstream.\n\n"
-            "Kiểm tra trên bank-web-01:\n"
-            f"docker inspect -f '{{{{range .Config.Env}}}}{{{{println .}}}}{{{{end}}}}' {component} | grep PAYMENT_API_UPSTREAM\n"
-            f"docker logs --tail=100 {component}\n"
-            f"curl -i {local_health_url}\n"
-            f"curl -i {local_api_url}\n\n"
-            "Khôi phục cấu hình:\n"
-            "cd /home/ec2-user/aws-hybrid\n"
-            "grep '^PAYMENT_API_UPSTREAM=' release/.env.staging\n"
-            f"sed -i 's|^PAYMENT_API_UPSTREAM=.*|PAYMENT_API_UPSTREAM={expected_upstream}|' release/.env.staging\n"
-            f"TAG=$(cat {state_file})\n"
-            f"./automation/app-release-deploy.sh {environment} \"$TAG\" web"
-        )
-        return analysis, {"action": f"fix_{_action_component(component)}_api_upstream", "host": instance}
-
-    if alert_name == "PaymentAPIEndpointDown":
+        role = "web"
+    elif alert_name == "PaymentAPIEndpointDown":
         component = _default_component(labels, environment, "payment-api-prod", "payment-api-staging")
-        local_api_url = "http://127.0.0.1:18080/api/ready" if environment == "staging" else "http://127.0.0.1:8080/api/ready"
-        analysis = (
-            "Chẩn đoán: Blackbox không nhận HTTP 2xx từ Payment API endpoint.\n"
-            f"Component: {component}\n"
-            f"Target: {target}\n"
-            f"Tóm tắt: {summary or 'không có'}\n\n"
-            "Nguyên nhân ưu tiên:\n"
-            "1. Payment API process lỗi hoặc readiness endpoint trả non-2xx.\n"
-            "2. Security Group, firewall hoặc route chặn monitor truy cập port API.\n"
-            "3. Payment API mất kết nối PostgreSQL.\n"
-            "4. Container vẫn running nhưng ứng dụng bên trong không phục vụ request.\n\n"
-            "Kiểm tra trên bank-core-01:\n"
-            f"docker ps --filter name={component}\n"
-            f"docker logs --tail=100 {component}\n"
-            f"curl -i {local_api_url}\n"
-            "sudo iptables -S | grep -E '18080|8000' || true\n\n"
-            "Khôi phục:\n"
-            "Xóa rule firewall thử nghiệm hoặc sửa dependency gây lỗi, sau đó kiểm tra lại endpoint.\n"
-            "cd /home/ec2-user/aws-hybrid\n"
-            f"TAG=$(cat {state_file})\n"
-            f"./automation/app-release-deploy.sh {environment} \"$TAG\" core"
-        )
-        return analysis, {"action": f"restore_{_action_component(component)}_endpoint", "host": instance}
-
-    if alert_name == "PostgreSQLDown":
+        role = "core"
+    elif alert_name == "PostgreSQLDown":
         component = _default_component(labels, environment, "postgres-prod", "postgres-staging")
-        api_health_url = "http://127.0.0.1:18080/api/health" if environment == "staging" else "http://127.0.0.1:8080/api/health"
-        analysis = (
-            "Chẩn đoán: postgres_exporter báo PostgreSQL không sẵn sàng hoặc không scrape được.\n"
-            f"Component: {component}\n"
-            f"Tóm tắt: {summary or 'không có'}\n\n"
-            "Nguyên nhân ưu tiên:\n"
-            f"1. {component} stopped/unhealthy.\n"
-            "2. PostgreSQL khởi động chậm, volume lỗi hoặc database chưa ready.\n"
-            "3. postgres-exporter không kết nối được PostgreSQL.\n"
-            "4. payment-api mất kết nối DB nên /api/health có thể fail.\n\n"
-            "Kiểm tra trên bank-core-01:\n"
-            f"docker ps -a --filter name={component}\n"
-            f"docker inspect -f '{{{{.State.Status}}}} {{{{if .State.Health}}}}{{{{.State.Health.Status}}}}{{{{end}}}}' {component} || true\n"
-            f"docker logs --tail=100 {component}\n"
-            f"docker exec {component} pg_isready -U aiops_user -d aiops_db\n"
-            f"curl -i {api_health_url}\n\n"
-            "Khôi phục nhanh:\n"
-            f"docker start {component}\n"
-            "cd /home/ec2-user/aws-hybrid\n"
-            f"TAG=$(cat {state_file})\n"
-            f"./automation/app-release-deploy.sh {environment} \"$TAG\" core"
-        )
-        return analysis, {"action": f"check_or_start_{_action_component(component)}", "host": instance}
-
-    if alert_name == "RedisDown":
-        component = _default_component(labels, environment, "redis-cache-prod", "redis-cache-staging")
-        exporter_url = "http://127.0.0.1:19121/metrics" if environment == "staging" else "http://127.0.0.1:9121/metrics"
-        analysis = (
-            "Chẩn đoán: redis_exporter báo Redis cache không sẵn sàng hoặc không scrape được.\n"
-            f"Component: {component}\n"
-            f"Tóm tắt: {summary or 'không có'}\n\n"
-            "Nguyên nhân ưu tiên:\n"
-            f"1. {component} stopped/unhealthy.\n"
-            "2. Redis lỗi appendonly/volume hoặc restart loop.\n"
-            "3. redis-exporter không kết nối được Redis cache.\n"
-            "4. Nếu Redis broker dừng, AI Agent/Celery có thể xử lý alert chậm.\n\n"
-            "Kiểm tra trên monitor-ai-01:\n"
-            f"docker ps -a --filter name={component}\n"
-            f"docker inspect -f '{{{{.State.Status}}}} {{{{if .State.Health}}}}{{{{.State.Health.Status}}}}{{{{end}}}}' {component} || true\n"
-            f"docker logs --tail=100 {component}\n"
-            f"docker exec {component} redis-cli ping\n"
-            f"curl -s {exporter_url} | head\n\n"
-            "Khôi phục nhanh:\n"
-            f"docker start {component}\n"
-            "cd /home/ec2-user/aws-hybrid\n"
-            f"TAG=$(cat {state_file})\n"
-            f"./automation/app-release-deploy.sh {environment} \"$TAG\" monitor"
-        )
-        return analysis, {"action": f"check_or_start_{_action_component(component)}", "host": instance}
-
-    if alert_name == "DockerContainerDown":
+        role = "core"
+    elif alert_name in {"RedisDown", "RedisBrokerDown"}:
+        prod_name = "redis-prod" if alert_name == "RedisBrokerDown" else "redis-cache-prod"
+        staging_name = "redis-staging" if alert_name == "RedisBrokerDown" else "redis-cache-staging"
+        component = _default_component(labels, environment, prod_name, staging_name)
+        role = "monitor"
+    elif alert_name == "DockerContainerDown":
         component = labels.get("component", "unknown-container")
         role = _deploy_role_for_component(component)
-        analysis = (
-            "Chẩn đoán: cAdvisor không còn thấy container bắt buộc của release stack.\n"
-            f"Component: {component}\n"
-            f"Deploy role: {role}\n"
-            f"Tóm tắt: {summary or 'không có'}\n\n"
-            "Nguyên nhân ưu tiên:\n"
-            "1. Container bị stop/rm thủ công trong demo hoặc sau deploy lỗi.\n"
-            "2. Docker daemon restart và container không được recreate đúng compose project.\n"
-            "3. Host hết disk, pull image fail hoặc health check làm release chưa hoàn tất.\n"
-            "4. Nếu mất ai-agent, Alertmanager có thể không gửi được thông báo mới cho đến khi khôi phục.\n\n"
-            f"Kiểm tra trên {instance}:\n"
-            f"docker ps -a --filter name={component}\n"
-            f"docker inspect -f '{{{{.State.Status}}}} {{{{if .State.Health}}}}{{{{.State.Health.Status}}}}{{{{end}}}}' {component} || true\n"
-            f"docker logs --tail=100 {component} || true\n"
-            "df -h /\n"
-            "docker system df\n\n"
-            "Khôi phục bằng release script:\n"
-            "cd /home/ec2-user/aws-hybrid\n"
-            f"TAG=$(cat {state_file})\n"
-            f"./automation/app-release-deploy.sh {environment} \"$TAG\" {role}"
-        )
-        return analysis, {"action": f"redeploy_{role}_{environment}", "host": instance}
+
+    return {
+        "alert_name": alert_name,
+        "instance": instance,
+        "target": target,
+        "summary": summary or "không có",
+        "environment": environment,
+        "component": component,
+        "role": role,
+        "dependency": labels.get("dependency", "payment-api"),
+        "expected_upstream": labels.get("expected_upstream", "http://<core-private-ip>:18080"),
+        "state_file": state_file,
+        "local_web_health_url": "http://127.0.0.1:18081/health" if environment == "staging" else "http://127.0.0.1:3000/health",
+        "local_web_api_health_url": "http://127.0.0.1:18081/api/health" if environment == "staging" else "http://127.0.0.1:3000/api/health",
+        "local_proxy_ready_url": "http://127.0.0.1:18081/api/ready" if environment == "staging" else "http://127.0.0.1:3000/api/ready",
+        "local_payment_ready_url": "http://127.0.0.1:18080/api/ready" if environment == "staging" else "http://127.0.0.1:8080/api/ready",
+        "local_payment_health_url": "http://127.0.0.1:18080/api/health" if environment == "staging" else "http://127.0.0.1:8080/api/health",
+        "redis_exporter_url": "http://127.0.0.1:19121/metrics" if environment == "staging" else "http://127.0.0.1:9121/metrics",
+        "deploy_command": f'./automation/app-release-deploy.sh {environment} "$TAG" {role}',
+    }
+
+
+def _proposal_for_alert(alert_name: str, values: dict[str, str]) -> dict | None:
+    component = values["component"]
+    instance = values["instance"]
+    if alert_name in {"WebEndpointDown", "PostgreSQLDown", "RedisDown", "RedisBrokerDown"}:
+        return {"action": f"check_or_start_{_action_component(component)}", "host": instance}
+    if alert_name == "FrontendAPIProxyDown":
+        return {"action": f"fix_{_action_component(component)}_api_upstream", "host": instance}
+    if alert_name == "PaymentAPIEndpointDown":
+        return {"action": f"restore_{_action_component(component)}_endpoint", "host": instance}
+    if alert_name == "DockerContainerDown":
+        return {"action": f"redeploy_{values['role']}_{values['environment']}", "host": instance}
+    return None
+
+
+def deterministic_diagnosis(alert: dict) -> tuple[str, dict | None]:
+    labels = alert.get("labels", {})
+    alert_name = labels.get("alertname", "Unknown")
+    values = _diagnosis_values(alert)
+    filename = RUNBOOK_FILES_BY_ALERT.get(alert_name)
+    if filename:
+        section = _load_runbook_section(filename, alert_name)
+        if section:
+            return _render_runbook_template(section, values), _proposal_for_alert(alert_name, values)
 
     resource_alerts = {
         "HighCPUUsage": ("CPU", "80", "top -o %CPU", "ps -eo pid,ppid,cmd,%mem,%cpu --sort=-%cpu | head"),
@@ -417,10 +357,12 @@ def deterministic_diagnosis(alert: dict) -> tuple[str, dict | None]:
     }
     if alert_name in resource_alerts:
         resource, threshold, primary_check, process_check = resource_alerts[alert_name]
+        instance = values["instance"]
+        summary = values["summary"]
         analysis = (
             f"Chẩn đoán: host vượt ngưỡng {resource} {threshold}%.\n"
             f"Host: {instance}\n"
-            f"Tóm tắt: {summary or 'không có'}\n\n"
+            f"Tóm tắt: {summary}\n\n"
             "Nguyên nhân ưu tiên:\n"
             "1. Tiến trình ứng dụng hoặc tác vụ demo đang tiêu thụ tài nguyên bất thường.\n"
             "2. Container restart loop, truy vấn nặng hoặc log tăng nhanh.\n"
@@ -435,6 +377,16 @@ def deterministic_diagnosis(alert: dict) -> tuple[str, dict | None]:
         return analysis, {"action": f"reduce_{resource.lower()}_usage", "host": instance}
 
     return "", None
+
+
+def _alert_report_component(alert: dict) -> str:
+    values = _diagnosis_values(alert)
+    return values.get("component", "unknown")
+
+
+def _alert_report_role(alert: dict) -> str:
+    values = _diagnosis_values(alert)
+    return values.get("role", "monitor")
 
 
 def _incident_field(details: str, field_name: str, default: str = "unknown") -> str:
@@ -465,127 +417,19 @@ def _format_alert_report(alert: dict, incident_id: str, proposal: dict | None, a
     instance = labels.get("instance", "Unknown")
     target = labels.get("target", labels.get("endpoint", "unknown"))
     summary = annotations.get("summary", "")
-    environment = _alert_environment(labels, target)
     action_name = proposal.get("action", "manual_fix") if proposal else "manual_fix"
-    state_file = f"release/.state/{environment}.tag"
-
-    def header(component: str) -> str:
-        return (
-            f"🚨 Sự cố: {alert_name}\n"
-            f"ID: {incident_id}\n"
-            f"Host: {instance}\n"
-            f"Component: {component}\n"
-            f"Target: {target}\n"
-            f"Action: {action_name}\n"
-            f"Tóm tắt: {summary or 'không có'}"
-        )
-
-    if alert_name == "WebEndpointDown":
-        component = _default_component(labels, environment, "frontend-web-prod", "frontend-web-staging")
-        local_health_url = "http://127.0.0.1:18081/health" if environment == "staging" else "http://127.0.0.1:3000/health"
-        local_api_url = "http://127.0.0.1:18081/api/health" if environment == "staging" else "http://127.0.0.1:3000/api/health"
-        role = "web"
-        commands = (
-            f"1. docker ps -a --filter name={component}\n"
-            f"2. docker logs --tail=100 {component}\n"
-            f"3. docker start {component}\n"
-            f"4. curl -i {local_health_url}\n"
-            f"5. curl -i {local_api_url}"
-        )
-    elif alert_name == "FrontendAPIProxyDown":
-        component = _default_component(labels, environment, "frontend-web-prod", "frontend-web-staging")
-        expected_upstream = labels.get("expected_upstream", "http://<core-private-ip>:18080")
-        local_health_url = "http://127.0.0.1:18081/health" if environment == "staging" else "http://127.0.0.1:3000/health"
-        local_api_url = "http://127.0.0.1:18081/api/ready" if environment == "staging" else "http://127.0.0.1:3000/api/ready"
-        role = "web"
-        commands = (
-            f"1. docker inspect -f '{{{{range .Config.Env}}}}{{{{println .}}}}{{{{end}}}}' {component} | grep PAYMENT_API_UPSTREAM\n"
-            f"2. docker logs --tail=100 {component}\n"
-            f"3. curl -i {local_health_url}\n"
-            f"4. curl -i {local_api_url}\n"
-            f"5. sed -i 's|^PAYMENT_API_UPSTREAM=.*|PAYMENT_API_UPSTREAM={expected_upstream}|' release/.env.staging"
-        )
-    elif alert_name == "PaymentAPIEndpointDown":
-        component = _default_component(labels, environment, "payment-api-prod", "payment-api-staging")
-        local_api_url = "http://127.0.0.1:18080/api/ready" if environment == "staging" else "http://127.0.0.1:8080/api/ready"
-        role = "core"
-        commands = (
-            f"1. docker ps --filter name={component}\n"
-            f"2. docker logs --tail=100 {component}\n"
-            f"3. curl -i {local_api_url}\n"
-            "4. sudo iptables -S | grep -E '18080|8000' || true\n"
-            "5. Xóa rule firewall thử nghiệm hoặc sửa dependency gây lỗi"
-        )
-    elif alert_name == "PostgreSQLDown":
-        component = _default_component(labels, environment, "postgres-prod", "postgres-staging")
-        api_health_url = "http://127.0.0.1:18080/api/health" if environment == "staging" else "http://127.0.0.1:8080/api/health"
-        role = "core"
-        commands = (
-            f"1. docker ps -a --filter name={component}\n"
-            f"2. docker logs --tail=100 {component}\n"
-            f"3. docker start {component}\n"
-            f"4. docker exec {component} pg_isready -U aiops_user -d aiops_db\n"
-            f"5. curl -i {api_health_url}"
-        )
-    elif alert_name == "RedisDown":
-        component = _default_component(labels, environment, "redis-cache-prod", "redis-cache-staging")
-        exporter_url = "http://127.0.0.1:19121/metrics" if environment == "staging" else "http://127.0.0.1:9121/metrics"
-        role = "monitor"
-        commands = (
-            f"1. docker ps -a --filter name={component}\n"
-            f"2. docker logs --tail=100 {component}\n"
-            f"3. docker start {component}\n"
-            f"4. docker exec {component} redis-cli ping\n"
-            f"5. curl -s {exporter_url} | head"
-        )
-    elif alert_name == "DockerContainerDown":
-        component = labels.get("component", "unknown-container")
-        role = _deploy_role_for_component(component)
-        commands = (
-            f"1. docker ps -a --filter name={component}\n"
-            f"2. docker logs --tail=100 {component} || true\n"
-            "3. df -h /\n"
-            "4. docker system df\n"
-            "5. redeploy bằng lệnh bên dưới nếu container đã bị xóa"
-        )
-    elif alert_name in {
-        "HighCPUUsage",
-        "CriticalCPUUsage",
-        "HighMemoryUsage",
-        "CriticalMemoryUsage",
-        "HighDiskUsage",
-        "CriticalDiskUsage",
-    }:
-        component = "host-system"
-        role = "monitor"
-        commands = _truncate_text(ai_analysis, 1200)
-    else:
-        component = labels.get("component", "unknown")
-        role = _deploy_role_for_component(component)
-        commands = _truncate_text(ai_analysis, 1200)
-
-    if alert_name in {
-        "HighCPUUsage",
-        "CriticalCPUUsage",
-        "HighMemoryUsage",
-        "CriticalMemoryUsage",
-        "HighDiskUsage",
-        "CriticalDiskUsage",
-    }:
-        recovery = "Nếu vẫn lỗi\nDừng tác vụ gây tải, sửa tiến trình bất thường hoặc scale host."
-    else:
-        recovery = (
-            "Nếu vẫn lỗi hoặc cần khôi phục release\n"
-            "cd /home/ec2-user/aws-hybrid\n"
-            f"TAG=$(cat {state_file})\n"
-            f"./automation/app-release-deploy.sh {environment} \"$TAG\" {role}"
-        )
+    component = _alert_report_component(alert)
 
     return (
-        f"{header(component)}\n\n"
-        f"✅ Làm ngay trên {instance}\n"
-        f"{commands}\n\n"
-        f"{recovery}\n\n"
+        f"🚨 Sự cố: {alert_name}\n"
+        f"ID: {incident_id}\n"
+        f"Host: {instance}\n"
+        f"Component: {component}\n"
+        f"Target: {target}\n"
+        f"Action: {action_name}\n"
+        f"Tóm tắt: {summary or 'không có'}\n\n"
+        f"✅ Runbook xử lý\n"
+        f"{_truncate_text(ai_analysis, 3500)}\n\n"
         "Agent sẽ tự kiểm tra lại sau 5 phút.\n"
         f"Feedback: /feedback {incident_id} <góp ý>"
     )

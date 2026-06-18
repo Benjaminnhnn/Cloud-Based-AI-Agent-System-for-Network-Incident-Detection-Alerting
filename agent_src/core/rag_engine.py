@@ -18,7 +18,7 @@ RAG_MAX_DISTANCE = float(os.getenv("RAG_MAX_DISTANCE", "1.2"))
 RUNBOOK_ALERT_NAMES = {
     "runbook_nginx.md": ("WebEndpointDown", "FrontendAPIProxyDown"),
     "runbook_postgresql.md": ("PostgreSQLDown", "PaymentAPIEndpointDown"),
-    "runbook_redis.md": ("RedisDown",),
+    "runbook_redis.md": ("RedisDown", "RedisBrokerDown"),
     "runbook_docker.md": ("DockerContainerDown",),
 }
 

@@ -64,7 +64,15 @@ ALERT_INGRESS_DEDUP_SECONDS = int(os.getenv("ALERT_INGRESS_DEDUP_SECONDS", "60")
 
 
 def _configured_telegram_chat_id() -> str | None:
-    return TELEGRAM_CHAT_ID or telegram_bot.TELEGRAM_CHAT_ID
+    return telegram_bot.TELEGRAM_CHAT_ID or TELEGRAM_CHAT_ID
+
+
+def _configured_telegram_chat_ids() -> set[str]:
+    return {
+        str(chat_id)
+        for chat_id in (TELEGRAM_CHAT_ID, telegram_bot.TELEGRAM_CHAT_ID)
+        if chat_id
+    }
 
 # FIX #9: Thêm socket_timeout để tránh treo khi Redis down
 redis_client = redis.Redis(
@@ -400,12 +408,12 @@ def _answer_telegram_callback(callback_query_id: str, text: str) -> None:
 
 
 def _telegram_callback_chat_allowed(callback_query: dict) -> bool:
-    expected = _configured_telegram_chat_id()
+    expected = _configured_telegram_chat_ids()
     if not expected:
         return False
     chat = callback_query.get("message", {}).get("chat", {})
     chat_id = chat.get("id")
-    return str(chat_id) == str(expected)
+    return str(chat_id) in expected
 
 
 def _publish_draft_from_callback(draft_id: str, actor: str) -> dict:
@@ -423,9 +431,9 @@ async def telegram_webhook(payload: TelegramWebhookPayload):
         message = payload.message or payload.edited_message or {}
         chat = message.get("chat") or {}
         chat_id = chat.get("id")
-        expected_chat_id = _configured_telegram_chat_id()
+        expected_chat_ids = _configured_telegram_chat_ids()
 
-        if expected_chat_id and str(chat_id) != str(expected_chat_id):
+        if expected_chat_ids and str(chat_id) not in expected_chat_ids:
             logger.warning("Ignored Telegram message from unauthorized chat_id=%s", chat_id)
             return {"status": "ignored"}
 
