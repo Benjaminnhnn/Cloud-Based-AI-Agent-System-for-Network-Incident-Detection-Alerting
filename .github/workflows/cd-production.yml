@@ -56,8 +56,8 @@ jobs:
         uses: docker/login-action@v3
         with:
           registry: ghcr.io
-          username: ${{ secrets.GHCR_USERNAME }}
-          password: ${{ secrets.GHCR_TOKEN }}
+          username: ${{ secrets.GHCR_USERNAME || github.actor }}
+          password: ${{ secrets.GHCR_TOKEN || secrets.GITHUB_TOKEN }}
 
       - name: Build & push ${{ matrix.role }}
         uses: docker/build-push-action@v6
@@ -217,7 +217,7 @@ jobs:
           DEPLOY_ROLE: ${{ matrix.role }}
           IMAGE_TAG: ${{ needs.prepare-release.outputs.image_tag }}
           GHCR_OWNER: ${{ needs.prepare-release.outputs.owner_lc }}
-          GHCR_USERNAME: ${{ secrets.GHCR_USERNAME }}
-          GHCR_TOKEN: ${{ secrets.GHCR_TOKEN }}
+          GHCR_USERNAME: ${{ secrets.GHCR_USERNAME || github.actor }}
+          GHCR_TOKEN: ${{ secrets.GHCR_TOKEN || secrets.GITHUB_TOKEN }}
           MIN_DOCKER_FREE_MB: 12288
         run: bash automation/github-deploy-role.sh
