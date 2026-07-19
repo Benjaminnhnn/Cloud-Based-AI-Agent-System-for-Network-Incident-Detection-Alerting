@@ -1,272 +1,324 @@
-# Hệ thống AIOps Hybrid Cloud phát hiện sự cố và cảnh báo thông minh
+# Cloud-Based AIOps System for Network Incident Detection and Alerting
 
-Dự án xây dựng một hệ thống AIOps chạy trên AWS EC2, kết hợp hạ tầng cloud, giám sát dịch vụ, AI Agent và quy trình phát hành có healthcheck, rollback tự động.
+This repository implements a small but complete AIOps platform on AWS EC2. It combines infrastructure provisioning, host configuration, monitoring, an AI incident agent, a demo banking application, and a CI/CD release flow with health checks and automatic rollback.
 
----
+The project is designed around clear operational boundaries:
 
-## 1. Tổng quan kiến trúc
+- Terraform owns cloud resources.
+- Ansible owns host bootstrap and runtime configuration.
+- GitHub Actions builds and publishes versioned container images.
+- EC2 hosts only pull and run release artifacts.
+- `automation/app-release-deploy.sh` is the single release gate for staging and production.
 
-Hệ thống hiện tại được tách thành bốn lớp rõ ràng:
+![AIOps architecture](assets/aiops-architecture.png)
 
-1. **Hạ tầng AWS bằng Terraform**
-   - Tạo VPC, subnet, route, security group, Elastic IP.
-   - Tạo ba EC2:
-     - `monitor-ai-01`
-     - `bank-web-01`
-     - `bank-core-01`
+## What This System Does
 
-2. **Bootstrap và cấu hình máy chủ bằng Ansible**
-   - Cài package nền, Docker, Docker Compose.
-   - Cấu hình SSH, firewall host-level.
-   - Triển khai Node Exporter.
-   - Cấu hình Prometheus, Alertmanager, Grafana và dashboard.
-   - Đặt release compose, file mẫu môi trường và deploy script lên EC2 release host.
+The system monitors a distributed demo application and sends infrastructure or service incidents to an AI Agent. The agent deduplicates repeated alerts, retrieves relevant runbooks from ChromaDB, uses Gemini when configured, sends an actionable Telegram report, and verifies the incident again after a short delay.
 
-3. **Release ứng dụng bằng image versioned**
-   - AI Agent được build thành Docker image.
-   - Backend được build thành Docker image.
-   - Frontend được build thành image Nginx phục vụ static assets và reverse proxy `/api`.
+The repo also includes a role-based CI/CD pipeline. Changes to the AI agent, backend, or frontend build only the affected image and deploy only the affected EC2 role in staging. Production releases are driven by `v*` Git tags.
 
-4. **CI/CD bằng GitHub Actions**
-   - Build, test, đóng gói image.
-   - Push image lên GHCR.
-   - SSH vào EC2 để chạy release script.
-   - Health check toàn bộ stack.
-   - Rollback về tag trước nếu release mới lỗi.
+## Architecture
 
----
+The system has four main layers.
 
-## 2. Các thành phần chính
+| Layer | Source | Responsibility |
+|---|---|---|
+| Infrastructure | `terraform/` | VPC, subnets, security groups, Elastic IPs, and three EC2 hosts |
+| Host configuration | `ansible/` | Docker, monitoring stack, release runtime files, dashboards, exporters |
+| Application runtime | `agent_src/`, `demo-web/`, `release/` | AI Agent, Celery worker, log watcher, Payment API, PostgreSQL, Redis, frontend |
+| Delivery | `.github/workflows/`, `automation/` | CI validation, image build/push, role-based deployment, health checks, rollback |
 
-| Thành phần | Vai trò |
+The EC2 roles are separated by responsibility:
+
+| Role | Host | Main services |
+|---|---|---|
+| `monitor` | `monitor-ai-01` | Prometheus, Alertmanager, Grafana, Redis, AI Agent, Celery worker, log watcher |
+| `core` | `bank-core-01` | Payment API, PostgreSQL, Postgres exporter |
+| `web` | `bank-web-01` | React frontend served by Nginx |
+
+Staging and production can run at the same time on the same EC2 hosts because they use different ports, compose projects, environment files, and state files.
+
+| Service | Staging health | Production health |
+|---|---|---|
+| AI Agent | `http://127.0.0.1:18000/health` | `http://127.0.0.1:8000/health` |
+| Payment API | `http://127.0.0.1:18080/api/health` | `http://127.0.0.1:8080/api/health` |
+| Frontend | `http://127.0.0.1:18081/health` | `http://127.0.0.1:3000/health` |
+
+## Alert Flow
+
+```text
+Prometheus / Blackbox / service monitor
+  -> Alertmanager
+  -> AI Agent /webhook
+  -> Redis queue
+  -> Celery process_alerts_task
+  -> deterministic runbook or RAG context
+  -> Gemini analysis when needed and configured
+  -> Telegram incident report
+  -> delayed verification through Prometheus
+  -> incident memory saved to ChromaDB when applicable
+```
+
+Important behavior in the alert path:
+
+- The webhook validates Alertmanager payloads and enqueues work instead of doing long processing inline.
+- Ingress deduplication uses `alert-ingress-cooldown:<identity>` with `ALERT_INGRESS_DEDUP_SECONDS`.
+- AI processing deduplication uses `alert-ai-cooldown:<identity>` with `ALERT_AI_COOLDOWN_SECONDS`.
+- Alert identity prefers Alertmanager `fingerprint`; otherwise it hashes labels such as `alertname`, `instance`, `job`, `service`, and `target`.
+- `resolved` alerts clear cooldown and can send a recovery notification.
+- The Celery worker handles alert batches with bounded concurrency via `ALERT_BATCH_CONCURRENCY`.
+
+## AI Agent and RAG
+
+The AI Agent is a FastAPI application at `agent_src/core/main.py`. Release compose splits the agent runtime into separate containers:
+
+| Container | Role |
 |---|---|
-| Terraform | Provision hạ tầng AWS |
-| Ansible | Bootstrap EC2, cấu hình monitoring và release runtime |
-| Prometheus | Thu thập metrics |
-| Alertmanager | Gửi cảnh báo tới AI Agent |
-| Grafana | Dashboard giám sát |
-| AI Agent | Nhận webhook, phân tích sự cố, phối hợp worker |
-| Celery + Redis | Xử lý tác vụ nền |
-| Payment API | Backend FastAPI mẫu |
-| Frontend Nginx | Giao diện web image-based |
-| GitHub Actions | CI/CD và release orchestration |
+| `ai-agent-*` | FastAPI API, webhooks, health, metrics, tool/runbook draft endpoints |
+| `celery-worker-*` | Alert processing, Gemini calls, RAG lookup, verification tasks |
+| `log-watcher-*` | Log monitoring and webhook forwarding |
 
----
+RAG uses ChromaDB through `agent_src/core/rag_engine.py`.
 
-## 3. Cấu trúc thư mục
+| Collection | Purpose |
+|---|---|
+| `standard_runbooks` | Reviewed Markdown runbooks from `agent_src/config/knowledge_base/*.md` |
+| `incident_memory` | Runtime incident history and accepted/revised admin feedback |
 
-```text
-aws-hybrid/
-|- terraform/                         # Hạ tầng AWS bằng Terraform
-|- ansible/                           # Bootstrap, monitoring, release runtime config
-|  `- playbooks/
-|     |- bootstrap.yml
-|     |- configure-monitoring-stack.yml
-|     `- configure-release-runtime.yml
-|- automation/
-|  |- app-release-deploy.sh           # Pull image, start stack, health check, rollback
-|  `- update-infrastructure.sh        # Cập nhật IP và inventory khi IP máy dev thay đổi
-|- release/
-|  |- .env.example
-|  |- docker-compose.staging.yml
-|  `- docker-compose.production.yml
-|- agent_src/                         # AI Agent
-|- demo-web/
-|  |- backend/                        # Payment API
-|  `- frontend/                       # React frontend, đóng gói thành Nginx image
-|- platform-config/                  # Compose và cấu hình phục vụ local/dev
-|- diagram/                          # Tài liệu sơ đồ
-|- AWS_INFRASTRUCTURE_DEPLOYMENT_GUIDE.md
-|- AIops_CICD.md
-`- README.md
+Gemini defaults are intentionally conservative to reduce quota risk during alert storms:
+
+```env
+GEMINI_MODEL=gemini-2.5-flash
+GEMINI_FALLBACK_MODELS=
+GEMINI_MAX_ATTEMPTS=1
+GEMINI_MAX_REMOTE_CALLS=1
 ```
 
----
+For known alerts such as `WebEndpointDown`, `FrontendAPIProxyDown`, `PaymentAPIEndpointDown`, `PostgreSQLDown`, `RedisDown`, and `DockerContainerDown`, the worker can produce deterministic diagnosis from runbook templates before relying on an LLM.
 
-## 4. Luồng phát hiện và xử lý sự cố
+## Demo Application
 
-1. Prometheus, Blackbox Exporter hoặc service monitor phát hiện bất thường.
-2. Alertmanager gửi webhook tới AI Agent.
-3. AI Agent ghi nhận alert và đẩy tác vụ vào Redis queue.
-4. Celery worker xử lý alert, gọi công cụ chẩn đoán và mô hình AI khi cần.
-5. Kết quả được gửi tới Telegram để người vận hành theo dõi hoặc phê duyệt.
+`demo-web/` contains a simple banking web application used as the monitored workload.
 
----
+| Component | Source | Notes |
+|---|---|---|
+| Frontend | `demo-web/frontend/` | React app packaged into an Nginx image |
+| Backend | `demo-web/backend/` | FastAPI service named "VietTien Digital Banking API" |
+| Database | `demo-web/database/` | SQL init and seed scripts mounted by release compose |
 
-## 5. Luồng triển khai chuẩn hiện tại
+The backend has two different health endpoints:
+
+- `/api/health` checks process liveness.
+- `/api/ready` checks readiness, including PostgreSQL connectivity.
+
+These endpoints are intentionally separate. A process can be alive while the database dependency is unavailable.
+
+## CI/CD and Release Flow
+
+CI runs on pull requests to `develop` and `main`, and on pushes to `feature/**`, `develop`, and `main`.
 
 ```text
-Developer push code
-  -> GitHub Actions chạy lint, test, build
-  -> Build 3 Docker images:
-       - aws-hybrid-ai-agent
-       - aws-hybrid-payment-api
-       - aws-hybrid-frontend
-  -> Push image lên GHCR với cùng tag
-  -> Workflow SSH vào EC2 release host
-  -> Chạy automation/app-release-deploy.sh
-  -> EC2 pull image
-  -> docker compose up -d
-  -> Health check AI Agent, backend, frontend
-  -> Thành công hoặc rollback về tag cũ
+Checkout
+  -> setup Python 3.11
+  -> install dependencies
+  -> ruff critical-rule lint
+  -> AI Agent tests
+  -> Backend tests
+  -> build AI Agent image
+  -> build Payment API image
+  -> build Frontend image
+  -> validate staging and production compose files
 ```
 
----
-
-## 6. Các playbook Ansible đang dùng
-
-### Bootstrap EC2
+The local equivalent is:
 
 ```bash
+ruff check agent_src demo-web/backend/app --select E9,F63,F7,F82
+PYTHONPATH=agent_src pytest -q agent_src/tests
+PYTHONPATH=demo-web/backend pytest -q demo-web/backend/tests
+docker build -t local/ai-agent:ci agent_src
+docker build -t local/payment-api:ci demo-web/backend
+docker build -t local/frontend:ci demo-web/frontend
+cp release/.env.example release/.env.staging
+cp release/.env.example release/.env.production
+docker compose -f release/docker-compose.staging.yml config > /dev/null
+docker compose -f release/docker-compose.production.yml config > /dev/null
+```
+
+Staging deployment is role-based. `cd-staging.yml` maps changed paths to deploy roles:
+
+| Changed path | Role | Image |
+|---|---|---|
+| `agent_src/` | `monitor` | `aws-hybrid-ai-agent` |
+| `demo-web/backend/`, `demo-web/database/` | `core` | `aws-hybrid-payment-api` |
+| `demo-web/frontend/` | `web` | `aws-hybrid-frontend` |
+| `release/`, `automation/`, workflow file | all roles | all release images |
+
+Production deployment runs when a tag matching `v*` is pushed, or through manual workflow dispatch with a release tag.
+
+## Rollback Strategy
+
+`automation/app-release-deploy.sh <staging|production> <image-tag> <monitor|web|core>` is the release gate used by GitHub Actions.
+
+For each deployment it:
+
+1. Validates environment and deploy role.
+2. Loads the correct compose file and env file.
+3. Logs in to GHCR when credentials are provided.
+4. Saves the previous deployed tag in `release/.state/<environment>.tag`.
+5. Pulls only the services required for the target role.
+6. Starts the role services with Docker Compose.
+7. Runs role-specific health checks for up to 18 attempts, waiting 10 seconds between attempts.
+8. Writes the new tag to the state file only after health checks pass.
+9. Rolls back to the previous tag if the new version fails health checks.
+
+Role-specific service ownership:
+
+| Role | Services deployed |
+|---|---|
+| `monitor` | `redis`, `redis-cache`, exporters, `ai-agent`, `celery-worker`, `log-watcher` |
+| `core` | `postgres`, `postgres-exporter`, `payment-api` |
+| `web` | `frontend-web` |
+
+Manual rollback uses the same compose files and the previous tag stored in `release/.state/`.
+
+## Running Locally
+
+The local development stack is separate from the release path:
+
+```bash
+docker compose -f platform-config/docker-compose.dev.yml up -d
+```
+
+This starts the development monitoring and app stack defined in `platform-config/docker-compose.dev.yml`. It is useful for local validation, but production releases should use CI-built GHCR images and `automation/app-release-deploy.sh`.
+
+## Deployment Bootstrap
+
+A new AWS environment follows this high-level order:
+
+```text
+Terraform apply
+  -> update Ansible inventory
+  -> Ansible bootstrap
+  -> configure monitoring stack
+  -> configure release runtime files
+  -> configure GitHub Secrets
+  -> push develop for staging or push v* tag for production
+```
+
+Useful commands:
+
+```bash
+cd terraform
+terraform init
+terraform validate
+terraform plan -out=tfplan
+terraform apply tfplan
+terraform output -raw ansible_inventory > ../ansible/inventory.ini
+cd ..
+ansible all -i ansible/inventory.ini -m ping
 ansible-playbook -i ansible/inventory.ini ansible/playbooks/bootstrap.yml
-```
-
-### Cấu hình monitoring và host services
-
-```bash
 ansible-playbook -i ansible/inventory.ini ansible/playbooks/configure-monitoring-stack.yml
-```
-
-Playbook này chỉ đảm nhiệm lớp monitoring/config:
-- Node Exporter
-- Prometheus
-- Blackbox Exporter
-- Alertmanager
-- Grafana
-- firewall host-level
-
-Nó không deploy backend hoặc frontend production.
-
-### Đặt release runtime trên EC2
-
-```bash
 ansible-playbook -i ansible/inventory.ini ansible/playbooks/configure-release-runtime.yml
 ```
 
-Playbook này chép:
-- `release/docker-compose.staging.yml`
-- `release/docker-compose.production.yml`
-- `release/.env.example`
-- `automation/app-release-deploy.sh`
-
----
-
-## 7. Deploy staging và production
-
-### Staging
+If the operator public IP changes, use:
 
 ```bash
-git push origin develop
+bash automation/update-infrastructure.sh
 ```
 
-Workflow staging sẽ phát hành image tag dạng:
+## Verification Commands
 
-```text
-staging-<commit-sha>
-```
-
-Script chạy trên EC2:
+Agent health:
 
 ```bash
-./automation/app-release-deploy.sh staging staging-<commit-sha>
+curl -fsS http://127.0.0.1:18000/health
+curl -fsS http://127.0.0.1:8000/health
 ```
 
-Health check:
-
-```text
-AI Agent: http://127.0.0.1:18000/health
-Backend:  http://127.0.0.1:18080/api/health
-Frontend: http://127.0.0.1:18081/health
-```
-
-### Production
+Payment API health and readiness:
 
 ```bash
-git tag v1.0.0
-git push origin v1.0.0
+curl -fsS http://127.0.0.1:18080/api/health
+curl -fsS http://127.0.0.1:18080/api/ready
+curl -fsS http://127.0.0.1:8080/api/health
+curl -fsS http://127.0.0.1:8080/api/ready
 ```
 
-Workflow production sẽ phát hành image tag dạng:
-
-```text
-v1.0.0
-```
-
-Script chạy trên EC2:
+Frontend health through Nginx:
 
 ```bash
-./automation/app-release-deploy.sh production v1.0.0
+curl -fsS http://127.0.0.1:18081/health
+curl -fsS http://127.0.0.1:3000/health
 ```
 
-Health check:
-
-```text
-AI Agent: http://127.0.0.1:8000/health
-Backend:  http://127.0.0.1:8080/api/health
-Frontend: http://127.0.0.1:8081/health
-```
-
-Nếu bất kỳ health check nào thất bại, script sẽ tự rollback về tag đã lưu trước đó.
-
----
-
-## 8. Chạy local cho phát triển
-
-Môi trường local vẫn dùng Docker Compose riêng:
+RAG inspection from a running release worker:
 
 ```bash
-docker-compose -f platform-config/docker-compose.dev.yml up -d
+docker exec celery-worker-staging python tools/inspect_rag_db.py
+docker exec celery-worker-staging python tools/inspect_rag_db.py --collection standard_runbooks
+docker exec celery-worker-staging python tools/inspect_rag_db.py --collection incident_memory
 ```
 
-Compose local phục vụ mục đích phát triển và kiểm thử thủ công, không phải đường production release.
+## Important Configuration
 
----
+Release environment values are based on `release/.env.example`. GitHub Actions creates `.env.staging` and `.env.production` during deployment and fills values from repository secrets or inventory-derived defaults.
 
-## 9. Các secret CI/CD cần cấu hình
+Important variables include:
 
-Repository secrets trên GitHub cần có:
-
-| Secret | Mục đích |
+| Variable | Purpose |
 |---|---|
-| `GHCR_USERNAME` | Tài khoản push image lên GHCR |
-| `GHCR_TOKEN` | Token registry |
-| `SSH_HOST` | EC2 release host |
-| `SSH_PORT` | Cổng SSH |
-| `SSH_PRIVATE_KEY` | Private key dùng bởi workflow |
-| `GEMINI_API_KEY` | Khóa API AI |
-| `TELEGRAM_TOKEN` | Token bot Telegram |
-| `TELEGRAM_CHAT_ID` | Kênh nhận cảnh báo |
-| `AI_AGENT_PUBLIC_URL` | URL public của Agent khi cần |
-| `DATABASE_URL` | Kết nối backend |
-| `SECRET_KEY` | Secret backend |
-| `PROMETHEUS_URL` | URL Prometheus |
+| `GHCR_OWNER` | GitHub user or organization that owns the images |
+| `IMAGE_TAG` | Release image tag supplied by workflow or deploy script |
+| `DATABASE_URL` | Backend database connection string |
+| `PAYMENT_API_UPSTREAM` | Frontend Nginx upstream to the Payment API |
+| `PROMETHEUS_URL` | Prometheus API endpoint used by verification |
+| `GEMINI_API_KEY` | Enables Gemini analysis |
+| `TELEGRAM_TOKEN`, `TELEGRAM_CHAT_ID` | Enables Telegram notifications and feedback |
+| `AI_AGENT_PUBLIC_URL` | Public HTTPS URL for Telegram webhook registration |
+| `GITHUB_WEBHOOK_SECRET` | HMAC secret for `/github/webhook` |
+| `GITHUB_DISCOVERY_TOKEN` | Optional token for GitHub changed-file discovery |
 
----
+Never commit `.env*`, Terraform state, SSH keys, API tokens, or runtime ChromaDB data.
 
-## 10. Endpoint tham khảo
+## Repository Layout
 
-| Dịch vụ | Endpoint |
-|---|---|
-| Grafana | `http://<monitor-ip>:3000` |
-| Prometheus | `http://<monitor-ip>:9090` |
-| Alertmanager | `http://<monitor-ip>:9093` |
-| AI Agent production | `http://<monitor-ip>:8000/health` |
-| Frontend release internal | `http://127.0.0.1:8081/health` |
+```text
+.
+|- agent_src/              # AI Agent, Celery tasks, RAG engine, tests, diagnostic tools
+|- ansible/                # EC2 bootstrap, monitoring, dashboard, and release runtime playbooks
+|- automation/             # Deploy, infrastructure update, role deploy, Telegram notification scripts
+|- demo-web/
+|  |- backend/             # FastAPI Payment API
+|  |- frontend/            # React frontend packaged with Nginx
+|  `- database/            # PostgreSQL init and seed scripts
+|- platform-config/        # Local development compose and monitoring config
+|- release/                # Staging/production compose files and env template
+|- terraform/              # AWS infrastructure definition
+|- assets/                 # README images
+|- AIops_CICD.md           # CI/CD design notes
+|- AWS_INFRASTRUCTURE_DEPLOYMENT_GUIDE.md
+|- GITHUB_WEBHOOK_TOOL_REGISTRY_RUNBOOK_DEMO.md
+|- STAGING_DEMO_RUNBOOKS.md
+`- README.md
+```
 
----
+## Operational Boundaries
 
-## 11. Tài liệu liên quan
+- Do not build production images on EC2.
+- Do not copy application source to EC2 for release.
+- Do not bypass `automation/app-release-deploy.sh` for staging or production deployment.
+- Do not merge staging and production port mappings.
+- Keep `httpx<0.28` for FastAPI `TestClient` compatibility.
+- Use `google-genai`, not `google-generativeai`.
+- Do not commit `agent_src/vector_db/`; it is runtime ChromaDB data.
 
-- [AWS_INFRASTRUCTURE_DEPLOYMENT_GUIDE.md](AWS_INFRASTRUCTURE_DEPLOYMENT_GUIDE.md)
+## Further Reading
+
 - [AIops_CICD.md](AIops_CICD.md)
-- [diagram/CI_CD_DEPLOYMENT_DIAGRAM.md](diagram/CI_CD_DEPLOYMENT_DIAGRAM.md)
-
----
-
-## 12. Ghi chú vận hành
-
-- Không build production image trực tiếp trên EC2.
-- Không copy source application lên EC2 để phát hành production.
-- EC2 chỉ nên pull artifact đã được CI tạo.
-- Terraform quản lý cloud resource; Ansible quản lý bootstrap và cấu hình host.
-- `automation/app-release-deploy.sh` là cửa release thống nhất cho staging và production.
+- [AWS_INFRASTRUCTURE_DEPLOYMENT_GUIDE.md](AWS_INFRASTRUCTURE_DEPLOYMENT_GUIDE.md)
+- [GITHUB_WEBHOOK_TOOL_REGISTRY_RUNBOOK_DEMO.md](GITHUB_WEBHOOK_TOOL_REGISTRY_RUNBOOK_DEMO.md)
+- [STAGING_DEMO_RUNBOOKS.md](STAGING_DEMO_RUNBOOKS.md)
+- [agent_src/README.md](agent_src/README.md)
