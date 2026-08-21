@@ -19,3 +19,8 @@ INSERT INTO tasks (project_id, title, description, status, priority) VALUES
 (3, 'Backend API', 'Develop FastAPI backend', 'in_progress', 'high'),
 (3, 'Database setup', 'Configure PostgreSQL', 'pending', 'high')
 ON CONFLICT DO NOTHING;
+
+INSERT INTO accounts (user_id, account_number, account_type, balance, currency, status, is_primary) VALUES
+(1, '9704360000010001', 'checking', 25000000.00, 'VND', 'active', TRUE),
+(2, '9704360000020001', 'checking', 12000000.00, 'VND', 'active', TRUE)
+ON CONFLICT DO NOTHING;

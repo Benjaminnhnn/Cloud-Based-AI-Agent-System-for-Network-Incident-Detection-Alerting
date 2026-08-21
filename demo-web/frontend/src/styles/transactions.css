@@ -1,260 +1,251 @@
 .transactions {
-  color: var(--text-primary);
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  gap: 16px;
+  color: var(--text-primary);
+}
+
+.transactions-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
 }
 
 .transactions-header h1 {
-  font-size: clamp(1.45rem, 2.3vw, 2rem);
   margin-bottom: 4px;
+  font-size: 1.65rem;
 }
 
-.transactions-header p {
+.transactions-header div > p:last-child {
   color: var(--text-secondary);
+  font-size: 0.9rem;
 }
 
-.filters-section,
-.filter-tabs,
-.summary-cards,
-.transactions-list {
+.export-btn {
+  min-height: 38px;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 12px;
+  border: 1px solid var(--green-300);
+  border-radius: var(--radius-md);
+  background: var(--green-50);
+  color: var(--green-700);
+  font-weight: 800;
+  font-size: 0.84rem;
+}
+
+.transaction-summary {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.transaction-summary > div,
+.transaction-tools,
+.transaction-content {
+  border: 1px solid var(--border);
   border-radius: var(--radius-lg);
-  border: 1px solid var(--glass-border);
-  background: var(--glass-card);
+  background: var(--surface);
   box-shadow: var(--shadow-soft);
 }
 
-.filters-section {
+.transaction-summary > div {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: 15px;
+}
+
+.transaction-summary span,
+.transaction-summary small {
+  color: var(--text-secondary);
+  font-size: 0.78rem;
+}
+
+.transaction-summary strong {
+  font-size: 1.18rem;
+}
+
+.transaction-tools {
   display: grid;
-  grid-template-columns: 1.1fr auto auto;
-  gap: 10px;
-  padding: 14px;
-  align-items: center;
+  grid-template-columns: minmax(260px, 1fr) auto;
+  gap: 12px;
+  padding: 12px;
 }
 
 .search-box,
 .date-range {
-  border: 1px solid rgba(126, 143, 181, 0.32);
-  background: rgba(24, 30, 48, 0.86);
-  border-radius: 12px;
+  min-height: 40px;
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 10px 12px;
+  padding: 0 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  color: var(--text-muted);
 }
 
 .search-box input,
 .date-range input {
-  border: 0;
-  background: transparent;
   width: 100%;
-  outline: none;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--text-primary);
 }
 
 .date-range {
   flex-wrap: wrap;
 }
 
-.transactions .date-range span,
-.transactions .search-icon,
-.transactions .calendar-icon {
-  color: var(--text-secondary);
+.date-range input {
+  width: auto;
 }
 
-.export-btn {
-  border-radius: 12px;
-  height: 42px;
-  padding: 0 14px;
-  border: 1px solid rgba(43, 168, 116, 0.56);
-  background: linear-gradient(135deg, rgba(43, 168, 116, 0.28), rgba(20, 50, 40, 0.66));
-  color: var(--green-50);
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
+.date-range span {
+  color: var(--text-secondary);
+  font-size: 0.8rem;
+}
+
+.transaction-content {
+  overflow: hidden;
 }
 
 .filter-tabs {
   display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  padding: 10px;
+  align-items: center;
+  gap: 6px;
+  padding: 11px 14px;
+  border-bottom: 1px solid var(--border);
+  color: var(--text-muted);
+  overflow-x: auto;
 }
 
-.filter-tabs .tab {
-  border-radius: 999px;
-  padding: 7px 12px;
-  border: 1px solid rgba(125, 142, 184, 0.4);
-  color: #cad5f2;
-  background: rgba(31, 38, 58, 0.7);
-  font-size: 0.88rem;
-}
-
-.filter-tabs .tab.active {
-  color: #f0f5ff;
-  border-color: rgba(43, 168, 116, 0.9);
-  background: linear-gradient(135deg, var(--green-300), var(--green-500));
-}
-
-.summary-cards {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 8px;
-  padding: 10px;
-}
-
-.summary-card {
-  padding: 14px;
-  border-radius: 14px;
-  border: 1px solid rgba(117, 133, 170, 0.28);
-  background: rgba(28, 35, 54, 0.9);
-}
-
-.summary-card h3 {
-  font-size: 0.94rem;
-  color: #dae4ff;
-}
-
-.summary-amount {
-  margin: 7px 0;
-  font-size: 1.6rem;
+.filter-tabs button {
+  flex: 0 0 auto;
+  padding: 7px 10px;
+  border-radius: var(--radius-md);
+  color: var(--text-secondary);
+  font-size: 0.8rem;
   font-weight: 700;
 }
 
-.summary-count {
-  color: var(--text-secondary);
-  font-size: 0.84rem;
+.filter-tabs button:hover,
+.filter-tabs button.active {
+  background: var(--green-50);
+  color: var(--green-700);
 }
 
-.summary-card.income .summary-amount {
-  color: var(--green-100);
+.transaction-list {
+  padding: 0 14px;
 }
 
-.summary-card.expense .summary-amount {
-  color: #ff9ab2;
-}
-
-.summary-card.net .summary-amount {
-  color: #8ad2ff;
-}
-
-.transactions-list {
-  padding: 8px 14px;
-}
-
-.transaction-items {
+.transaction-item {
   display: grid;
-}
-
-.transactions .transaction-item {
-  display: grid;
-  grid-template-columns: auto 1fr auto auto;
+  grid-template-columns: auto minmax(0, 1fr) auto auto;
   align-items: center;
   gap: 12px;
-  border-top: 1px solid rgba(109, 126, 166, 0.23);
-  padding: 12px 0;
+  padding: 13px 0;
+  border-top: 1px solid var(--border);
 }
 
-.transactions .transaction-item:first-child {
+.transaction-item:first-child {
   border-top: 0;
 }
 
-.transactions .transaction-icon .icon-circle {
-  width: 36px;
-  height: 36px;
-  border-radius: 12px;
+.transaction-icon {
+  width: 34px;
+  height: 34px;
   display: grid;
   place-items: center;
-  font-weight: 700;
-  color: #e8f0ff;
+  border-radius: 50%;
+  font-size: 0.8rem;
 }
 
-.category-green {
-  background: rgba(43, 168, 116, 0.25);
+.transaction-icon.income {
+  background: var(--green-50);
+  color: var(--green-600);
 }
 
-.category-blue {
-  background: rgba(87, 141, 255, 0.24);
+.transaction-icon.expense {
+  background: #fff3f4;
+  color: var(--danger);
 }
 
-.category-red {
-  background: rgba(255, 123, 147, 0.24);
+.transaction-description {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
 }
 
-.category-orange {
-  background: rgba(255, 170, 108, 0.22);
+.transaction-description strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.86rem;
 }
 
-.category-yellow {
-  background: rgba(255, 209, 104, 0.23);
+.transaction-description small {
+  color: var(--text-muted);
+  font-size: 0.74rem;
 }
 
-.category-purple {
-  background: rgba(182, 142, 255, 0.24);
-}
-
-.category-gray {
-  background: rgba(123, 135, 162, 0.25);
-}
-
-.transactions .transaction-details h4 {
-  margin-bottom: 3px;
-  font-size: 0.95rem;
-}
-
-.transactions .transaction-details p {
-  color: var(--text-secondary);
-  font-size: 0.82rem;
-}
-
-.transaction-status .badge {
-  border-radius: 999px;
-  font-size: 0.75rem;
-  padding: 5px 9px;
-}
-
-.badge-completed {
-  background: rgba(43, 168, 116, 0.26);
-  color: #a8ffe0;
-}
-
-.badge-pending {
-  background: rgba(255, 207, 104, 0.28);
-  color: #ffe4a0;
-}
-
-.transactions .transaction-amount .positive {
-  color: var(--green-100);
+.status-badge {
+  padding: 5px 8px;
+  border-radius: 20px;
+  font-size: 0.72rem;
   font-weight: 700;
 }
 
-.transactions .transaction-amount .negative {
-  color: #ff9ab2;
-  font-weight: 700;
+.status-completed {
+  background: var(--green-50);
+  color: var(--green-700);
+}
+
+.status-pending {
+  background: #fff8e8;
+  color: var(--warning);
+}
+
+.status-failed {
+  background: #fff3f4;
+  color: var(--danger);
+}
+
+.transaction-item > strong {
+  font-size: 0.84rem;
 }
 
 .no-transactions {
+  padding: 30px 12px;
   text-align: center;
   color: var(--text-secondary);
-  padding: 18px;
+  font-size: 0.86rem;
 }
 
-@media (max-width: 1100px) {
-  .filters-section {
-    grid-template-columns: 1fr;
-  }
-
-  .summary-cards {
+@media (max-width: 850px) {
+  .transaction-tools,
+  .transaction-summary {
     grid-template-columns: 1fr;
   }
 }
 
-@media (max-width: 720px) {
-  .transactions .transaction-item {
-    grid-template-columns: auto 1fr;
+@media (max-width: 650px) {
+  .transactions-header {
+    flex-direction: column;
   }
 
-  .transaction-status,
-  .transactions .transaction-amount {
+  .transaction-item {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .status-badge,
+  .transaction-item > strong {
     grid-column: 2;
+    justify-self: start;
   }
 }

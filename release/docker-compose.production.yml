@@ -3,7 +3,7 @@ services:
     image: redis:7-alpine
     container_name: redis-prod
     restart: always
-    command: ["redis-server", "--appendonly", "yes"]
+    command: ["redis-server", "--appendonly", "yes", "--maxmemory", "${REDIS_BROKER_MAXMEMORY:-512mb}", "--maxmemory-policy", "noeviction"]
     volumes:
       - redis-data-prod:/data
     healthcheck:
@@ -18,7 +18,7 @@ services:
     image: redis:7-alpine
     container_name: redis-cache-prod
     restart: always
-    command: ["redis-server", "--appendonly", "yes"]
+    command: ["redis-server", "--appendonly", "yes", "--maxmemory", "${REDIS_CACHE_MAXMEMORY:-256mb}", "--maxmemory-policy", "allkeys-lru"]
     volumes:
       - redis-cache-data-prod:/data
     healthcheck:
@@ -43,6 +43,20 @@ services:
       redis-cache:
         condition: service_healthy
 
+  redis-broker-exporter:
+    image: oliver006/redis_exporter:v1.67.0
+    container_name: redis-broker-exporter-prod
+    restart: always
+    environment:
+      REDIS_ADDR: redis://redis:6379
+    ports:
+      - "9122:9121"
+    networks:
+      - aiops-network
+    depends_on:
+      redis:
+        condition: service_healthy
+
   ai-agent:
     image: ghcr.io/${GHCR_OWNER:-your-org}/aws-hybrid-ai-agent:${IMAGE_TAG:-latest}
     container_name: ai-agent-prod
@@ -57,6 +71,9 @@ services:
       PYTHONUNBUFFERED: "1"
     ports:
       - "0.0.0.0:8000:8000"
+    volumes:
+      - runbook-workflow-prod:/app/config/runbook_workflow
+      - runbook-published-prod:/app/config/knowledge_base/published
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health').read()"]
       interval: 30s
@@ -80,7 +97,13 @@ services:
       REDIS_PORT: "6379"
       REDIS_DB: "0"
       PYTHONUNBUFFERED: "1"
-    command: ["celery", "-A", "core.celery_app.celery_app", "worker", "--loglevel=INFO"]
+    volumes:
+      - vector-db-prod:/app/vector_db
+      - runbook-workflow-prod:/app/config/runbook_workflow
+      - runbook-published-prod:/app/config/knowledge_base/published
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    command: ["celery", "-A", "core.celery_app.celery_app", "worker", "--loglevel=INFO", "--concurrency=${CELERY_WORKER_CONCURRENCY:-2}"]
     depends_on:
       redis:
         condition: service_healthy
@@ -169,7 +192,7 @@ services:
     container_name: frontend-web-prod
     restart: always
     ports:
-      - "80:80"
+      - "127.0.0.1:${FRONTEND_PROD_HOST_PORT:-3000}:80"
     environment:
       PAYMENT_API_UPSTREAM: ${PAYMENT_API_UPSTREAM:-http://payment-api:8000}
     healthcheck:
@@ -189,3 +212,6 @@ volumes:
   redis-data-prod:
   redis-cache-data-prod:
   postgres-data-prod:
+  vector-db-prod:
+  runbook-workflow-prod:
+  runbook-published-prod:

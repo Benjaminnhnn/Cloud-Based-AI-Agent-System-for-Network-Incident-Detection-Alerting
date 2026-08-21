@@ -18,6 +18,8 @@ else:
 WEBHOOK_URL = os.getenv("AI_AGENT_WEBHOOK_URL", "http://localhost:8000/webhook")
 ERROR_KEYWORDS = ["ERROR", "CRITICAL", "FATAL", "EXCEPTION", "FAILED", "PANIC"]
 ALERT_COOLDOWN = int(os.getenv("ALERT_COOLDOWN", "60"))
+WEBHOOK_MAX_ATTEMPTS = max(int(os.getenv("WEBHOOK_MAX_ATTEMPTS", "3")), 1)
+WEBHOOK_RETRY_BASE_SECONDS = float(os.getenv("WEBHOOK_RETRY_BASE_SECONDS", "1"))
 HOSTNAME = socket.gethostname()
 
 last_alerts = {}
@@ -49,13 +51,22 @@ def send_alert_to_ai_agent(log_line, file_path):
         }]
     }
 
-    try:
-        response = requests.post(WEBHOOK_URL, json=payload, timeout=5)
-        if response.status_code == 200:
-            last_alerts[file_path] = now
-            print(f"[{datetime.now()}] ✅ Alert sent for {file_path}")
-    except Exception as e:
-        print(f"❌ [{datetime.now()}] Webhook error: {e}")
+    for attempt in range(1, WEBHOOK_MAX_ATTEMPTS + 1):
+        try:
+            response = requests.post(WEBHOOK_URL, json=payload, timeout=5)
+            if response.status_code == 200:
+                last_alerts[file_path] = now
+                print(f"[{datetime.now()}] ✅ Alert sent for {file_path}")
+                return
+            if response.status_code < 500:
+                print(f"❌ [{datetime.now()}] Webhook rejected alert: HTTP {response.status_code}")
+                return
+            print(f"⚠️ [{datetime.now()}] Webhook temporary error: HTTP {response.status_code}")
+        except requests.RequestException as e:
+            print(f"⚠️ [{datetime.now()}] Webhook error: {e}")
+
+        if attempt < WEBHOOK_MAX_ATTEMPTS:
+            time.sleep(WEBHOOK_RETRY_BASE_SECONDS * (2 ** (attempt - 1)))
 
 class LogFileHandler(FileSystemEventHandler):
     def __init__(self, file_path):

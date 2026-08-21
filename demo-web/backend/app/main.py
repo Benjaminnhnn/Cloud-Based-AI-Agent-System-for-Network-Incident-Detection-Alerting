@@ -3,12 +3,16 @@ from fastapi import HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import PlainTextResponse
 from prometheus_client import Counter, Histogram, generate_latest, CollectorRegistry
+from sqlalchemy import inspect, text
 import os
 import time
 import urllib.error
 import urllib.request
-from app.routes import users
+from app.routes import banking, notifications, users
 from app.config import settings
+from app.database import SessionLocal, engine
+from app.models.user import Base
+from app.services.banking_service import BankingService
 
 NODE_EXPORTER_URL = os.getenv("NODE_EXPORTER_URL", "http://127.0.0.1:9100/metrics")
 
@@ -33,8 +37,8 @@ USERS_TOTAL = Counter(
 )
 
 app = FastAPI(
-    title="AIOps Demo API",
-    description="Backend API for AIOps Demo Application",
+    title="VietTien Digital Banking API",
+    description="Backend API for VietTien Digital Banking",
     version="1.0.0",
     docs_url="/docs",
     redoc_url="/redoc"
@@ -71,6 +75,23 @@ async def add_metrics(request, call_next):
 
 # Include routers
 app.include_router(users.router)
+app.include_router(banking.router)
+app.include_router(notifications.router)
+
+
+def ensure_profile_columns():
+    inspector = inspect(engine)
+    existing_columns = {column["name"] for column in inspector.get_columns("users")}
+    migrations = {
+        "phone": "ALTER TABLE users ADD COLUMN phone VARCHAR(50)",
+        "address": "ALTER TABLE users ADD COLUMN address VARCHAR(255)",
+        "date_of_birth": "ALTER TABLE users ADD COLUMN date_of_birth DATE",
+    }
+
+    with engine.begin() as connection:
+        for column_name, statement in migrations.items():
+            if column_name not in existing_columns:
+                connection.execute(text(statement))
 
 @app.get("/api/health")
 async def health_check():
@@ -80,6 +101,24 @@ async def health_check():
         "environment": settings.ENVIRONMENT,
         "service": "AIOps Backend API"
     }
+
+
+@app.get("/api/ready")
+async def readiness_check():
+    """Readiness check for dependencies required to serve API requests."""
+    try:
+        with engine.connect() as connection:
+            connection.execute(text("SELECT 1"))
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail="database unavailable") from exc
+
+    return {
+        "status": "ready",
+        "environment": settings.ENVIRONMENT,
+        "service": "AIOps Backend API",
+        "database": "reachable",
+    }
+
 
 @app.get("/api/metrics", response_class=PlainTextResponse)
 async def metrics():
@@ -99,16 +138,24 @@ async def node_metrics():
 async def root():
     """Root endpoint - API information"""
     return {
-        "message": "AIOps Demo API",
+        "message": "VietTien Digital Banking API",
         "version": "1.0.0",
         "docs": "/docs",
         "redoc": "/redoc",
         "health": "/api/health",
+        "ready": "/api/ready",
         "metrics": "/api/metrics"
     }
 
 @app.on_event("startup")
 async def startup_event():
+    Base.metadata.create_all(bind=engine)
+    ensure_profile_columns()
+    db = SessionLocal()
+    try:
+        BankingService.seed_missing_accounts(db)
+    finally:
+        db.close()
     print("🚀 FastAPI Backend Started")
     print(f"Environment: {settings.ENVIRONMENT}")
     print(f"Database: {settings.DATABASE_URL}")

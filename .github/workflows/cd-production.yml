@@ -41,6 +41,7 @@ jobs:
   build-and-push:
     runs-on: ubuntu-latest
     needs: prepare-release
+    environment: production
     strategy:
       fail-fast: false
       matrix: ${{ fromJson(needs.prepare-release.outputs.build_matrix) }}
@@ -55,8 +56,8 @@ jobs:
         uses: docker/login-action@v3
         with:
           registry: ghcr.io
-          username: ${{ secrets.GHCR_USERNAME }}
-          password: ${{ secrets.GHCR_TOKEN }}
+          username: ${{ secrets.GHCR_USERNAME || github.actor }}
+          password: ${{ secrets.GHCR_TOKEN || secrets.GITHUB_TOKEN }}
 
       - name: Build & push ${{ matrix.role }}
         uses: docker/build-push-action@v6
@@ -102,9 +103,38 @@ jobs:
           import os
           from pathlib import Path
 
+          def inventory_value(group: str, key: str) -> str:
+              inventory = Path("ansible/inventory.ini")
+              if not inventory.exists():
+                  return ""
+
+              in_group = False
+              for line in inventory.read_text().splitlines():
+                  stripped = line.strip()
+                  if stripped == f"[{group}]":
+                      in_group = True
+                      continue
+                  if stripped.startswith("["):
+                      in_group = False
+                  if not in_group or "ansible_host=" not in stripped:
+                      continue
+                  for part in stripped.split():
+                      if part.startswith(f"{key}="):
+                          return part.split("=", 1)[1]
+              return ""
+
+          core_host = inventory_value("core", "private_ip") or inventory_value("core", "ansible_host")
+          payment_api_upstream = (
+              f"http://{core_host}:8080" if core_host else os.environ.get("PAYMENT_API_UPSTREAM")
+          )
+          if not payment_api_upstream:
+              raise SystemExit("Missing required environment variable: PAYMENT_API_UPSTREAM")
+          payment_api_upstream = payment_api_upstream.strip()
+          if not payment_api_upstream.startswith(("http://", "https://")):
+              raise SystemExit("PAYMENT_API_UPSTREAM must include http:// or https://")
           values = {
               "ENVIRONMENT": "production",
-              "PAYMENT_API_UPSTREAM": os.environ.get("PAYMENT_API_UPSTREAM") or "http://10.10.1.118:8080",
+              "PAYMENT_API_UPSTREAM": payment_api_upstream,
           }
           for key in (
               "GEMINI_API_KEY",
@@ -146,11 +176,35 @@ jobs:
           DEPLOY_ROLE: ${{ matrix.role }}
         run: |
           set -euo pipefail
+          inventory_host() {
+            local group="$1"
+            awk -v group="[$group]" '
+              $0 == group { in_group=1; next }
+              /^\[/ { in_group=0 }
+              in_group && /ansible_host=/ {
+                for (i = 1; i <= NF; i++) {
+                  if ($i ~ /^ansible_host=/) {
+                    sub(/^ansible_host=/, "", $i)
+                    print $i
+                    exit
+                  }
+                }
+              }
+            ' ansible/inventory.ini
+          }
+
           case "$DEPLOY_ROLE" in
-            monitor) host="$MONITOR_SSH_HOST" ;;
-            core) host="$CORE_SSH_HOST" ;;
-            web) host="$WEB_SSH_HOST" ;;
+            monitor) host="$(inventory_host monitor)" ;;
+            core) host="$(inventory_host core)" ;;
+            web) host="$(inventory_host web)" ;;
           esac
+          if [ -z "$host" ]; then
+            case "$DEPLOY_ROLE" in
+              monitor) host="$MONITOR_SSH_HOST" ;;
+              core) host="$CORE_SSH_HOST" ;;
+              web) host="$WEB_SSH_HOST" ;;
+            esac
+          fi
           test -n "$host"
           echo "host=$host" >> "$GITHUB_OUTPUT"
 
@@ -163,7 +217,7 @@ jobs:
           DEPLOY_ROLE: ${{ matrix.role }}
           IMAGE_TAG: ${{ needs.prepare-release.outputs.image_tag }}
           GHCR_OWNER: ${{ needs.prepare-release.outputs.owner_lc }}
-          GHCR_USERNAME: ${{ secrets.GHCR_USERNAME }}
-          GHCR_TOKEN: ${{ secrets.GHCR_TOKEN }}
+          GHCR_USERNAME: ${{ secrets.GHCR_USERNAME || github.actor }}
+          GHCR_TOKEN: ${{ secrets.GHCR_TOKEN || secrets.GITHUB_TOKEN }}
           MIN_DOCKER_FREE_MB: 12288
         run: bash automation/github-deploy-role.sh

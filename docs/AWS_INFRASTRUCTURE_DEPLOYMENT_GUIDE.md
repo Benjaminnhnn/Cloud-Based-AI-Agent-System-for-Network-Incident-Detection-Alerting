@@ -191,13 +191,17 @@ core
 
 [all:vars]
 ansible_python_interpreter=/usr/bin/python3
-ansible_ssh_private_key_file=~/.ssh/aws-hybrid
+ansible_ssh_private_key_file=/home/<user>/.ssh/aws-hybrid
 ```
 
 Neu may dev doi IP sau nay, chay:
 
 ```bash
 bash automation/update-infrastructure.sh
+```
+Co the bo khau check keypair:
+```bash
+ANSIBLE_HOST_KEY_CHECKING=False ansible all -i ansible/inventory.ini -m ping
 ```
 
 Script nay se cap nhat `my_ip_cidr`, apply Terraform va ghi lai `ansible/inventory.ini`.
@@ -432,6 +436,7 @@ Kiem tra URL public tu may local:
 ```bash
 curl -i http://<web-public-ip>/
 curl -i http://<web-public-ip>/api/health
+curl -i http://<web-public-ip>/api/ready
 curl -i http://<web-public-ip>/docs
 
 curl -i http://<monitor-public-ip>:3000/api/health
@@ -444,6 +449,7 @@ URLs truy cap:
 ```text
 Web UI demo:  http://<web-public-ip>
 API health:   http://<web-public-ip>/api/health
+API ready:    http://<web-public-ip>/api/ready
 API docs:     http://<web-public-ip>/docs
 Grafana:      http://<monitor-public-ip>:3000
 Prometheus:   http://<monitor-public-ip>:9090
@@ -451,7 +457,10 @@ Alertmanager: http://<monitor-public-ip>:9093
 AI Agent:     http://<monitor-public-ip>:8000/health  # neu security group cho phep public access
 Frontend release health noi bo tren web host: http://127.0.0.1/health
 Backend release health noi bo tren core host: http://127.0.0.1:8080/api/health
+Backend release readiness noi bo tren core host: http://127.0.0.1:8080/api/ready
 ```
+
+`/api/health` la liveness cua API process. `/api/ready` kiem tra them ket noi PostgreSQL va duoc blackbox probe dung de phat hien dependency/configuration failure.
 
 URLs theo inventory hien tai:
 
@@ -972,3 +981,25 @@ Khi ban giao cho dev khac, gui rieng:
 - Gia tri GitHub Secrets cho runtime release.
 - GitHub Secrets can update.
 - Public IP hien tai cua ha tang.
+
+## 17. RAG Persistent Storage
+
+The monitor role must deploy `ai-agent` and `celery-worker` with the same persistent ChromaDB volume mounted at `/app/vector_db`. The release compose files set `VECTOR_DB_PATH=/app/vector_db` and share:
+
+- Staging: `vector-db-staging`
+- Production: `vector-db-prod`
+
+The database contains two collections:
+
+- `standard_runbooks`: chunks loaded from `agent_src/config/knowledge_base/*.md`.
+- `incident_memory`: resolved incident history and accepted/revised admin feedback.
+
+Verify the staging mounts after deployment:
+
+```bash
+docker inspect ai-agent-staging --format '{{range .Mounts}}{{println .Name .Destination}}{{end}}'
+docker inspect celery-worker-staging --format '{{range .Mounts}}{{println .Name .Destination}}{{end}}'
+docker exec celery-worker-staging python tools/inspect_rag_db.py
+```
+
+ChromaDB files are runtime data and must not be committed to Git. Back up an existing `/app/vector_db` directory before the first recreate that introduces the shared named volume.

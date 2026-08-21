@@ -29,6 +29,8 @@ WEBHOOK_URL = os.getenv("WEBHOOK_URL", "http://localhost:8000/webhook")
 
 # Từ khóa để nhận diện lỗi
 ERROR_KEYWORDS = ["ERROR", "CRITICAL", "FATAL", "EXCEPTION", "FAILED", "PANIC"]
+WEBHOOK_MAX_ATTEMPTS = max(int(os.getenv("WEBHOOK_MAX_ATTEMPTS", "3")), 1)
+WEBHOOK_RETRY_BASE_SECONDS = float(os.getenv("WEBHOOK_RETRY_BASE_SECONDS", "1"))
 
 # Lấy tên của Server hiện tại
 HOSTNAME = socket.gethostname()
@@ -67,12 +69,21 @@ def send_alert_to_ai_agent(log_line, file_path):
         "groupKey": f"log-alert-{HOSTNAME}"
     }
 
-    try:
-        response = requests.post(WEBHOOK_URL, json=payload, timeout=5)
-        if response.status_code == 200:
-            print(f"✅ [{datetime.now()}] Đã gửi báo cáo lỗi sang AI Agent.")
-    except Exception as e:
-        print(f"❌ [{datetime.now()}] Lỗi khi kết nối tới AI Agent Webhook: {e}")
+    for attempt in range(1, WEBHOOK_MAX_ATTEMPTS + 1):
+        try:
+            response = requests.post(WEBHOOK_URL, json=payload, timeout=5)
+            if response.status_code == 200:
+                print(f"✅ [{datetime.now()}] Đã gửi báo cáo lỗi sang AI Agent.")
+                return
+            if response.status_code < 500:
+                print(f"❌ [{datetime.now()}] Webhook từ chối alert: HTTP {response.status_code}")
+                return
+            print(f"⚠️ [{datetime.now()}] Webhook tạm lỗi: HTTP {response.status_code}")
+        except requests.RequestException as e:
+            print(f"⚠️ [{datetime.now()}] Lỗi khi kết nối tới AI Agent Webhook: {e}")
+
+        if attempt < WEBHOOK_MAX_ATTEMPTS:
+            time.sleep(WEBHOOK_RETRY_BASE_SECONDS * (2 ** (attempt - 1)))
 
 def watch_logs():
     """Vòng lặp giám sát log thời gian thực"""

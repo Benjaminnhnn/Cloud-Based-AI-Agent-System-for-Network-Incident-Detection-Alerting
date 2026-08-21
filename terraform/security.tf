@@ -12,43 +12,43 @@ resource "aws_security_group" "monitor_sg" {
   }
 
   ingress {
-    description = "Grafana from my IP only"
+    description = "Grafana from internet"
     from_port   = 3000
     to_port     = 3000
     protocol    = "tcp"
-    cidr_blocks = [var.my_ip_cidr]
+    cidr_blocks = ["0.0.0.0/0"]
   }
 
   ingress {
-    description = "Prometheus from my IP only"
+    description = "Prometheus from internet"
     from_port   = 9090
     to_port     = 9090
     protocol    = "tcp"
-    cidr_blocks = [var.my_ip_cidr]
+    cidr_blocks = ["0.0.0.0/0"]
   }
 
   ingress {
-    description = "AlertManager from my IP only"
+    description = "AlertManager from internet"
     from_port   = 9093
     to_port     = 9093
     protocol    = "tcp"
-    cidr_blocks = [var.my_ip_cidr]
+    cidr_blocks = ["0.0.0.0/0"]
   }
 
   ingress {
-    description = "AI Agent API from my IP only"
+    description = "AI Agent API from internet"
     from_port   = 8000
     to_port     = 8000
     protocol    = "tcp"
-    cidr_blocks = [var.my_ip_cidr]
+    cidr_blocks = ["0.0.0.0/0"]
   }
 
   ingress {
-    description = "Staging AI Agent API from my IP only"
+    description = "Staging AI Agent API from internet"
     from_port   = 18000
     to_port     = 18000
     protocol    = "tcp"
-    cidr_blocks = [var.my_ip_cidr]
+    cidr_blocks = ["0.0.0.0/0"]
   }
 
   ingress {
@@ -224,11 +224,11 @@ resource "aws_security_group" "core_sg" {
   }
 
   ingress {
-    description = "Staging API access from my IP"
+    description = "Staging API access from internet"
     from_port   = 18080
     to_port     = 18080
     protocol    = "tcp"
-    cidr_blocks = [var.my_ip_cidr]
+    cidr_blocks = ["0.0.0.0/0"]
   }
 
   ingress {

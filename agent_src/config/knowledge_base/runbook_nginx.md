@@ -1,34 +1,78 @@
-# Runbook: Xử lý sự cố Nginx Down
-Mô tả: Sử dụng khi port 80 không phản hồi hoặc service nginx ở trạng thái inactive.
+# Runbook: Nginx va Frontend Web
 
-## Các bước kiểm tra:
-1. Sử dụng tool `check_http_service` với url="http://localhost" để kiểm tra mã trạng thái HTTP.
-2. Sử dụng tool `get_system_metrics` để xem CPU/RAM có bị quá tải không.
-3. Sử dụng tool `read_service_logs` với tham số `service_name="nginx"` để tìm lỗi cấu hình.
+Dung cho cac alert lien quan den frontend container, Nginx reverse proxy va ket noi tu frontend sang Payment API.
 
-## Hướng xử lý đề xuất:
-- Nếu log báo "Address already in use", đề xuất kiểm tra process chiếm port.
-- Nếu không có lỗi cấu hình rõ ràng, đề xuất hành động: `restart_nginx`.
-- Nếu ổ đĩa đầy (>90%), gọi tool `clean_temp_logs` và thực hiện dọn dẹp log trước khi restart.
-- Nếu gặp lỗi 502/504, kiểm tra kết nối đến Backend/App server.
+## WebEndpointDown
 
-## Lưu ý an toàn:
-- Luôn xin phê duyệt trước khi restart trong giờ cao điểm.
+Chan doan: Blackbox khong nhan HTTP 2xx tu web endpoint.
 
-<!--->
-# Runbook: <Tên sự cố>
-Mô tả: <Khi nào dùng runbook này>
+Context:
+- Component: `{{component}}`
+- Host: `{{instance}}`
+- Target: `{{target}}`
+- Environment: `{{environment}}`
+- Tom tat: {{summary}}
 
-## Các bước kiểm tra:
-1. Gọi tool `get_system_metrics` để kiểm tra CPU/RAM.
-2. Gọi tool `get_network_metrics` để kiểm tra packet loss.
-3. Gọi tool `ping_host` với host="<địa chỉ>" để test connectivity.
-4. Gọi tool `read_service_logs` với service_name="<tên>" để đọc log.
+Nguyen nhan uu tien:
+1. `{{component}}` stopped hoac unhealthy.
+2. Nginx khong tra `/health` hoac container khong bind dung port.
+3. Firewall, Security Group hoac route chan monitor truy cap frontend.
+4. Neu `/health` OK nhung API loi, kiem tra `PAYMENT_API_UPSTREAM` va backend core.
 
-## Hướng xử lý đề xuất:
-- Nếu <điều kiện A>, đề xuất hành động: `<action_name>`.
-- Nếu <điều kiện B>, đề xuất hành động: `<action_name_2>`.
+Kiem tra tren `bank-web-01`:
+```bash
+docker ps -a --filter name={{component}}
+docker inspect -f '{{.State.Status}} {{if .State.Health}}{{.State.Health.Status}}{{end}}' {{component}} || true
+docker logs --tail=100 {{component}}
+curl -i {{local_web_health_url}}
+curl -i {{local_web_api_health_url}}
+```
 
-## Lưu ý an toàn:
-- <Cảnh báo cụ thể>
-<!--->
+Khoi phuc nhanh:
+```bash
+docker start {{component}}
+cd /home/ec2-user/aws-hybrid
+TAG=$(cat {{state_file}})
+{{deploy_command}}
+```
+
+## FrontendAPIProxyDown
+
+Chan doan: frontend van co the chay nhung Nginx proxy khong nhan HTTP 2xx tu API upstream.
+
+Context:
+- Component: `{{component}}`
+- Host: `{{instance}}`
+- Dependency: `{{dependency}}`
+- Expected upstream: `{{expected_upstream}}`
+- Target: `{{target}}`
+- Environment: `{{environment}}`
+- Tom tat: {{summary}}
+
+Correlation: frontend /health vẫn trả 200 và Payment API readiness probe trực tiếp vẫn khỏe, nen loi nam o cau hinh hoac duong ket noi web-to-core.
+
+Nguyen nhan uu tien:
+1. `PAYMENT_API_UPSTREAM` sai host, sai port hoac thieu scheme `http://`.
+2. Security Group, firewall hoac route chan ket noi tu web toi core.
+3. Nginx chua duoc recreate sau khi thay doi cau hinh upstream.
+
+Kiem tra tren `bank-web-01`:
+```bash
+docker inspect -f '{{range .Config.Env}}{{println .}}{{end}}' {{component}} | grep PAYMENT_API_UPSTREAM
+docker logs --tail=100 {{component}}
+curl -i {{local_web_health_url}}
+curl -i {{local_proxy_ready_url}}
+```
+
+Khoi phuc cau hinh:
+```bash
+cd /home/ec2-user/aws-hybrid
+grep '^PAYMENT_API_UPSTREAM=' release/.env.{{environment}}
+sed -i 's|^PAYMENT_API_UPSTREAM=.*|PAYMENT_API_UPSTREAM={{expected_upstream}}|' release/.env.{{environment}}
+TAG=$(cat {{state_file}})
+{{deploy_command}}
+```
+
+Luu y an toan:
+- Chi sua `PAYMENT_API_UPSTREAM` ve endpoint da duoc kiem tra.
+- Neu nghi ngo Security Group, kiem tra rule web-to-core truoc khi redeploy.

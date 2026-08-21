@@ -19,6 +19,7 @@ from google.genai import types
 from core.celery_app import celery_app
 from core.metrics import ACTIVE_TASKS, AI_WORKFLOW_LATENCY_SECONDS, ALERTS_PROCESSED_TOTAL
 from core.rag_engine import get_rag_instance
+from core.runbook_registry import create_runbook_draft
 from tools.diag_tools import AGENT_TOOLS
 from tools.prometheus_check import get_prometheus_checker
 from utils.telegram_bot import send_telegram_message
@@ -51,7 +52,9 @@ GEMINI_MAX_ATTEMPTS = int(os.getenv("GEMINI_MAX_ATTEMPTS", "1"))
 GEMINI_MAX_REMOTE_CALLS = int(os.getenv("GEMINI_MAX_REMOTE_CALLS", "1"))
 GEMINI_RETRY_BASE_SECONDS = float(os.getenv("GEMINI_RETRY_BASE_SECONDS", "2"))
 ALERT_AI_COOLDOWN_SECONDS = int(os.getenv("ALERT_AI_COOLDOWN_SECONDS", "900"))
+ALERT_NOTIFICATION_TTL_SECONDS = int(os.getenv("ALERT_NOTIFICATION_TTL_SECONDS", "86400"))
 ALERT_DEDUP_ENABLED = os.getenv("ALERT_DEDUP_ENABLED", "true").lower() not in {"0", "false", "no"}
+ALERT_BATCH_CONCURRENCY = max(int(os.getenv("ALERT_BATCH_CONCURRENCY", "4")), 1)
 VN_TZ = ZoneInfo("Asia/Ho_Chi_Minh")
 
 # Redis Configuration (để lưu incident context)
@@ -59,23 +62,17 @@ REDIS_HOST = os.getenv("REDIS_HOST", "localhost")
 REDIS_PORT = int(os.getenv("REDIS_PORT", "6379"))
 REDIS_DB   = int(os.getenv("REDIS_DB", "0"))
 
-# FIX #8: Thêm socket_timeout và xử lý lỗi khởi tạo Redis
-try:
-    redis_client = redis.Redis(
-        host=REDIS_HOST,
-        port=REDIS_PORT,
-        db=REDIS_DB,
-        decode_responses=True,
-        socket_timeout=5,
-        socket_connect_timeout=5,
-    )
-    redis_client.ping()
-    logger.info("✅ Redis connected successfully.")
-except redis.RedisError as e:
-    logger.error(f"❌ Redis connection failed: {e}")
-    redis_client = None  # type: ignore
+redis_client = redis.Redis(
+    host=REDIS_HOST,
+    port=REDIS_PORT,
+    db=REDIS_DB,
+    decode_responses=True,
+    socket_timeout=5,
+    socket_connect_timeout=5,
+)
 
 _local_alert_cooldowns: dict[str, float] = {}
+_local_alert_notifications: dict[str, float] = {}
 
 
 def _truncate_text(value: str, max_chars: int = 1500) -> str:
@@ -103,6 +100,38 @@ def _alert_identity(alert: dict) -> str:
 
 def _alert_cooldown_key(alert: dict) -> str:
     return f"alert-ai-cooldown:{_alert_identity(alert)}"
+
+
+def _alert_event_hash(alert: dict) -> str:
+    event_start = str(alert.get("startsAt") or "unknown-start")
+    return hashlib.sha256(event_start.encode("utf-8")).hexdigest()[:12]
+
+
+def _alert_notification_key(alert: dict, notification_type: str) -> str:
+    return f"alert-ai-notification:{notification_type}:{_alert_identity(alert)}:{_alert_event_hash(alert)}"
+
+
+def _active_incident_key(alert: dict) -> str:
+    return f"alert-ai-active-incident:{_alert_identity(alert)}:{_alert_event_hash(alert)}"
+
+
+def _reserve_alert_notification(alert: dict, notification_type: str) -> bool:
+    if not ALERT_DEDUP_ENABLED or ALERT_NOTIFICATION_TTL_SECONDS <= 0:
+        return True
+
+    key = _alert_notification_key(alert, notification_type)
+    if redis_client is not None:
+        try:
+            return bool(redis_client.set(key, "sent", ex=ALERT_NOTIFICATION_TTL_SECONDS, nx=True))
+        except redis.RedisError as e:
+            logger.warning("Redis notification dedup failed, using in-memory fallback: %s", e)
+
+    now = time.time()
+    expires_at = _local_alert_notifications.get(key, 0)
+    if expires_at > now:
+        return False
+    _local_alert_notifications[key] = now + ALERT_NOTIFICATION_TTL_SECONDS
+    return True
 
 
 def _reserve_alert_processing(alert: dict) -> bool:
@@ -202,124 +231,238 @@ def _action_component(component: str) -> str:
     return component.replace("-", "_").replace(".", "_")
 
 
-def deterministic_diagnosis(alert: dict) -> tuple[str, dict | None]:
+RUNBOOK_FILES_BY_ALERT = {
+    "WebEndpointDown": "runbook_nginx.md",
+    "FrontendAPIProxyDown": "runbook_nginx.md",
+    "PaymentAPIEndpointDown": "runbook_postgresql.md",
+    "PostgreSQLDown": "runbook_postgresql.md",
+    "RedisDown": "runbook_redis.md",
+    "RedisBrokerDown": "runbook_redis.md",
+    "DockerContainerDown": "runbook_docker.md",
+}
+
+
+def _knowledge_base_path(filename: str) -> str:
+    return os.path.join(os.path.dirname(__file__), "..", "config", "knowledge_base", filename)
+
+
+def _load_runbook_section(filename: str, alert_name: str) -> str:
+    path = _knowledge_base_path(filename)
+    try:
+        with open(path, "r", encoding="utf-8") as file:
+            content = file.read()
+    except OSError as exc:
+        logger.warning("Unable to read runbook file %s: %s", path, exc)
+        return ""
+
+    section_pattern = rf"^##\s+{re.escape(alert_name)}\s*$"
+    match = re.search(section_pattern, content, flags=re.MULTILINE)
+    if not match:
+        return content.strip()
+
+    next_match = re.search(r"^##\s+", content[match.end():], flags=re.MULTILINE)
+    end = match.end() + next_match.start() if next_match else len(content)
+    return content[match.start():end].strip()
+
+
+def _render_runbook_template(template: str, values: dict[str, str]) -> str:
+    rendered = template
+    for key, value in values.items():
+        rendered = rendered.replace(f"{{{{{key}}}}}", str(value))
+    return rendered.strip()
+
+
+def _diagnosis_values(alert: dict) -> dict[str, str]:
     labels = alert.get("labels", {})
     annotations = alert.get("annotations", {})
     alert_name = labels.get("alertname", "Unknown")
     instance = labels.get("instance", "Unknown")
     target = labels.get("target", "unknown")
-    endpoint = labels.get("endpoint", "/health")
     summary = annotations.get("summary", "")
     environment = _alert_environment(labels, target)
     state_file = f"release/.state/{environment}.tag"
 
-    if alert_name == "WebEndpointDown":
+    component = labels.get("component", "unknown")
+    role = _deploy_role_for_component(component)
+    if alert_name in {"WebEndpointDown", "FrontendAPIProxyDown"}:
         component = _default_component(labels, environment, "frontend-web-prod", "frontend-web-staging")
-        local_health_url = "http://127.0.0.1:18081/health" if environment == "staging" else "http://127.0.0.1/health"
-        local_api_url = "http://127.0.0.1:18081/api/health" if environment == "staging" else "http://127.0.0.1/api/health"
-        analysis = (
-            "Chẩn đoán: Blackbox không nhận HTTP 2xx từ web endpoint.\n"
-            f"Component: {component}\n"
-            f"Target: {target}\n"
-            f"Tóm tắt: {summary or 'không có'}\n\n"
-            "Nguyên nhân ưu tiên:\n"
-            f"1. {component} stopped/unhealthy.\n"
-            "2. Nginx không trả /health hoặc container không bind đúng port.\n"
-            "3. Firewall/Security Group/route chặn monitor.\n"
-            "4. Nếu /health OK nhưng /api lỗi: kiểm tra PAYMENT_API_UPSTREAM và backend core.\n\n"
-            "Kiểm tra trên bank-web-01:\n"
-            f"docker ps -a --filter name={component}\n"
-            f"docker inspect -f '{{{{.State.Status}}}} {{{{if .State.Health}}}}{{{{.State.Health.Status}}}}{{{{end}}}}' {component} || true\n"
-            f"docker logs --tail=100 {component}\n"
-            f"curl -i {local_health_url}\n"
-            f"curl -i {local_api_url}\n\n"
-            "Khôi phục nhanh:\n"
-            f"docker start {component}\n"
-            "cd /home/ec2-user/aws-hybrid\n"
-            f"TAG=$(cat {state_file})\n"
-            f"./automation/app-release-deploy.sh {environment} \"$TAG\" web"
-        )
-        return analysis, {"action": f"check_or_start_{_action_component(component)}", "host": instance}
-
-    if alert_name == "PostgreSQLDown":
+        role = "web"
+    elif alert_name == "PaymentAPIEndpointDown":
+        component = _default_component(labels, environment, "payment-api-prod", "payment-api-staging")
+        role = "core"
+    elif alert_name == "PostgreSQLDown":
         component = _default_component(labels, environment, "postgres-prod", "postgres-staging")
-        api_health_url = "http://127.0.0.1:18080/api/health" if environment == "staging" else "http://127.0.0.1:8080/api/health"
-        analysis = (
-            "Chẩn đoán: postgres_exporter báo PostgreSQL không sẵn sàng hoặc không scrape được.\n"
-            f"Component: {component}\n"
-            f"Tóm tắt: {summary or 'không có'}\n\n"
-            "Nguyên nhân ưu tiên:\n"
-            f"1. {component} stopped/unhealthy.\n"
-            "2. PostgreSQL khởi động chậm, volume lỗi hoặc database chưa ready.\n"
-            "3. postgres-exporter không kết nối được PostgreSQL.\n"
-            "4. payment-api mất kết nối DB nên /api/health có thể fail.\n\n"
-            "Kiểm tra trên bank-core-01:\n"
-            f"docker ps -a --filter name={component}\n"
-            f"docker inspect -f '{{{{.State.Status}}}} {{{{if .State.Health}}}}{{{{.State.Health.Status}}}}{{{{end}}}}' {component} || true\n"
-            f"docker logs --tail=100 {component}\n"
-            f"docker exec {component} pg_isready -U aiops_user -d aiops_db\n"
-            f"curl -i {api_health_url}\n\n"
-            "Khôi phục nhanh:\n"
-            f"docker start {component}\n"
-            "cd /home/ec2-user/aws-hybrid\n"
-            f"TAG=$(cat {state_file})\n"
-            f"./automation/app-release-deploy.sh {environment} \"$TAG\" core"
-        )
-        return analysis, {"action": f"check_or_start_{_action_component(component)}", "host": instance}
-
-    if alert_name == "RedisDown":
-        component = _default_component(labels, environment, "redis-cache-prod", "redis-cache-staging")
-        exporter_url = "http://127.0.0.1:19121/metrics" if environment == "staging" else "http://127.0.0.1:9121/metrics"
-        analysis = (
-            "Chẩn đoán: redis_exporter báo Redis cache không sẵn sàng hoặc không scrape được.\n"
-            f"Component: {component}\n"
-            f"Tóm tắt: {summary or 'không có'}\n\n"
-            "Nguyên nhân ưu tiên:\n"
-            f"1. {component} stopped/unhealthy.\n"
-            "2. Redis lỗi appendonly/volume hoặc restart loop.\n"
-            "3. redis-exporter không kết nối được Redis cache.\n"
-            "4. Nếu Redis broker dừng, AI Agent/Celery có thể xử lý alert chậm.\n\n"
-            "Kiểm tra trên monitor-ai-01:\n"
-            f"docker ps -a --filter name={component}\n"
-            f"docker inspect -f '{{{{.State.Status}}}} {{{{if .State.Health}}}}{{{{.State.Health.Status}}}}{{{{end}}}}' {component} || true\n"
-            f"docker logs --tail=100 {component}\n"
-            f"docker exec {component} redis-cli ping\n"
-            f"curl -s {exporter_url} | head\n\n"
-            "Khôi phục nhanh:\n"
-            f"docker start {component}\n"
-            "cd /home/ec2-user/aws-hybrid\n"
-            f"TAG=$(cat {state_file})\n"
-            f"./automation/app-release-deploy.sh {environment} \"$TAG\" monitor"
-        )
-        return analysis, {"action": f"check_or_start_{_action_component(component)}", "host": instance}
-
-    if alert_name == "DockerContainerDown":
+        role = "core"
+    elif alert_name in {"RedisDown", "RedisBrokerDown"}:
+        prod_name = "redis-prod" if alert_name == "RedisBrokerDown" else "redis-cache-prod"
+        staging_name = "redis-staging" if alert_name == "RedisBrokerDown" else "redis-cache-staging"
+        component = _default_component(labels, environment, prod_name, staging_name)
+        role = "monitor"
+    elif alert_name == "DockerContainerDown":
         component = labels.get("component", "unknown-container")
         role = _deploy_role_for_component(component)
+
+    return {
+        "alert_name": alert_name,
+        "instance": instance,
+        "target": target,
+        "summary": summary or "không có",
+        "environment": environment,
+        "component": component,
+        "role": role,
+        "dependency": labels.get("dependency", "payment-api"),
+        "expected_upstream": labels.get("expected_upstream", "http://<core-private-ip>:18080"),
+        "state_file": state_file,
+        "local_web_health_url": "http://127.0.0.1:18081/health" if environment == "staging" else "http://127.0.0.1:3000/health",
+        "local_web_api_health_url": "http://127.0.0.1:18081/api/health" if environment == "staging" else "http://127.0.0.1:3000/api/health",
+        "local_proxy_ready_url": "http://127.0.0.1:18081/api/ready" if environment == "staging" else "http://127.0.0.1:3000/api/ready",
+        "local_payment_ready_url": "http://127.0.0.1:18080/api/ready" if environment == "staging" else "http://127.0.0.1:8080/api/ready",
+        "local_payment_health_url": "http://127.0.0.1:18080/api/health" if environment == "staging" else "http://127.0.0.1:8080/api/health",
+        "redis_exporter_url": "http://127.0.0.1:19121/metrics" if environment == "staging" else "http://127.0.0.1:9121/metrics",
+        "deploy_command": f'./automation/app-release-deploy.sh {environment} "$TAG" {role}',
+    }
+
+
+def _proposal_for_alert(alert_name: str, values: dict[str, str]) -> dict | None:
+    component = values["component"]
+    instance = values["instance"]
+    if alert_name in {"WebEndpointDown", "PostgreSQLDown", "RedisDown", "RedisBrokerDown"}:
+        return {"action": f"check_or_start_{_action_component(component)}", "host": instance}
+    if alert_name == "FrontendAPIProxyDown":
+        return {"action": f"fix_{_action_component(component)}_api_upstream", "host": instance}
+    if alert_name == "PaymentAPIEndpointDown":
+        return {"action": f"restore_{_action_component(component)}_endpoint", "host": instance}
+    if alert_name == "DockerContainerDown":
+        return {"action": f"redeploy_{values['role']}_{values['environment']}", "host": instance}
+    return None
+
+
+def deterministic_diagnosis(alert: dict) -> tuple[str, dict | None]:
+    labels = alert.get("labels", {})
+    alert_name = labels.get("alertname", "Unknown")
+    values = _diagnosis_values(alert)
+    filename = RUNBOOK_FILES_BY_ALERT.get(alert_name)
+    if filename:
+        section = _load_runbook_section(filename, alert_name)
+        if section:
+            return _render_runbook_template(section, values), _proposal_for_alert(alert_name, values)
+
+    resource_alerts = {
+        "HighCPUUsage": ("CPU", "80", "top -o %CPU", "ps -eo pid,ppid,cmd,%mem,%cpu --sort=-%cpu | head"),
+        "CriticalCPUUsage": ("CPU", "95", "top -o %CPU", "ps -eo pid,ppid,cmd,%mem,%cpu --sort=-%cpu | head"),
+        "HighMemoryUsage": ("memory", "85", "free -m", "ps -eo pid,ppid,cmd,%mem,%cpu --sort=-%mem | head"),
+        "CriticalMemoryUsage": ("memory", "95", "free -m", "ps -eo pid,ppid,cmd,%mem,%cpu --sort=-%mem | head"),
+        "HighDiskUsage": ("disk", "80", "df -h /", "du -xhd1 /var /home 2>/dev/null | sort -h"),
+        "CriticalDiskUsage": ("disk", "90", "df -h /", "du -xhd1 /var /home 2>/dev/null | sort -h"),
+    }
+    if alert_name in resource_alerts:
+        resource, threshold, primary_check, process_check = resource_alerts[alert_name]
+        instance = values["instance"]
+        summary = values["summary"]
         analysis = (
-            "Chẩn đoán: cAdvisor không còn thấy container bắt buộc của release stack.\n"
-            f"Component: {component}\n"
-            f"Deploy role: {role}\n"
-            f"Tóm tắt: {summary or 'không có'}\n\n"
+            f"Chẩn đoán: host vượt ngưỡng {resource} {threshold}%.\n"
+            f"Host: {instance}\n"
+            f"Tóm tắt: {summary}\n\n"
             "Nguyên nhân ưu tiên:\n"
-            "1. Container bị stop/rm thủ công trong demo hoặc sau deploy lỗi.\n"
-            "2. Docker daemon restart và container không được recreate đúng compose project.\n"
-            "3. Host hết disk, pull image fail hoặc health check làm release chưa hoàn tất.\n"
-            "4. Nếu mất ai-agent, Alertmanager có thể không gửi được thông báo mới cho đến khi khôi phục.\n\n"
+            "1. Tiến trình ứng dụng hoặc tác vụ demo đang tiêu thụ tài nguyên bất thường.\n"
+            "2. Container restart loop, truy vấn nặng hoặc log tăng nhanh.\n"
+            "3. Host thiếu capacity so với tải hiện tại.\n\n"
             f"Kiểm tra trên {instance}:\n"
-            f"docker ps -a --filter name={component}\n"
-            f"docker inspect -f '{{{{.State.Status}}}} {{{{if .State.Health}}}}{{{{.State.Health.Status}}}}{{{{end}}}}' {component} || true\n"
-            f"docker logs --tail=100 {component} || true\n"
-            "df -h /\n"
-            "docker system df\n\n"
-            "Khôi phục bằng release script:\n"
-            "cd /home/ec2-user/aws-hybrid\n"
-            f"TAG=$(cat {state_file})\n"
-            f"./automation/app-release-deploy.sh {environment} \"$TAG\" {role}"
+            f"{primary_check}\n"
+            f"{process_check}\n"
+            "docker stats --no-stream\n\n"
+            "Khôi phục:\n"
+            "Dừng tác vụ gây tải, sửa tiến trình bất thường hoặc scale host trước khi restart dịch vụ."
         )
-        return analysis, {"action": f"redeploy_{role}_{environment}", "host": instance}
+        return analysis, {"action": f"reduce_{resource.lower()}_usage", "host": instance}
 
     return "", None
+
+
+def _alert_report_component(alert: dict) -> str:
+    values = _diagnosis_values(alert)
+    return values.get("component", "unknown")
+
+
+def _alert_report_role(alert: dict) -> str:
+    values = _diagnosis_values(alert)
+    return values.get("role", "monitor")
+
+
+def _incident_field(details: str, field_name: str, default: str = "unknown") -> str:
+    match = re.search(rf"^{re.escape(field_name)}:\s*(.+)$", details, flags=re.MULTILINE)
+    return match.group(1).strip() if match else default
+
+
+def _labels_from_incident_context(ctx: dict) -> dict:
+    labels = ctx.get("labels")
+    if isinstance(labels, dict):
+        return labels
+
+    details = str(ctx.get("incident_details", ""))
+    labels_line = _incident_field(details, "Labels", "")
+    parsed = {}
+    for item in labels_line.split(", "):
+        if "=" not in item:
+            continue
+        key, value = item.split("=", 1)
+        parsed[key.strip()] = value.strip()
+    return parsed
+
+
+def _format_alert_report(alert: dict, incident_id: str, proposal: dict | None, ai_analysis: str) -> str:
+    labels = alert.get("labels", {})
+    annotations = alert.get("annotations", {})
+    alert_name = labels.get("alertname", "Unknown")
+    instance = labels.get("instance", "Unknown")
+    target = labels.get("target", labels.get("endpoint", "unknown"))
+    summary = annotations.get("summary", "")
+    action_name = proposal.get("action", "manual_fix") if proposal else "manual_fix"
+    component = _alert_report_component(alert)
+
+    return (
+        f"🚨 Sự cố: {alert_name}\n"
+        f"ID: {incident_id}\n"
+        f"Host: {instance}\n"
+        f"Component: {component}\n"
+        f"Target: {target}\n"
+        f"Action: {action_name}\n"
+        f"Tóm tắt: {summary or 'không có'}\n\n"
+        f"✅ Runbook xử lý\n"
+        f"{_truncate_text(ai_analysis, 3500)}\n\n"
+        "Agent sẽ tự kiểm tra lại sau 5 phút.\n"
+        f"Feedback: /feedback {incident_id} <góp ý>"
+    )
+
+
+def _compact_review_text(value: str, max_chars: int = 900) -> str:
+    cleaned = re.sub(r"REVIEW_JSON:\s*\{.*\}", "", value, flags=re.DOTALL).strip()
+    lines = [line.strip(" *") for line in cleaned.splitlines() if line.strip()]
+    compact = "\n".join(lines[:8]) if lines else cleaned
+    return _truncate_text(compact, max_chars)
+
+
+def _format_admin_feedback_response(
+    incident_id: str,
+    review_status: str,
+    saved: bool,
+    admin_message: str,
+    reviewed_solution: str,
+) -> str:
+    status_labels = {
+        "accepted": "accepted - dùng được",
+        "revised": "revised - đã chỉnh cho an toàn hơn",
+        "rejected": "rejected - không nên làm",
+    }
+    save_label = "yes" if saved else "no"
+    return (
+        "📝 Feedback reviewed\n"
+        f"Incident: {incident_id}\n"
+        f"Kết quả: {status_labels.get(review_status, review_status)}\n"
+        f"Lưu vào RAG: {save_label}\n\n"
+        f"Nhận xét ngắn:\n{_compact_review_text(admin_message, 500)}\n\n"
+        f"✅ Làm theo:\n{_compact_review_text(reviewed_solution, 900)}"
+    )
 
 
 def save_incident_to_redis(incident_id: str, context: dict, ttl: int = 86400):
@@ -332,7 +475,311 @@ def save_incident_to_redis(incident_id: str, context: dict, ttl: int = 86400):
         logger.error(f"Error writing to Redis: {e}")
 
 
-async def run_agent_workflow(incident_details: str):
+def _runbook_approval_keyboard(draft_id: str) -> dict:
+    return {
+        "inline_keyboard": [
+            [
+                {"text": "Duyệt", "callback_data": f"runbook:approve:{draft_id}"},
+                {"text": "Từ chối", "callback_data": f"runbook:reject:{draft_id}"},
+            ]
+        ]
+    }
+
+
+def notify_runbook_draft_for_approval(draft: dict) -> bool:
+    content_preview = _truncate_text(draft.get("content", ""), 1200)
+    message = (
+        "RUNBOOK DRAFT CAN DUYET\n"
+        f"Draft ID: {draft['draft_id']}\n"
+        f"Tool: {draft['tool_name']}\n"
+        f"Change type: {draft['change_type']}\n"
+        f"Runbook slug: {draft['runbook_slug']}\n\n"
+        "Preview:\n"
+        f"{content_preview}\n\n"
+        "Bam Duyet de publish version moi, hoac Tu choi de giu nguyen runbook hien tai."
+    )
+    return bool(send_telegram_message(message, reply_markup=_runbook_approval_keyboard(draft["draft_id"]), parse_mode=None))
+
+
+def _load_incident_from_redis(incident_id: str) -> dict | None:
+    if redis_client is None:
+        logger.error("Redis client unavailable, cannot load incident context.")
+        return None
+    try:
+        ctx_raw = redis_client.get(f"incident:{incident_id}")
+    except redis.RedisError as e:
+        logger.error("Redis read error for incident %s: %s", incident_id, e)
+        return None
+    if not ctx_raw:
+        return None
+    try:
+        return json.loads(ctx_raw)
+    except json.JSONDecodeError:
+        logger.error("Invalid incident context JSON for incident %s", incident_id)
+        return None
+
+
+def _link_active_incident(alert: dict, incident_id: str, ttl: int = 86400) -> None:
+    if redis_client is None:
+        return
+    try:
+        redis_client.setex(_active_incident_key(alert), ttl, incident_id)
+    except redis.RedisError as e:
+        logger.warning("Unable to link active incident %s: %s", incident_id, e)
+
+
+def _mark_matching_incident_resolved(alert: dict) -> str | None:
+    if redis_client is None:
+        return None
+
+    active_key = _active_incident_key(alert)
+    try:
+        incident_id = redis_client.get(active_key)
+        if not incident_id:
+            return None
+
+        context = _load_incident_from_redis(incident_id)
+        if context is not None:
+            context["status"] = "resolved"
+            context["resolved_at"] = str(alert.get("endsAt") or datetime.now(VN_TZ).isoformat())
+            save_incident_to_redis(incident_id, context)
+
+        redis_client.delete(active_key)
+        return incident_id
+    except redis.RedisError as e:
+        logger.warning("Unable to mark matching incident resolved: %s", e)
+        return None
+
+
+def _parse_review_json(full_text: str) -> dict | None:
+    match = re.search(r"REVIEW_JSON:\s*(\{.*\})", full_text, flags=re.DOTALL)
+    if not match:
+        return None
+    try:
+        return json.loads(match.group(1))
+    except json.JSONDecodeError:
+        logger.warning("Failed to parse REVIEW_JSON from AI response.")
+        return None
+
+
+def _destructive_feedback_review(admin_feedback: str) -> dict | None:
+    feedback_lower = admin_feedback.lower()
+    destructive_markers = (
+        "xóa docker volume",
+        "xoa docker volume",
+        "docker volume rm",
+        "docker system prune --volumes",
+        "drop database",
+        "drop table",
+        "truncate table",
+        "rm -rf /var/lib",
+        "rm -rf /data",
+        "xóa dữ liệu",
+        "xoa du lieu",
+    )
+    if not any(marker in feedback_lower for marker in destructive_markers):
+        return None
+
+    return {
+        "status": "rejected",
+        "reviewed_solution": (
+            "Không thực hiện thao tác xóa dữ liệu hoặc Docker volume.\n"
+            "1. Kiểm tra trạng thái container và logs.\n"
+            "2. Thử start/restart hoặc redeploy đúng role.\n"
+            "3. Chỉ xóa dữ liệu khi có backup, xác nhận phạm vi ảnh hưởng và phê duyệt rõ ràng."
+        ),
+        "admin_message": (
+            "Góp ý chứa thao tác phá dữ liệu nhưng chưa có backup hoặc xác nhận rõ ràng. "
+            "Agent từ chối lưu góp ý này vào RAG."
+        ),
+    }
+
+
+def _configuration_feedback_review(incident_context: dict, admin_feedback: str) -> dict | None:
+    if incident_context.get("alert_name") != "FrontendAPIProxyDown":
+        return None
+
+    labels = _labels_from_incident_context(incident_context)
+    expected_upstream = str(labels.get("expected_upstream", "")).strip()
+    feedback_lower = admin_feedback.lower()
+    if not expected_upstream or "payment_api_upstream" not in feedback_lower:
+        return None
+    if expected_upstream.lower() in feedback_lower:
+        return None
+
+    return {
+        "status": "revised",
+        "reviewed_solution": (
+            "cd /home/ec2-user/aws-hybrid\n"
+            "grep '^PAYMENT_API_UPSTREAM=' release/.env.staging\n"
+            f"sed -i 's|^PAYMENT_API_UPSTREAM=.*|PAYMENT_API_UPSTREAM={expected_upstream}|' release/.env.staging\n"
+            "TAG=$(cat release/.state/staging.tag)\n"
+            "./automation/app-release-deploy.sh staging \"$TAG\" web\n"
+            "curl -i http://127.0.0.1:18081/api/ready"
+        ),
+        "admin_message": (
+            "Góp ý đúng hướng nhưng chưa nêu giá trị PAYMENT_API_UPSTREAM cần khôi phục. "
+            "Agent đã bổ sung upstream mong đợi từ alert context."
+        ),
+    }
+
+
+def _basic_feedback_review(admin_feedback: str) -> dict:
+    destructive_review = _destructive_feedback_review(admin_feedback)
+    if destructive_review:
+        return destructive_review
+
+    feedback = admin_feedback.strip()
+    action_markers = (
+        "check",
+        "restart",
+        "start",
+        "docker",
+        "curl",
+        "logs",
+        "rollback",
+        "redeploy",
+        "kiểm tra",
+        "khoi phuc",
+        "khôi phục",
+        "khởi động",
+        "xem log",
+    )
+    has_action = any(marker in feedback.lower() for marker in action_markers)
+    if len(feedback) >= 20 and has_action:
+        return {
+            "status": "accepted",
+            "reviewed_solution": feedback,
+            "admin_message": (
+                "Agent đã kiểm tra cơ bản và ghi nhận góp ý này vào RAG. "
+                "Khi có Gemini, Agent sẽ đánh giá sâu hơn theo ngữ cảnh incident."
+            ),
+        }
+
+    return {
+        "status": "revised",
+        "reviewed_solution": (
+            "Góp ý của admin chưa đủ chi tiết để lưu trực tiếp. "
+            f"Nội dung gốc: {feedback}\n"
+            "Bản chỉnh: xác nhận alert còn firing, kiểm tra log/service liên quan, "
+            "thực hiện thay đổi nhỏ nhất để khôi phục, rồi verify lại metric/health endpoint."
+        ),
+        "admin_message": "Góp ý chưa đủ hành động cụ thể, Agent đã chỉnh lại thành checklist an toàn hơn.",
+    }
+
+
+async def review_admin_feedback(incident_context: dict, admin_feedback: str) -> dict:
+    destructive_review = _destructive_feedback_review(admin_feedback)
+    if destructive_review:
+        return destructive_review
+
+    configuration_review = _configuration_feedback_review(incident_context, admin_feedback)
+    if configuration_review:
+        return configuration_review
+
+    if not GEMINI_API_KEY:
+        return _basic_feedback_review(admin_feedback)
+
+    client = genai.Client(api_key=GEMINI_API_KEY)
+    prompt = f"""
+Bạn là AI Ops Agent. Hãy đánh giá góp ý xử lý sự cố của admin.
+
+Incident context:
+{incident_context.get("incident_details", "")}
+
+Phân tích ban đầu của Agent:
+{incident_context.get("ai_analysis", "")}
+
+Ngữ cảnh RAG liên quan:
+{incident_context.get("rag_context", "")}
+
+Góp ý của admin:
+{admin_feedback}
+
+Yêu cầu:
+- Nếu góp ý đúng, an toàn và hữu ích: status = "accepted".
+- Nếu góp ý có ý đúng nhưng thiếu bước/thiếu an toàn: status = "revised" và viết lại giải pháp tốt hơn.
+- Nếu góp ý sai hoặc rủi ro: status = "rejected" và đưa giải pháp thay thế an toàn.
+- Bất kỳ góp ý nào chứa thao tác phá dữ liệu mà chưa có backup/xác nhận rõ ràng đều bắt buộc status = "rejected", kể cả khi có phần khác hợp lý.
+- admin_message tối đa 2 câu, nói thẳng vì sao accepted/revised/rejected.
+- reviewed_solution tối đa 5 dòng, ưu tiên lệnh cần chạy ngay.
+- Dòng cuối cùng bắt buộc là:
+REVIEW_JSON: {{"status": "accepted|revised|rejected", "reviewed_solution": "...", "admin_message": "..."}}
+"""
+    try:
+        response = await client.aio.models.generate_content(
+            model=GEMINI_MODEL,
+            contents=prompt,
+            config=types.GenerateContentConfig(
+                automatic_function_calling=types.AutomaticFunctionCallingConfig(
+                    maximum_remote_calls=0
+                )
+            )
+        )
+        full_text = response.text or ""
+        parsed = _parse_review_json(full_text)
+        if parsed:
+            return {
+                "status": parsed.get("status", "revised"),
+                "reviewed_solution": parsed.get("reviewed_solution", "").strip() or full_text.strip(),
+                "admin_message": parsed.get("admin_message", "").strip() or "Agent đã đánh giá góp ý.",
+            }
+        return {
+            "status": "revised",
+            "reviewed_solution": full_text.strip() or admin_feedback.strip(),
+            "admin_message": "Agent đã đánh giá góp ý nhưng phản hồi AI không đúng định dạng JSON.",
+        }
+    except Exception as e:
+        logger.warning("Gemini feedback review failed, using basic review: %s", e)
+        return _basic_feedback_review(admin_feedback)
+
+
+async def process_admin_feedback(incident_id: str, admin_feedback: str, chat_id: str | None = None) -> dict:
+    incident_id = incident_id.strip()
+    admin_feedback = admin_feedback.strip()
+    if not incident_id or not admin_feedback:
+        result = {"status": "invalid", "message": "Thiếu incident ID hoặc nội dung góp ý."}
+        send_telegram_message(result["message"], chat_id=chat_id, parse_mode=None)
+        return result
+
+    ctx = _load_incident_from_redis(incident_id)
+    if not ctx:
+        message = (
+            f"Không tìm thấy context cho incident `{incident_id}`. "
+            "Hãy gửi góp ý khi incident còn trong TTL Redis hoặc kiểm tra lại ID."
+        )
+        send_telegram_message(message, chat_id=chat_id, parse_mode=None)
+        return {"status": "not_found", "message": message}
+
+    review = await review_admin_feedback(ctx, admin_feedback)
+    review_status = str(review.get("status", "revised"))
+    reviewed_solution = str(review.get("reviewed_solution", admin_feedback)).strip()
+
+    rag = get_rag_instance()
+    saved = False
+    if rag and review_status in {"accepted", "revised"}:
+        rag.save_admin_solution(
+            incident_id=incident_id,
+            alert_name=ctx.get("alert_name", "Unknown"),
+            incident_details=ctx.get("incident_details", ""),
+            admin_feedback=admin_feedback,
+            reviewed_solution=reviewed_solution,
+            review_status=review_status,
+        )
+        saved = True
+
+    message = _format_admin_feedback_response(
+        incident_id=incident_id,
+        review_status=review_status,
+        saved=saved,
+        admin_message=str(review.get("admin_message", "")),
+        reviewed_solution=reviewed_solution,
+    )
+    send_telegram_message(message, chat_id=chat_id, parse_mode=None)
+    return {"status": review_status, "saved": saved, "message": message}
+
+
+async def run_agent_workflow(incident_details: str, alert_name: str | None = None):
     if not GEMINI_API_KEY:
         return "❌ Error: GEMINI_API_KEY not configured", None
 
@@ -341,7 +788,7 @@ async def run_agent_workflow(incident_details: str):
 
     runbook_context = "⚠️ RAG Engine không khả dụng."
     if rag:
-        runbook_context = rag.query_runbook(incident_details)
+        runbook_context = rag.query_knowledge(incident_details, alert_name=alert_name)
 
     system_instruction = f"""
         Bạn là AI Ops Agent chuyên nghiệp, chuyên xử lý sự cố hạ tầng.
@@ -460,7 +907,17 @@ async def process_single_alert(alert: dict) -> None:
 
         if alert.get("status") == "resolved":
             _clear_alert_cooldown(alert)
-            send_telegram_message(f"✅ *ĐÃ KHÔI PHỤC:* {alert_name} trên `{instance}`")
+            resolved_incident_id = _mark_matching_incident_resolved(alert)
+            if not _reserve_alert_notification(alert, "resolved"):
+                logger.info(
+                    "Skipping duplicate resolved notification: alert=%s instance=%s",
+                    alert_name,
+                    instance,
+                )
+                ALERTS_PROCESSED_TOTAL.labels(status='deduped').inc()
+                return
+            incident_suffix = f" (ID: `{resolved_incident_id}`)" if resolved_incident_id else ""
+            send_telegram_message(f"✅ *ĐÃ KHÔI PHỤC:* {alert_name} trên `{instance}`{incident_suffix}")
             ALERTS_PROCESSED_TOTAL.labels(status='resolved').inc()
             return
 
@@ -474,14 +931,28 @@ async def process_single_alert(alert: dict) -> None:
             ALERTS_PROCESSED_TOTAL.labels(status='deduped').inc()
             return
 
+        if not _reserve_alert_notification(alert, "firing"):
+            logger.info(
+                "Skipping duplicate firing notification: alert=%s instance=%s",
+                alert_name,
+                instance,
+            )
+            ALERTS_PROCESSED_TOTAL.labels(status='deduped').inc()
+            return
+
         incident_details = build_incident_details(alert)
         rule_analysis, rule_proposal = deterministic_diagnosis(alert)
+        rag_context = ""
 
         if rule_analysis:
             ai_analysis = rule_analysis
+            rag = get_rag_instance()
+            rag_context = rag.query_knowledge(incident_details, alert_name=alert_name) if rag else ""
+            if rag_context:
+                logger.info("Retrieved RAG context for deterministic diagnosis: %s", alert_name)
             proposal = rule_proposal
         else:
-            ai_analysis, proposal = await run_agent_workflow(incident_details)
+            ai_analysis, proposal = await run_agent_workflow(incident_details, alert_name=alert_name)
         duration = time.time() - start_time
         AI_WORKFLOW_LATENCY_SECONDS.observe(duration)
         ALERTS_PROCESSED_TOTAL.labels(status='success').inc()
@@ -490,24 +961,22 @@ async def process_single_alert(alert: dict) -> None:
         incident_context = {
             "alert_name": alert_name,
             "instance": instance,
+            "labels": alert.get("labels", {}),
+            "annotations": alert.get("annotations", {}),
             "incident_details": incident_details,
             "ai_analysis": ai_analysis,
+            "rag_context": rag_context,
             "proposal": proposal,
-            "timestamp": datetime.now(VN_TZ).isoformat()
+            "alert_identity": _alert_identity(alert),
+            "starts_at": str(alert.get("startsAt") or ""),
+            "fingerprint": alert.get("fingerprint"),
+            "status": "firing",
+            "timestamp": datetime.now(VN_TZ).isoformat(),
         }
         save_incident_to_redis(incident_id, incident_context)
+        _link_active_incident(alert, incident_id)
 
-        # PHASE 7: Format resolution guide (NO approval buttons)
-        action_name = proposal.get("action", "fix") if proposal else "xử lí"
-
-        report = (
-            f"🚨 SỰ CỐ: {alert_name}\n"
-            f"Server: {instance}\n"
-            f"ID: {incident_id}\n"
-            f"Hành động: {action_name}\n\n"
-            f"{ai_analysis}\n\n"
-            "Agent sẽ tự kiểm tra lại sau 5 phút."
-        )
+        report = _format_alert_report(alert, incident_id, proposal, ai_analysis)
 
         # Gửi hướng dẫn cho admin (NO buttons)
         send_telegram_message(report, parse_mode=None)
@@ -557,13 +1026,24 @@ async def verify_resolution(incident_id: str, alert_name: str, instance: str):
 
         ctx = json.loads(ctx_raw)
 
+        if ctx.get("status") == "resolved":
+            logger.info(
+                "Skipping scheduled verification for incident %s because its alert event is already resolved",
+                incident_id,
+            )
+            try:
+                redis_client.delete(f"incident:{incident_id}")
+            except redis.RedisError as e:
+                logger.warning(f"Error deleting resolved incident from Redis: {e}")
+            return
+
         # Query Prometheus metrics để kiểm lại
         # Cách 1: Gọi các diagnostic tools tương tự như AI analysis
         # Cách 2: Query trực tiếp Prometheus API (nếu cấu hình public)
         logger.info(f"📊 Checking current metrics for {instance}...")
 
         # Simulate health check (thực tế sẽ call Prometheus API hoặc diagnostic tools)
-        is_resolved = await check_alert_resolved(alert_name, instance)
+        is_resolved = await check_alert_resolved(alert_name, instance, ctx)
 
         if is_resolved:
             # Issue RESOLVED ✅
@@ -602,18 +1082,19 @@ async def verify_resolution(incident_id: str, alert_name: str, instance: str):
             )
             logger.info(f"✅ Saved incident to ChromaDB with outcome: {outcome}")
 
-        # Cleanup Redis
-        try:
-            redis_client.delete(f"incident:{incident_id}")
-        except redis.RedisError as e:
-            logger.warning(f"Error deleting incident from Redis: {e}")
+        # Keep failed incidents available for admin feedback until their Redis TTL expires.
+        if is_resolved:
+            try:
+                redis_client.delete(f"incident:{incident_id}")
+            except redis.RedisError as e:
+                logger.warning(f"Error deleting resolved incident from Redis: {e}")
 
     except Exception as e:
         logger.error(f"Error during verification: {e}")
         send_telegram_message(f"⚠️ Lỗi kiểm tra kết quả: {str(e)}")
 
 
-async def check_alert_resolved(alert_name: str, instance: str) -> bool:
+async def check_alert_resolved(alert_name: str, instance: str, incident_context: dict | None = None) -> bool:
     """
     Check nếu alert đã được resolve bằng cách query Prometheus.
 
@@ -631,7 +1112,8 @@ async def check_alert_resolved(alert_name: str, instance: str) -> bool:
         logger.info(f"Checking if {alert_name} is resolved on {instance}...")
 
         checker = get_prometheus_checker()
-        is_resolved = checker.is_alert_resolved(alert_name, instance)
+        labels = _labels_from_incident_context(incident_context or {})
+        is_resolved = checker.is_alert_resolved(alert_name, instance, labels)
 
         if is_resolved:
             logger.info(f"✅ Alert {alert_name} is RESOLVED")
@@ -673,6 +1155,29 @@ def verify_resolution_task(self, incident_id: str, alert_name: str, instance: st
 #   Logic cũ: 1 alert lỗi → retry TOÀN BỘ task → các alert đã thành công bị xử lý lại.
 #   Logic mới: gather(return_exceptions=True) thu thập lỗi từng alert riêng biệt;
 #   chỉ retry task nếu có lỗi hệ thống thực sự (ví dụ Redis/network down).
+@celery_app.task(name="process_admin_feedback_task", bind=True, max_retries=2)
+def process_admin_feedback_task(self, incident_id: str, admin_feedback: str, chat_id: str | None = None):
+    """Celery task xử lý góp ý của admin gửi qua Telegram."""
+    try:
+        asyncio.run(process_admin_feedback(incident_id, admin_feedback, chat_id))
+    except Exception as e:
+        logger.error("Admin feedback task failed: %s", e)
+        raise self.retry(exc=e, countdown=30)
+
+
+@celery_app.task(name="review_tool_change_task", bind=True, max_retries=2)
+def review_tool_change_task(self, tool_name: str, revision_id: str):
+    """Create a pending runbook draft for a registered tool revision."""
+    try:
+        draft = create_runbook_draft(tool_name=tool_name, revision_id=revision_id)
+        notification_sent = notify_runbook_draft_for_approval(draft)
+        logger.info("Created runbook draft %s for tool %s revision %s", draft["draft_id"], tool_name, revision_id)
+        return {"status": "draft_created", "draft_id": draft["draft_id"], "notification_sent": notification_sent}
+    except Exception as e:
+        logger.error("Tool change review failed: tool=%s revision=%s error=%s", tool_name, revision_id, e)
+        raise self.retry(exc=e, countdown=30)
+
+
 @celery_app.task(name="process_alerts_task", bind=True, max_retries=3)
 def process_alerts_task(self, payload_dict: dict):
     """Celery task xử lý alert payload từ Prometheus."""
@@ -682,9 +1187,15 @@ def process_alerts_task(self, payload_dict: dict):
         return
 
     async def _run_all():
+        semaphore = asyncio.Semaphore(ALERT_BATCH_CONCURRENCY)
+
+        async def _run_bounded(alert: dict):
+            async with semaphore:
+                return await process_single_alert(alert)
+
         # gather với return_exceptions=True để không dừng lại khi 1 alert lỗi
         results = await asyncio.gather(
-            *[process_single_alert(alert) for alert in alerts],
+            *[_run_bounded(alert) for alert in alerts],
             return_exceptions=True
         )
         # Ghi log các alert bị lỗi mà không làm ảnh hưởng đến alert khác

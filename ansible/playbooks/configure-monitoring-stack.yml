@@ -184,6 +184,28 @@
               scrape_interval: 15s
               scrape_timeout: 10s
 
+            - job_name: 'redis_broker_exporter_monitor_staging'
+              static_configs:
+                - targets: ['localhost:19122']
+                  labels:
+                    instance: 'monitor-ai-01'
+                    service: 'redis-broker'
+                    component: 'redis-staging'
+                    environment: 'staging'
+                    runbook: 'redis'
+              scrape_interval: 15s
+              scrape_timeout: 10s
+
+            - job_name: 'ai_agent_monitor_staging'
+              static_configs:
+                - targets: ['localhost:18000']
+                  labels:
+                    instance: 'monitor-ai-01'
+                    service: 'ai-agent'
+                    environment: 'staging'
+              scrape_interval: 15s
+              scrape_timeout: 10s
+
             - job_name: 'postgres_exporter_core_staging'
               static_configs:
                 - targets: ['{{ hostvars[groups["core"][0]].ansible_default_ipv4.address }}:19187']
@@ -239,6 +261,51 @@
                     environment: 'staging'
                     runbook: 'nginx'
                     endpoint: '/health'
+              relabel_configs:
+                - source_labels: [__address__]
+                  target_label: __param_target
+                - target_label: __address__
+                  replacement: localhost:9115
+                - source_labels: [__param_target]
+                  target_label: target
+
+            - job_name: 'blackbox_http_web_api_staging'
+              metrics_path: /probe
+              params:
+                module: [http_2xx]
+              static_configs:
+                - targets: ['http://{{ hostvars[groups["web"][0]].ansible_host }}:18081/api/ready']
+                  labels:
+                    instance: 'bank-web-01'
+                    service: 'api-proxy'
+                    component: 'frontend-web-staging'
+                    dependency: 'payment-api-staging'
+                    dependency_instance: 'bank-core-01'
+                    expected_upstream: 'http://{{ hostvars[groups["core"][0]].ansible_default_ipv4.address }}:18080'
+                    environment: 'staging'
+                    runbook: 'api-proxy'
+                    endpoint: '/api/ready'
+              relabel_configs:
+                - source_labels: [__address__]
+                  target_label: __param_target
+                - target_label: __address__
+                  replacement: localhost:9115
+                - source_labels: [__param_target]
+                  target_label: target
+
+            - job_name: 'blackbox_http_payment_api_staging'
+              metrics_path: /probe
+              params:
+                module: [http_2xx]
+              static_configs:
+                - targets: ['http://{{ hostvars[groups["core"][0]].ansible_default_ipv4.address }}:18080/api/ready']
+                  labels:
+                    instance: 'bank-core-01'
+                    service: 'payment-api'
+                    component: 'payment-api-staging'
+                    environment: 'staging'
+                    runbook: 'payment-api'
+                    endpoint: '/api/ready'
               relabel_configs:
                 - source_labels: [__address__]
                   target_label: __param_target
@@ -604,6 +671,8 @@
         - 9100  # Node Exporter
         - 9121  # Redis Exporter
         - 19121 # Redis Exporter staging
+        - 9122  # Redis Broker Exporter
+        - 19122 # Redis Broker Exporter staging
         - 8088  # cAdvisor
       when: inventory_hostname == 'monitor-ai-01'
 

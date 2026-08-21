@@ -4,8 +4,8 @@ groups:
     rules:
       # CPU Alerts
       - alert: HighCPUUsage
-        expr: (100 - (avg by (instance) (irate(node_cpu_seconds_total{mode="idle"}[5m])) * 100)) > 80
-        for: 2m
+        expr: (100 - (avg by (instance) (irate(node_cpu_seconds_total{mode="idle"}[1m])) * 100)) > 80
+        for: 1m
         labels:
           severity: warning
           service: system
@@ -14,8 +14,8 @@ groups:
           description: "CPU usage is {{ $value }}% on {{ $labels.instance }}"
       
       - alert: CriticalCPUUsage
-        expr: (100 - (avg by (instance) (irate(node_cpu_seconds_total{mode="idle"}[5m])) * 100)) > 95
-        for: 1m
+        expr: (100 - (avg by (instance) (irate(node_cpu_seconds_total{mode="idle"}[1m])) * 100)) > 95
+        for: 30s
         labels:
           severity: critical
           service: system
@@ -98,7 +98,14 @@ groups:
           description: "{{ $labels.service }} on {{ $labels.instance }} failed health check"
 
       - alert: WebEndpointDown
-        expr: probe_success{runbook="nginx",component="frontend-web-staging",instance="bank-web-01"} == 0
+        expr: |
+          probe_success{runbook="nginx",component="frontend-web-staging",instance="bank-web-01"} == 0
+          and on()
+          (
+            time() - max by (instance) (
+              container_last_seen{name=~".*frontend-web-staging",instance="bank-web-01"}
+            ) < 20
+          )
         for: 30s
         labels:
           severity: critical
@@ -106,6 +113,38 @@ groups:
           runbook: nginx
         annotations:
           summary: "Web endpoint {{ $labels.component }} is DOWN on {{ $labels.instance }}"
+          description: "Blackbox probe failed for {{ $labels.target }}"
+
+      - alert: FrontendAPIProxyDown
+        expr: |
+          probe_success{runbook="api-proxy",component="frontend-web-staging",instance="bank-web-01"} == 0
+          and on()
+          probe_success{runbook="nginx",component="frontend-web-staging",instance="bank-web-01"} == 1
+          and on()
+          probe_success{runbook="payment-api",component="payment-api-staging",instance="bank-core-01"} == 1
+        for: 30s
+        labels:
+          severity: critical
+          service: api-proxy
+          runbook: api-proxy
+        annotations:
+          summary: "Frontend API proxy is DOWN on {{ $labels.instance }}"
+          description: "Frontend proxy cannot reach {{ $labels.dependency }}, while the direct Payment API probe is healthy. Expected upstream: {{ $labels.expected_upstream }}"
+
+      - alert: PaymentAPIEndpointDown
+        expr: |
+          probe_success{runbook="payment-api",component="payment-api-staging",instance="bank-core-01"} == 0
+          and on()
+          up{runbook="postgresql",component="postgres-staging",instance="bank-core-01"} == 1
+          and on()
+          pg_up{runbook="postgresql",component="postgres-staging",instance="bank-core-01"} == 1
+        for: 30s
+        labels:
+          severity: critical
+          service: payment-api
+          runbook: payment-api
+        annotations:
+          summary: "Payment API endpoint is DOWN on {{ $labels.instance }}"
           description: "Blackbox probe failed for {{ $labels.target }}"
 
       - alert: PostgreSQLDown
@@ -134,9 +173,35 @@ groups:
           summary: "Redis {{ $labels.component }} is DOWN on {{ $labels.instance }}"
           description: "redis_exporter reports redis_up=0 for {{ $labels.component }}"
 
-      - alert: DockerContainerDown
-        expr: absent(container_last_seen{name=~".*frontend-web-staging",instance="bank-web-01"})
+      - alert: RedisBrokerDown
+        expr: |
+          up{runbook="redis",component="redis-staging",instance="monitor-ai-01"} == 0
+          or redis_up{runbook="redis",component="redis-staging",instance="monitor-ai-01"} == 0
         for: 30s
+        labels:
+          severity: critical
+          service: redis-broker
+          runbook: redis
+        annotations:
+          summary: "Redis broker {{ $labels.component }} is DOWN on {{ $labels.instance }}"
+          description: "Celery queue broker is unavailable. New AI Ops alerts will be retried upstream."
+
+      - alert: CeleryQueueBacklogHigh
+        expr: aiops_celery_queue_depth >= 800
+        for: 2m
+        labels:
+          severity: warning
+          service: ai-agent
+          runbook: redis
+        annotations:
+          summary: "Celery queue backlog is high on {{ $labels.instance }}"
+          description: "Celery queue has {{ $value }} waiting tasks. Capacity guard starts rejecting at 1000."
+
+      - alert: DockerContainerDown
+        expr: |
+          absent(container_last_seen{name=~".*frontend-web-staging",instance="bank-web-01"})
+          or (time() - max by (instance) (container_last_seen{name=~".*frontend-web-staging",instance="bank-web-01"}) > 30)
+        for: 2m
         labels:
           severity: critical
           service: docker
@@ -149,8 +214,10 @@ groups:
           description: "cAdvisor no longer sees frontend-web-staging on bank-web-01."
 
       - alert: DockerContainerDown
-        expr: absent(container_last_seen{name=~".*payment-api-staging",instance="bank-core-01"})
-        for: 30s
+        expr: |
+          absent(container_last_seen{name=~".*payment-api-staging",instance="bank-core-01"})
+          or (time() - max by (instance) (container_last_seen{name=~".*payment-api-staging",instance="bank-core-01"}) > 30)
+        for: 2m
         labels:
           severity: critical
           service: docker
@@ -163,8 +230,10 @@ groups:
           description: "cAdvisor no longer sees payment-api-staging on bank-core-01."
 
       - alert: DockerContainerDown
-        expr: absent(container_last_seen{name=~".*postgres-staging",instance="bank-core-01"})
-        for: 30s
+        expr: |
+          absent(container_last_seen{name=~".*postgres-staging",instance="bank-core-01"})
+          or (time() - max by (instance) (container_last_seen{name=~".*postgres-staging",instance="bank-core-01"}) > 30)
+        for: 2m
         labels:
           severity: critical
           service: docker
@@ -177,8 +246,10 @@ groups:
           description: "cAdvisor no longer sees postgres-staging on bank-core-01."
 
       - alert: DockerContainerDown
-        expr: absent(container_last_seen{name=~".*ai-agent-staging",instance="monitor-ai-01"})
-        for: 30s
+        expr: |
+          absent(container_last_seen{name=~".*ai-agent-staging",instance="monitor-ai-01"})
+          or (time() - max by (instance) (container_last_seen{name=~".*ai-agent-staging",instance="monitor-ai-01"}) > 30)
+        for: 2m
         labels:
           severity: critical
           service: docker
@@ -191,8 +262,10 @@ groups:
           description: "cAdvisor no longer sees ai-agent-staging on monitor-ai-01."
 
       - alert: DockerContainerDown
-        expr: absent(container_last_seen{name=~".*redis-cache-staging",instance="monitor-ai-01"})
-        for: 30s
+        expr: |
+          absent(container_last_seen{name=~".*redis-cache-staging",instance="monitor-ai-01"})
+          or (time() - max by (instance) (container_last_seen{name=~".*redis-cache-staging",instance="monitor-ai-01"}) > 30)
+        for: 2m
         labels:
           severity: critical
           service: docker

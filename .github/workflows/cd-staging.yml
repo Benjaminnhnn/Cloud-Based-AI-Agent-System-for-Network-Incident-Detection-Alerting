@@ -77,7 +77,7 @@ jobs:
                   "paths": ("demo-web/frontend/",),
               },
           }
-          shared_paths = ("release/", "automation/")
+          shared_paths = ("release/", "automation/", ".github/workflows/cd-staging.yml")
 
           build_all = event_name == "workflow_dispatch" or any(
               path.startswith(shared_paths) for path in changed
@@ -165,7 +165,33 @@ jobs:
           import os
           from pathlib import Path
 
-          payment_api_upstream = os.environ.get("STAGING_PAYMENT_API_UPSTREAM") or os.environ.get("PAYMENT_API_UPSTREAM")
+          def inventory_value(group: str, key: str) -> str:
+              inventory = Path("ansible/inventory.ini")
+              if not inventory.exists():
+                  return ""
+
+              in_group = False
+              for line in inventory.read_text().splitlines():
+                  stripped = line.strip()
+                  if stripped == f"[{group}]":
+                      in_group = True
+                      continue
+                  if stripped.startswith("["):
+                      in_group = False
+                  if not in_group or "ansible_host=" not in stripped:
+                      continue
+                  for part in stripped.split():
+                      if part.startswith(f"{key}="):
+                          return part.split("=", 1)[1]
+              return ""
+
+          core_host = inventory_value("core", "private_ip") or inventory_value("core", "ansible_host")
+          inventory_payment_api_upstream = f"http://{core_host}:18080" if core_host else ""
+          payment_api_upstream = (
+              os.environ.get("STAGING_PAYMENT_API_UPSTREAM")
+              or os.environ.get("PAYMENT_API_UPSTREAM")
+              or inventory_payment_api_upstream
+          )
           if not payment_api_upstream:
               raise SystemExit("Missing required environment variable: STAGING_PAYMENT_API_UPSTREAM")
           payment_api_upstream = payment_api_upstream.strip()
@@ -214,11 +240,35 @@ jobs:
           DEPLOY_ROLE: ${{ matrix.role }}
         run: |
           set -euo pipefail
+          inventory_host() {
+            local group="$1"
+            awk -v group="[$group]" '
+              $0 == group { in_group=1; next }
+              /^\[/ { in_group=0 }
+              in_group && /ansible_host=/ {
+                for (i = 1; i <= NF; i++) {
+                  if ($i ~ /^ansible_host=/) {
+                    sub(/^ansible_host=/, "", $i)
+                    print $i
+                    exit
+                  }
+                }
+              }
+            ' ansible/inventory.ini
+          }
+
           case "$DEPLOY_ROLE" in
-            monitor) host="$MONITOR_SSH_HOST" ;;
-            core) host="$CORE_SSH_HOST" ;;
-            web) host="$WEB_SSH_HOST" ;;
+            monitor) host="$(inventory_host monitor)" ;;
+            core) host="$(inventory_host core)" ;;
+            web) host="$(inventory_host web)" ;;
           esac
+          if [ -z "$host" ]; then
+            case "$DEPLOY_ROLE" in
+              monitor) host="$MONITOR_SSH_HOST" ;;
+              core) host="$CORE_SSH_HOST" ;;
+              web) host="$WEB_SSH_HOST" ;;
+            esac
+          fi
           test -n "$host"
           echo "host=$host" >> "$GITHUB_OUTPUT"
 

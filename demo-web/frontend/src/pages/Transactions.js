@@ -1,221 +1,167 @@
-import React, { useState } from 'react';
-import { FaSearch, FaFilter, FaDownload, FaCalendar } from 'react-icons/fa';
+import React, { useEffect, useMemo, useState } from 'react';
+import { FaSearch, FaFilter, FaDownload, FaCalendar, FaArrowDown, FaArrowUp } from 'react-icons/fa';
+import { bankingService, getApiErrorMessage } from '../services/api';
 import '../styles/transactions.css';
 
-export default function Transactions() {
+export default function Transactions({ realtimeVersion = 0 }) {
+  const currentUser = useMemo(() => {
+    try {
+      return JSON.parse(localStorage.getItem('user') || '{}');
+    } catch {
+      return {};
+    }
+  }, []);
   const [filter, setFilter] = useState('all');
   const [searchTerm, setSearchTerm] = useState('');
-  const [dateRange, setDateRange] = useState({
-    startDate: '2024-01-01',
-    endDate: '2024-03-23'
-  });
+  const [transactions, setTransactions] = useState([]);
+  const [error, setError] = useState('');
+  const [dateRange, setDateRange] = useState({ startDate: '', endDate: '' });
 
-  const allTransactions = [
-    { id: 1, type: 'transfer-out', description: 'Transfer to John Smith', amount: -250.00, date: '2024-03-23 14:32', status: 'completed', category: 'transfer' },
-    { id: 2, type: 'deposit', description: 'Salary Deposit', amount: 3500.00, date: '2024-03-22 09:15', status: 'completed', category: 'income' },
-    { id: 3, type: 'payment', description: 'Online Shopping - Amazon', amount: -89.99, date: '2024-03-21 18:45', status: 'completed', category: 'shopping' },
-    { id: 4, type: 'withdraw', description: 'ATM Withdrawal', amount: -200.00, date: '2024-03-20 22:30', status: 'completed', category: 'cash' },
-    { id: 5, type: 'transfer-in', description: 'Transfer from Mom', amount: 500.00, date: '2024-03-19 11:20', status: 'completed', category: 'transfer' },
-    { id: 6, type: 'payment', description: 'Electric Bill', amount: -125.50, date: '2024-03-18 08:00', status: 'completed', category: 'utilities' },
-    { id: 7, type: 'deposit', description: 'Check Deposit', amount: 1200.00, date: '2024-03-17 15:00', status: 'completed', category: 'income' },
-    { id: 8, type: 'payment', description: 'Netflix Subscription', amount: -15.99, date: '2024-03-16 00:05', status: 'completed', category: 'subscription' },
-    { id: 9, type: 'withdraw', description: 'ATM Withdrawal', amount: -150.00, date: '2024-03-15 19:45', status: 'completed', category: 'cash' },
-    { id: 10, type: 'transfer-out', description: 'Transfer to Sister', amount: -300.00, date: '2024-03-14 13:20', status: 'pending', category: 'transfer' },
-    { id: 11, type: 'payment', description: 'Gas Station', amount: -52.75, date: '2024-03-13 17:30', status: 'completed', category: 'gas' },
-    { id: 12, type: 'deposit', description: 'Freelance Payment', amount: 750.00, date: '2024-03-12 10:00', status: 'completed', category: 'income' },
-  ];
+  useEffect(() => {
+    async function loadTransactions() {
+      if (!currentUser?.id) {
+        setError('Vui lòng đăng nhập để xem lịch sử giao dịch.');
+        return;
+      }
 
-  const filterOptions = {
-    all: 'All Transactions',
-    income: 'Income',
-    expenses: 'Expenses',
-    transfer: 'Transfers',
-    pending: 'Pending',
-    shopping: 'Shopping',
-    utilities: 'Utilities'
-  };
-
-  const getFilteredTransactions = () => {
-    let filtered = allTransactions;
-
-    // Filter by type
-    if (filter !== 'all') {
-      if (filter === 'income') {
-        filtered = filtered.filter(t => t.amount > 0);
-      } else if (filter === 'expenses') {
-        filtered = filtered.filter(t => t.amount < 0);
-      } else if (filter === 'pending') {
-        filtered = filtered.filter(t => t.status === 'pending');
-      } else {
-        filtered = filtered.filter(t => t.category === filter);
+      try {
+        const response = await bankingService.listTransactions({ user_id: currentUser.id, limit: 100 });
+        setTransactions((response.data || []).map((item) => {
+          const outgoing = item.transaction_type === 'transfer_out';
+          return {
+            id: item.id,
+            description: item.description || item.reference_code,
+            amount: outgoing ? -Number(item.amount) : Number(item.amount),
+            createdAt: new Date(item.created_at),
+            date: new Date(item.created_at).toLocaleString('vi-VN'),
+            status: item.status,
+            category: item.transaction_type,
+            reference: item.reference_code,
+          };
+        }));
+        setError('');
+      } catch (err) {
+        setError(getApiErrorMessage(err, 'Không thể tải lịch sử giao dịch.'));
       }
     }
 
-    // Filter by search term
-    if (searchTerm) {
-      filtered = filtered.filter(t =>
-        t.description.toLowerCase().includes(searchTerm.toLowerCase())
-      );
-    }
+    loadTransactions();
+  }, [currentUser?.id, realtimeVersion]);
 
-    return filtered;
+  const filterOptions = {
+    all: 'Tất cả',
+    income: 'Tiền vào',
+    expenses: 'Tiền ra',
+    transfer: 'Chuyển tiền',
+    pending: 'Đang xử lý',
   };
 
-  const filteredTransactions = getFilteredTransactions();
-  const totalExpenses = filteredTransactions
-    .filter(t => t.amount < 0)
-    .reduce((sum, t) => sum + Math.abs(t.amount), 0);
-  const totalIncome = filteredTransactions
-    .filter(t => t.amount > 0)
-    .reduce((sum, t) => sum + t.amount, 0);
+  const statusLabels = {
+    completed: 'Thành công',
+    pending: 'Đang xử lý',
+    failed: 'Thất bại',
+  };
+
+  const formatCurrency = (value) => `${Number(value || 0).toLocaleString('vi-VN')} VND`;
+
+  const filteredTransactions = transactions.filter((transaction) => {
+    if (filter === 'income' && transaction.amount <= 0) return false;
+    if (filter === 'expenses' && transaction.amount >= 0) return false;
+    if (filter === 'transfer' && !transaction.category.startsWith('transfer')) return false;
+    if (filter === 'pending' && transaction.status !== 'pending') return false;
+    if (searchTerm && !`${transaction.description} ${transaction.reference}`.toLowerCase().includes(searchTerm.toLowerCase())) return false;
+    if (dateRange.startDate && transaction.createdAt < new Date(`${dateRange.startDate}T00:00:00`)) return false;
+    if (dateRange.endDate && transaction.createdAt > new Date(`${dateRange.endDate}T23:59:59`)) return false;
+    return true;
+  });
+
+  const totalExpenses = filteredTransactions.filter((item) => item.amount < 0).reduce((sum, item) => sum + Math.abs(item.amount), 0);
+  const totalIncome = filteredTransactions.filter((item) => item.amount > 0).reduce((sum, item) => sum + item.amount, 0);
 
   const handleExport = () => {
     const csv = [
-      ['Date', 'Description', 'Type', 'Amount', 'Status'],
-      ...filteredTransactions.map(t => [
-        t.date,
-        t.description,
-        t.category,
-        t.amount,
-        t.status
-      ])
-    ].map(row => row.join(',')).join('\n');
+      ['Thời gian', 'Mã giao dịch', 'Nội dung', 'Số tiền', 'Trạng thái'],
+      ...filteredTransactions.map((item) => [item.date, item.reference, item.description, item.amount, statusLabels[item.status] || item.status])
+    ].map((row) => row.map((cell) => `"${String(cell).replaceAll('"', '""')}"`).join(',')).join('\n');
 
-    const blob = new Blob([csv], { type: 'text/csv' });
+    const blob = new Blob([`\uFEFF${csv}`], { type: 'text/csv;charset=utf-8;' });
     const url = window.URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = 'transactions.csv';
-    a.click();
-  };
-
-  const getCategoryColor = (category) => {
-    const colors = {
-      income: 'category-green',
-      transfer: 'category-blue',
-      shopping: 'category-red',
-      utilities: 'category-orange',
-      gas: 'category-yellow',
-      subscription: 'category-purple',
-      cash: 'category-gray'
-    };
-    return colors[category] || 'category-gray';
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = 'lich-su-giao-dich.csv';
+    link.click();
+    window.URL.revokeObjectURL(url);
   };
 
   return (
     <div className="transactions">
-      <div className="transactions-header">
-        <h1>Transactions</h1>
-        <p>View and manage all your account transactions</p>
-      </div>
+      <header className="transactions-header">
+        <div>
+          <p className="page-eyebrow">TÀI KHOẢN</p>
+          <h1>Lịch sử giao dịch</h1>
+          <p>Tra cứu các giao dịch phát sinh trên tài khoản của bạn.</p>
+        </div>
+        <button className="export-btn" type="button" onClick={handleExport}>
+          <FaDownload /> Xuất CSV
+        </button>
+      </header>
 
-      {/* Filters Section */}
-      <div className="filters-section">
+      {error && <div className="transactions-error">{error}</div>}
+
+      <section className="transaction-summary">
+        <div><span>Tổng tiền vào</span><strong className="positive">{formatCurrency(totalIncome)}</strong><small>{filteredTransactions.filter((item) => item.amount > 0).length} giao dịch</small></div>
+        <div><span>Tổng tiền ra</span><strong className="negative">{formatCurrency(totalExpenses)}</strong><small>{filteredTransactions.filter((item) => item.amount < 0).length} giao dịch</small></div>
+        <div><span>Chênh lệch</span><strong>{formatCurrency(totalIncome - totalExpenses)}</strong><small>{filteredTransactions.length} giao dịch được hiển thị</small></div>
+      </section>
+
+      <section className="transaction-tools">
         <div className="search-box">
-          <FaSearch className="search-icon" />
+          <FaSearch />
           <input
             type="text"
-            placeholder="Search transactions..."
+            placeholder="Tìm theo nội dung hoặc mã giao dịch"
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
           />
         </div>
-
         <div className="date-range">
-          <FaCalendar className="calendar-icon" />
-          <input
-            type="date"
-            value={dateRange.startDate}
-            onChange={(e) => setDateRange({ ...dateRange, startDate: e.target.value })}
-          />
-          <span>to</span>
-          <input
-            type="date"
-            value={dateRange.endDate}
-            onChange={(e) => setDateRange({ ...dateRange, endDate: e.target.value })}
-          />
+          <FaCalendar />
+          <input type="date" value={dateRange.startDate} onChange={(e) => setDateRange({ ...dateRange, startDate: e.target.value })} />
+          <span>đến</span>
+          <input type="date" value={dateRange.endDate} onChange={(e) => setDateRange({ ...dateRange, endDate: e.target.value })} />
+        </div>
+      </section>
+
+      <section className="transaction-content">
+        <div className="filter-tabs">
+          <FaFilter />
+          {Object.entries(filterOptions).map(([key, label]) => (
+            <button key={key} type="button" className={filter === key ? 'active' : ''} onClick={() => setFilter(key)}>
+              {label}
+            </button>
+          ))}
         </div>
 
-        <button className="export-btn" onClick={handleExport}>
-          <FaDownload /> Export CSV
-        </button>
-      </div>
-
-      {/* Filter Tabs */}
-      <div className="filter-tabs">
-        <button
-          className={`tab ${filter === 'all' ? 'active' : ''}`}
-          onClick={() => setFilter('all')}
-        >
-          <FaFilter /> All
-        </button>
-        {Object.entries(filterOptions).slice(1).map(([key, label]) => (
-          <button
-            key={key}
-            className={`tab ${filter === key ? 'active' : ''}`}
-            onClick={() => setFilter(key)}
-          >
-            {label}
-          </button>
-        ))}
-      </div>
-
-      {/* Summary Cards */}
-      <div className="summary-cards">
-        <div className="summary-card income">
-          <h3>Total Income</h3>
-          <p className="summary-amount">${totalIncome.toFixed(2)}</p>
-          <p className="summary-count">{filteredTransactions.filter(t => t.amount > 0).length} transactions</p>
-        </div>
-        <div className="summary-card expense">
-          <h3>Total Expenses</h3>
-          <p className="summary-amount">${totalExpenses.toFixed(2)}</p>
-          <p className="summary-count">{filteredTransactions.filter(t => t.amount < 0).length} transactions</p>
-        </div>
-        <div className="summary-card net">
-          <h3>Net Flow</h3>
-          <p className="summary-amount">${(totalIncome - totalExpenses).toFixed(2)}</p>
-          <p className="summary-count">{filteredTransactions.length} total</p>
-        </div>
-      </div>
-
-      {/* Transactions List */}
-      <div className="transactions-list">
-        {filteredTransactions.length > 0 ? (
-          <div className="transaction-items">
-            {filteredTransactions.map((transaction) => (
-              <div key={transaction.id} className="transaction-item">
-                <div className="transaction-icon">
-                  <div className={`icon-circle ${getCategoryColor(transaction.category)}`}>
-                    {transaction.amount > 0 ? '↓' : '↑'}
-                  </div>
-                </div>
-
-                <div className="transaction-details">
-                  <h4>{transaction.description}</h4>
-                  <p>{transaction.date}</p>
-                </div>
-
-                <div className="transaction-status">
-                  <span className={`badge badge-${transaction.status}`}>
-                    {transaction.status}
-                  </span>
-                </div>
-
-                <div className="transaction-amount">
-                  <span className={transaction.amount > 0 ? 'positive' : 'negative'}>
-                    {transaction.amount > 0 ? '+' : ''}{transaction.amount.toFixed(2)}
-                  </span>
-                </div>
+        <div className="transaction-list">
+          {filteredTransactions.length > 0 ? filteredTransactions.map((transaction) => (
+            <div className="transaction-item" key={transaction.id}>
+              <span className={`transaction-icon ${transaction.amount > 0 ? 'income' : 'expense'}`}>
+                {transaction.amount > 0 ? <FaArrowDown /> : <FaArrowUp />}
+              </span>
+              <div className="transaction-description">
+                <strong>{transaction.description}</strong>
+                <small>{transaction.date} · {transaction.reference}</small>
               </div>
-            ))}
-          </div>
-        ) : (
-          <div className="no-transactions">
-            <p>No transactions found</p>
-          </div>
-        )}
-      </div>
+              <span className={`status-badge status-${transaction.status}`}>
+                {statusLabels[transaction.status] || transaction.status}
+              </span>
+              <strong className={transaction.amount > 0 ? 'positive' : 'negative'}>
+                {transaction.amount > 0 ? '+' : ''}{formatCurrency(transaction.amount)}
+              </strong>
+            </div>
+          )) : <div className="no-transactions">Không tìm thấy giao dịch phù hợp.</div>}
+        </div>
+      </section>
     </div>
   );
 }

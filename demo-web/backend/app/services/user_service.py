@@ -2,6 +2,7 @@ from sqlalchemy.orm import Session
 from app.models.user import User
 from app.schemas.user import UserCreate, UserUpdate
 from passlib.context import CryptContext
+from app.services.banking_service import BankingService
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
@@ -38,9 +39,14 @@ class UserService:
             email=user.email,
             username=user.username,
             full_name=user.full_name,
+            phone=user.phone,
+            address=user.address,
+            date_of_birth=user.date_of_birth,
             password_hash=UserService.hash_password(user.password)
         )
         db.add(db_user)
+        db.flush()
+        BankingService.ensure_primary_account(db, db_user)
         db.commit()
         db.refresh(db_user)
         return db_user
@@ -52,9 +58,17 @@ class UserService:
         if not db_user:
             return None
         
-        if user_update.full_name is not None:
+        update_fields = user_update.model_fields_set
+
+        if "full_name" in update_fields:
             db_user.full_name = user_update.full_name
-        if user_update.password is not None:
+        if "phone" in update_fields:
+            db_user.phone = user_update.phone
+        if "address" in update_fields:
+            db_user.address = user_update.address
+        if "date_of_birth" in update_fields:
+            db_user.date_of_birth = user_update.date_of_birth
+        if "password" in update_fields and user_update.password is not None:
             db_user.password_hash = UserService.hash_password(user_update.password)
         
         db.commit()

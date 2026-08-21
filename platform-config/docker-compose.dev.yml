@@ -33,7 +33,7 @@ services:
       DATABASE_URL: postgresql://aiops_user:aiops_pass@db:5432/aiops_db
       ENVIRONMENT: development
     ports:
-      - "8000:8000"
+      - "8002:8000"
     depends_on:
       db:
         condition: service_healthy
@@ -55,15 +55,20 @@ services:
       context: ../demo-web/frontend
       dockerfile: Dockerfile
       args:
-        - REACT_APP_API_URL=http://localhost:8000
+        - REACT_APP_API_URL=
     container_name: aiops-web
     environment:
-      REACT_APP_API_URL: http://localhost:8000
+      PAYMENT_API_UPSTREAM: http://api:8000
     ports:
-      - "3000:3000"
+      - "3000:80"
     depends_on:
       - api
-    command: serve -s build -l 3000
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://127.0.0.1/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 5s
     networks:
       - aiops-network
 

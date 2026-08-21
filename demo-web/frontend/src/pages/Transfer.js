@@ -1,56 +1,130 @@
-import React, { useState } from 'react';
-import { FaUser, FaPhone, FaPaperPlane, FaCheckCircle } from 'react-icons/fa';
+import React, { useEffect, useMemo, useState } from 'react';
+import {
+  FaUniversity,
+  FaPaperPlane,
+  FaCheckCircle,
+  FaShieldAlt,
+  FaClock,
+  FaInfoCircle,
+  FaSearch,
+  FaUserCheck
+} from 'react-icons/fa';
+import { bankingService, getApiErrorMessage } from '../services/api';
 import '../styles/transfer.css';
 
-export default function Transfer() {
-  const [transferData, setTransferData] = useState({
-    recipientName: '',
-    recipientEmail: '',
-    recipientPhone: '',
-    amount: '',
-    description: '',
-    fromAccount: 'checking'
-  });
+const initialTransfer = {
+  recipientAccountNumber: '',
+  recipientName: '',
+  amount: '',
+  description: '',
+};
+
+export default function Transfer({ realtimeVersion = 0 }) {
+  const currentUser = useMemo(() => {
+    try {
+      return JSON.parse(localStorage.getItem('user') || '{}');
+    } catch {
+      return {};
+    }
+  }, []);
+  const [transferData, setTransferData] = useState(initialTransfer);
+  const [sourceAccount, setSourceAccount] = useState(null);
   const [submitted, setSubmitted] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [lookupLoading, setLookupLoading] = useState(false);
+  const [error, setError] = useState('');
+  const [lastTransfer, setLastTransfer] = useState(null);
 
-  const accounts = [
-    { value: 'checking', label: 'Checking Account ($5,432.87)' },
-    { value: 'savings', label: 'Savings Account ($12,500.00)' },
-    { value: 'investment', label: 'Investment Account ($28,750.50)' },
-  ];
+  const formatCurrency = (value, currency = 'VND') =>
+    `${Number(value || 0).toLocaleString('vi-VN')} ${currency}`;
+
+  useEffect(() => {
+    async function loadSourceAccount() {
+      if (!currentUser?.id) {
+        setError('Vui lòng đăng nhập để thực hiện chuyển tiền.');
+        return;
+      }
+
+      try {
+        const response = await bankingService.listAccounts(currentUser.id);
+        const accounts = response.data || [];
+        const primaryAccount = accounts.find((account) => account.is_primary) || accounts[0];
+        if (!primaryAccount) {
+          setError('Tài khoản của bạn chưa có tài khoản thanh toán.');
+          return;
+        }
+        setSourceAccount(primaryAccount);
+        setError('');
+      } catch (err) {
+        setError(getApiErrorMessage(err, 'Không thể tải tài khoản nguồn.'));
+      }
+    }
+
+    loadSourceAccount();
+  }, [currentUser?.id, realtimeVersion]);
 
   const handleChange = (e) => {
     const { name, value } = e.target;
-    setTransferData(prev => ({
-      ...prev,
-      [name]: value
-    }));
+    if (name === 'recipientAccountNumber') {
+      setTransferData((prev) => ({
+        ...prev,
+        recipientAccountNumber: value.replace(/\D/g, ''),
+        recipientName: '',
+      }));
+      return;
+    }
+    setTransferData((prev) => ({ ...prev, [name]: value }));
+  };
+
+  const lookupRecipient = async () => {
+    if (!transferData.recipientAccountNumber) return null;
+
+    setLookupLoading(true);
+    setError('');
+    try {
+      const response = await bankingService.lookupAccount(transferData.recipientAccountNumber);
+      setTransferData((prev) => ({ ...prev, recipientName: response.data.account_name }));
+      return response.data;
+    } catch (err) {
+      setTransferData((prev) => ({ ...prev, recipientName: '' }));
+      setError(getApiErrorMessage(err, 'Không tìm thấy tài khoản người nhận.'));
+      return null;
+    } finally {
+      setLookupLoading(false);
+    }
+  };
+
+  const handleReset = () => {
+    setTransferData(initialTransfer);
+    setError('');
   };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
     setLoading(true);
+    setError('');
 
-    // Simulate API call
-    setTimeout(() => {
-      console.log('Transfer submitted:', transferData);
-      setLoading(false);
+    try {
+      const recipient = transferData.recipientName ? true : await lookupRecipient();
+      if (!recipient) return;
+
+      const response = await bankingService.createTransfer({
+        sender_user_id: currentUser.id,
+        recipient_account_number: transferData.recipientAccountNumber,
+        amount: transferData.amount,
+        description: transferData.description || `Chuyển tiền đến ${transferData.recipientName}`,
+      });
+
+      const accountsResponse = await bankingService.listAccounts(currentUser.id);
+      const accounts = accountsResponse.data || [];
+      setSourceAccount(accounts.find((account) => account.is_primary) || accounts[0] || null);
+      setLastTransfer(response.data);
       setSubmitted(true);
-      
-      // Reset form after 3 seconds
-      setTimeout(() => {
-        setTransferData({
-          recipientName: '',
-          recipientEmail: '',
-          recipientPhone: '',
-          amount: '',
-          description: '',
-          fromAccount: 'checking'
-        });
-        setSubmitted(false);
-      }, 3000);
-    }, 1500);
+    } catch (err) {
+      setError(getApiErrorMessage(err, 'Giao dịch không thành công. Vui lòng kiểm tra lại thông tin.'));
+    } finally {
+      setLoading(false);
+    }
   };
 
   if (submitted) {
@@ -58,10 +132,22 @@ export default function Transfer() {
       <div className="transfer-success">
         <div className="success-card">
           <FaCheckCircle className="success-icon" />
-          <h2>Transfer Successful!</h2>
-          <p>${transferData.amount} has been transferred to {transferData.recipientName}</p>
-          <p className="success-ref">Reference ID: TXN-{Date.now()}</p>
-          <p className="success-time">Redirecting...</p>
+          <h2>Chuyển tiền thành công</h2>
+          <p>Bạn đã chuyển <strong>{formatCurrency(transferData.amount)}</strong> đến {transferData.recipientName}.</p>
+          <div className="success-detail">
+            <span>Mã giao dịch</span>
+            <strong>{lastTransfer?.reference_code || 'Đang xử lý'}</strong>
+          </div>
+          <button
+            type="button"
+            onClick={() => {
+              handleReset();
+              setSubmitted(false);
+              setLastTransfer(null);
+            }}
+          >
+            Thực hiện giao dịch khác
+          </button>
         </div>
       </div>
     );
@@ -69,193 +155,139 @@ export default function Transfer() {
 
   return (
     <div className="transfer">
-      <div className="transfer-header">
-        <h1>Money Transfer</h1>
-        <p>Send money securely to friends and family</p>
-      </div>
+      <header className="transfer-header">
+        <p className="page-eyebrow">GIAO DỊCH</p>
+        <h1>Chuyển tiền</h1>
+        <p>Chuyển tiền nhanh chóng bằng số tài khoản VietTien.</p>
+      </header>
 
       <div className="transfer-container">
-        <div className="transfer-form-wrapper">
-          <form className="transfer-form" onSubmit={handleSubmit}>
-            {/* From Account */}
-            <fieldset className="form-section">
-              <legend>From</legend>
-              <div className="form-group">
-                <label>Select Account</label>
-                <select
-                  name="fromAccount"
-                  value={transferData.fromAccount}
+        <form className="transfer-form" onSubmit={handleSubmit}>
+          <section className="transfer-section">
+            <div className="section-heading">
+              <span>1</span>
+              <div><h2>Tài khoản nguồn</h2><p>Tài khoản chính của người dùng đang đăng nhập</p></div>
+            </div>
+            <div className="source-account-card">
+              <span className="source-account-icon"><FaUniversity /></span>
+              <div>
+                <small>Tài khoản thanh toán</small>
+                <strong>{sourceAccount?.account_number || 'Đang tải tài khoản...'}</strong>
+              </div>
+              <div className="source-account-balance">
+                <small>Số dư khả dụng</small>
+                <strong>{sourceAccount ? formatCurrency(sourceAccount.balance, sourceAccount.currency) : '---'}</strong>
+              </div>
+            </div>
+          </section>
+
+          <section className="transfer-section">
+            <div className="section-heading">
+              <span>2</span>
+              <div><h2>Thông tin người nhận</h2><p>Nhập số tài khoản đã được cấp khi đăng ký</p></div>
+            </div>
+            <div className="form-group">
+              <label>Số tài khoản người nhận</label>
+              <div className="input-group account-number-input">
+                <FaUniversity className="input-icon" />
+                <input
+                  type="text"
+                  inputMode="numeric"
+                  name="recipientAccountNumber"
+                  placeholder="Nhập số tài khoản"
+                  value={transferData.recipientAccountNumber}
                   onChange={handleChange}
-                  className="account-select"
-                >
-                  {accounts.map(account => (
-                    <option key={account.value} value={account.value}>
-                      {account.label}
-                    </option>
-                  ))}
-                </select>
-              </div>
-            </fieldset>
-
-            {/* Recipient Details */}
-            <fieldset className="form-section">
-              <legend>Recipient Details</legend>
-              
-              <div className="form-group">
-                <label>Full Name</label>
-                <div className="input-group">
-                  <FaUser className="input-icon" />
-                  <input
-                    type="text"
-                    name="recipientName"
-                    placeholder="Recipient's full name"
-                    value={transferData.recipientName}
-                    onChange={handleChange}
-                    required
-                  />
-                </div>
-              </div>
-
-              <div className="form-row">
-                <div className="form-group">
-                  <label>Email Address</label>
-                  <input
-                    type="email"
-                    name="recipientEmail"
-                    placeholder="recipient@email.com"
-                    value={transferData.recipientEmail}
-                    onChange={handleChange}
-                    required
-                  />
-                </div>
-
-                <div className="form-group">
-                  <label>Phone Number</label>
-                  <div className="input-group">
-                    <FaPhone className="input-icon" />
-                    <input
-                      type="tel"
-                      name="recipientPhone"
-                      placeholder="+1 (555) 000-0000"
-                      value={transferData.recipientPhone}
-                      onChange={handleChange}
-                    />
-                  </div>
-                </div>
-              </div>
-            </fieldset>
-
-            {/* Transfer Amount */}
-            <fieldset className="form-section">
-              <legend>Transfer Amount</legend>
-              
-              <div className="form-group">
-                <label>Amount (USD)</label>
-                <div className="input-group amount-input">
-                  <span className="currency-symbol">$</span>
-                  <input
-                    type="number"
-                    name="amount"
-                    placeholder="0.00"
-                    value={transferData.amount}
-                    onChange={handleChange}
-                    step="0.01"
-                    min="0"
-                    required
-                  />
-                </div>
-              </div>
-
-              <div className="form-group">
-                <label>Description (Optional)</label>
-                <textarea
-                  name="description"
-                  placeholder="e.g., Rent payment, Birthday gift..."
-                  value={transferData.description}
-                  onChange={handleChange}
-                  rows="3"
+                  onBlur={lookupRecipient}
+                  maxLength="32"
+                  required
                 />
-              </div>
-            </fieldset>
-
-            {/* Summary */}
-            <div className="transfer-summary">
-              <h3>Transfer Summary</h3>
-              <div className="summary-item">
-                <span>To Account:</span>
-                <span>{transferData.recipientName || 'Not specified'}</span>
-              </div>
-              <div className="summary-item">
-                <span>Amount:</span>
-                <span className="amount-value">
-                  ${parseFloat(transferData.amount || 0).toFixed(2)}
-                </span>
-              </div>
-              <div className="summary-item">
-                <span>Fee:</span>
-                <span>Free</span>
-              </div>
-              <div className="summary-divider"></div>
-              <div className="summary-item total">
-                <span>Total Debit:</span>
-                <span className="total-value">
-                  ${parseFloat(transferData.amount || 0).toFixed(2)}
-                </span>
-              </div>
-            </div>
-
-            {/* Action Buttons */}
-            <div className="form-actions">
-              <button 
-                type="submit" 
-                className="transfer-btn"
-                disabled={loading || !transferData.recipientName || !transferData.amount}
-              >
-                {loading ? 'Processing...' : (
-                  <>
-                    <FaPaperPlane /> Send Money
-                  </>
-                )}
-              </button>
-              <button type="reset" className="reset-btn">
-                Clear Form
-              </button>
-            </div>
-          </form>
-        </div>
-
-        {/* Info Panel */}
-        <div className="transfer-info">
-          <div className="info-card">
-            <h3>⏱️ Transfer Speed</h3>
-            <p>Most transfers are completed within 2-3 business days</p>
-          </div>
-          
-          <div className="info-card">
-            <h3>🔒 Security</h3>
-            <p>All transfers are encrypted and secure. Your data is protected.</p>
-          </div>
-          
-          <div className="info-card">
-            <h3>💰 Limits</h3>
-            <p>Daily limit: $10,000 | Monthly limit: $50,000</p>
-          </div>
-
-          <div className="recent-recipients">
-            <h3>Recent Recipients</h3>
-            <div className="recipient-list">
-              {['John Smith', 'Sarah Johnson', 'Mike Davis'].map((name, idx) => (
-                <button
-                  key={idx}
-                  className="recipient-btn"
-                  onClick={() => setTransferData(prev => ({ ...prev, recipientName: name }))}
-                >
-                  {name}
+                <button type="button" onClick={lookupRecipient} disabled={lookupLoading || !transferData.recipientAccountNumber}>
+                  <FaSearch /> {lookupLoading ? 'Đang tra cứu' : 'Tra cứu'}
                 </button>
-              ))}
+              </div>
             </div>
+            {transferData.recipientName && (
+              <div className="recipient-verified">
+                <FaUserCheck />
+                <div>
+                  <span>Tên người nhận</span>
+                  <strong>{transferData.recipientName}</strong>
+                </div>
+              </div>
+            )}
+          </section>
+
+          <section className="transfer-section">
+            <div className="section-heading">
+              <span>3</span>
+              <div><h2>Thông tin giao dịch</h2><p>Nhập số tiền và nội dung chuyển khoản</p></div>
+            </div>
+            <div className="form-group">
+              <label>Số tiền</label>
+              <div className="input-group amount-input">
+                <input
+                  type="number"
+                  name="amount"
+                  placeholder="0"
+                  value={transferData.amount}
+                  onChange={handleChange}
+                  step="1"
+                  min="1"
+                  required
+                />
+                <span className="currency-symbol">VND</span>
+              </div>
+            </div>
+            <div className="form-group">
+              <label>Nội dung chuyển tiền</label>
+              <textarea
+                name="description"
+                placeholder="Nhập nội dung chuyển tiền"
+                value={transferData.description}
+                onChange={handleChange}
+                rows="3"
+                maxLength="140"
+              />
+            </div>
+          </section>
+
+          {error && <div className="transfer-error">{error}</div>}
+
+          <div className="form-actions">
+            <button type="button" className="reset-btn" onClick={handleReset}>Làm lại</button>
+            <button
+              type="submit"
+              className="transfer-btn"
+              disabled={loading || !sourceAccount || !transferData.recipientAccountNumber || !transferData.recipientName || !transferData.amount}
+            >
+              <FaPaperPlane /> {loading ? 'Đang xử lý...' : 'Chuyển tiền'}
+            </button>
           </div>
-        </div>
+        </form>
+
+        <aside className="transfer-sidebar">
+          <section className="transfer-summary">
+            <h2>Thông tin giao dịch</h2>
+            <div><span>Từ tài khoản</span><strong>{sourceAccount?.account_number || 'Đang tải'}</strong></div>
+            <div><span>Đến tài khoản</span><strong>{transferData.recipientAccountNumber || 'Chưa nhập'}</strong></div>
+            <div><span>Người nhận</span><strong>{transferData.recipientName || 'Chưa tra cứu'}</strong></div>
+            <div><span>Số tiền</span><strong className="summary-amount">{formatCurrency(transferData.amount)}</strong></div>
+            <div><span>Phí giao dịch</span><strong>Miễn phí</strong></div>
+          </section>
+
+          <section className="transfer-note">
+            <h2><FaShieldAlt /> An toàn giao dịch</h2>
+            <p>Kiểm tra kỹ số tài khoản, tên người nhận và số tiền trước khi xác nhận.</p>
+          </section>
+          <section className="transfer-note">
+            <h2><FaClock /> Thời gian xử lý</h2>
+            <p>Giao dịch nội bộ được xử lý ngay sau khi hoàn tất.</p>
+          </section>
+          <section className="transfer-note">
+            <h2><FaInfoCircle /> Hạn mức</h2>
+            <p>Hạn mức giao dịch phụ thuộc vào cấu hình tài khoản của bạn.</p>
+          </section>
+        </aside>
       </div>
     </div>
   );
