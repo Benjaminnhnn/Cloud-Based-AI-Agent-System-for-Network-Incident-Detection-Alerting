@@ -298,10 +298,7 @@ Never commit `.env*`, Terraform state, SSH keys, API tokens, or runtime ChromaDB
 |- release/                # Staging/production compose files and env template
 |- terraform/              # AWS infrastructure definition
 |- assets/                 # README images
-|- AIops_CICD.md           # CI/CD design notes
-|- AWS_INFRASTRUCTURE_DEPLOYMENT_GUIDE.md
-|- GITHUB_WEBHOOK_TOOL_REGISTRY_RUNBOOK_DEMO.md
-|- STAGING_DEMO_RUNBOOKS.md
+|- docs/                   # Architecture, deployment, CI/CD, and demo runbooks
 `- README.md
 ```
 
@@ -317,8 +314,10 @@ Never commit `.env*`, Terraform state, SSH keys, API tokens, or runtime ChromaDB
 
 ## Further Reading
 
-- [AIops_CICD.md](AIops_CICD.md)
-- [AWS_INFRASTRUCTURE_DEPLOYMENT_GUIDE.md](AWS_INFRASTRUCTURE_DEPLOYMENT_GUIDE.md)
-- [GITHUB_WEBHOOK_TOOL_REGISTRY_RUNBOOK_DEMO.md](GITHUB_WEBHOOK_TOOL_REGISTRY_RUNBOOK_DEMO.md)
-- [STAGING_DEMO_RUNBOOKS.md](STAGING_DEMO_RUNBOOKS.md)
+- [CI/CD design](docs/AIops_CICD.md)
+- [AWS infrastructure deployment guide](docs/AWS_INFRASTRUCTURE_DEPLOYMENT_GUIDE.md)
+- [GitHub webhook and tool registry demo](docs/GITHUB_WEBHOOK_TOOL_REGISTRY_RUNBOOK_DEMO.md)
+- [Staging demo runbooks](docs/STAGING_DEMO_RUNBOOKS.md)
+- [Project context](docs/CONTEXT.md)
+- [Planning notes](docs/PLANNING.md)
 - [agent_src/README.md](agent_src/README.md)

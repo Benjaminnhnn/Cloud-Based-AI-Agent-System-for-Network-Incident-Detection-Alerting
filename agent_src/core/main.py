@@ -433,7 +433,7 @@ async def telegram_webhook(payload: TelegramWebhookPayload):
         chat_id = chat.get("id")
         expected_chat_ids = _configured_telegram_chat_ids()
 
-        if expected_chat_ids and str(chat_id) not in expected_chat_ids:
+        if not expected_chat_ids or str(chat_id) not in expected_chat_ids:
             logger.warning("Ignored Telegram message from unauthorized chat_id=%s", chat_id)
             return {"status": "ignored"}
 

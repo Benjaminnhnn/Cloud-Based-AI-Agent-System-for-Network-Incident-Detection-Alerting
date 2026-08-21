@@ -18,6 +18,7 @@
       loop:
         - "{{ release_root }}"
         - "{{ release_root }}/release"
+        - "{{ release_root }}/release/database"
         - "{{ release_root }}/automation"
         - "{{ release_root }}/release/.state"
 
@@ -32,6 +33,17 @@
         - docker-compose.staging.yml
         - docker-compose.production.yml
         - .env.example
+
+    - name: Install database initialization scripts
+      copy:
+        src: "{{ playbook_dir }}/../../demo-web/database/{{ item }}"
+        dest: "{{ release_root }}/release/database/{{ item }}"
+        owner: ec2-user
+        group: ec2-user
+        mode: '0644'
+      loop:
+        - init.sql
+        - seed.sql
 
     - name: Install release deployment script
       copy:
