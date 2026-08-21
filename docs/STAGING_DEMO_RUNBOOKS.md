@@ -8,9 +8,9 @@ Chay tren WSL local:
 
 ```bash
 export KEY=/home/qtienle/.ssh/aws-hybrid
-export MONITOR=13.213.161.83
-export WEB=13.250.87.160
-export CORE=3.1.112.30
+export MONITOR=52.77.67.245
+export WEB=52.220.118.140
+export CORE=54.169.238.33
 ```
 
 | Role | Public IP | Private identity | Dich vu chinh |

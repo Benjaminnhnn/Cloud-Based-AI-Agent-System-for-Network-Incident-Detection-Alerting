@@ -1,7 +1,10 @@
-# Documentation (only keep README and AIops_CICD)
+# Documentation
 *.md
 !README.md
 !AIops_CICD.md
+!AGENTS.md
+!docs/
+!docs/*.md
 
 # Terraform (NEVER commit state files)
 *.tfstate
@@ -33,9 +36,6 @@ id_rsa.pub
 .env.production
 .env.local
 
-# Documentation (local only)
-docs/
-
 # Python
 __pycache__/
 *.py[cod]
@@ -45,6 +45,10 @@ dist/
 build/
 venv/
 env/
+.venv/
+
+# Runtime vector database (recreated at startup)
+agent_src/vector_db/
 
 # VS Code & IDE
 .vscode/
