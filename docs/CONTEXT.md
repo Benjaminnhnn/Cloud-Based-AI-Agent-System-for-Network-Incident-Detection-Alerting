@@ -1,6 +1,6 @@
 # CONTEXT.md — Bối cảnh, hiện trạng và định hướng khóa luận
 
-> **Cập nhật:** 2026-08-17
+> **Cập nhật:** 2026-08-25
 > **Giai đoạn:** Chuẩn bị và phát triển khóa luận tốt nghiệp, 08/2026–12/2026
 > **Đề tài theo appendix.tex:** Hệ thống AIOps tập trung đa nút với phát hiện bất thường chủ động và tự phục hồi có kiểm soát cho hạ tầng phân tán
 
@@ -21,9 +21,10 @@ Hạ tầng cloud hiện đại gồm nhiều node, container, dịch vụ và d
 
 - Thu thập và tương quan alert, metrics, logs, trạng thái node/service, dependency và lịch sử incident.
 - Phát hiện bất thường chủ động từ chuỗi metrics, bổ sung cho alert rule tĩnh.
-- Dùng AI Agent, RAG và LLM để phân tích nguyên nhân, đánh giá ảnh hưởng và sinh đề xuất xử lý có cấu trúc.
+- Điều phối các agent chuyên trách bằng Celery fan-out để thu thập bằng chứng đa nguồn song song; Aggregator tổng hợp kết quả, xếp hạng nguyên nhân và sinh đề xuất xử lý có cấu trúc.
 - Tích lũy incident history, feedback quản trị viên và runbook đã kiểm chứng vào Vector Knowledge Base.
-- Thực hiện self-healing theo playbook, có phân loại rủi ro, phê duyệt Human-in-the-Loop và xác minh sau xử lý.
+- Dùng RAG/LLM để giải thích kết quả Aggregator; mọi remediation phải qua policy, Human-in-the-Loop, playbook có kiểm soát và verification.
+- Xử lý partial failure, timeout và kết quả mâu thuẫn của các agent mà không làm mất incident context.
 - Đánh giá bằng dữ liệu thực nghiệm: MTTD, MTTR, accuracy, false positive/negative, chất lượng RCA, hiệu quả phục hồi và khả năng duy trì dịch vụ.
 
 Phạm vi thực nghiệm là hệ thống ngân hàng mẫu chạy trên AWS EC2. Đây là workload đại diện để tạo các kịch bản lỗi, không phải hệ thống ngân hàng thương mại thực tế. Các thao tác có rủi ro phải được giới hạn trong allowlist và môi trường thử nghiệm.
@@ -37,7 +38,9 @@ Terraform + Ansible
         |
 Monitoring & Observability: Prometheus, Alertmanager, Grafana, exporters
         |
-AI Agent: FastAPI -> Redis/Celery -> diagnosis/correlation -> RAG/LLM
+AI control plane: FastAPI -> Redis/Celery -> Incident Orchestrator
+        -> Celery fan-out: Correlation / Dependency / Metric / Log / Probe agents
+        -> Aggregator: evidence merge + deterministic RCA scoring + RAG/LLM explanation
         |
 Human-in-the-Loop: Telegram approval -> controlled playbook -> verification
         |
@@ -68,15 +71,36 @@ CI/CD: GitHub Actions -> GHCR -> role-based deploy -> health check/rollback
 Các thành phần chính nằm trong `agent_src/`:
 
 - FastAPI tại `agent_src/core/main.py` tiếp nhận Alertmanager qua `/webhook`, health/metrics, Telegram webhook và Tool Registry API.
-- Redis làm broker/cache; Celery xử lý bất đồng bộ qua `process_alerts_task` và scheduled verification.
+- Redis làm broker/cache; Celery xử lý bất đồng bộ qua `process_alerts_task`, fan-out `group/chord` và scheduled verification.
 - Dedup hai tầng: ingress cooldown và AI cooldown, ưu tiên Alertmanager fingerprint hoặc hash từ các label định danh.
-- Deterministic diagnosis cho các nhóm alert đã biết: web endpoint, frontend proxy, Payment API, PostgreSQL, Redis và Docker container; resource alerts có phân tích dự phòng.
-- Gemini `gemini-2.5-flash` dùng function calling với nhóm diagnostic tools; giới hạn remote call mặc định được giữ thấp để tránh quota exhaustion.
+- Các agent chuyên trách chỉ dùng công cụ read-only theo role: correlation/dependency, metric, log, probe và change/runbook.
+- Aggregator hợp nhất evidence, áp dụng deterministic RCA scoring, xử lý partial failure và chỉ dùng Gemini `gemini-2.5-flash` để giải thích hoặc chuẩn hóa proposal.
 - Telegram gửi incident report, nhận feedback `/feedback` và callback approval/dismissal; sau đó agent kiểm tra lại qua Prometheus.
 - `core/runbook_registry.py` đã có đăng ký revision, phân loại `read_only`/`remediation`/`destructive`, tạo runbook draft, audit JSONL và publish sau phê duyệt.
 - GitHub webhook có HMAC verification và auto-discovery cho thay đổi CI/toolchain.
 
-**Trạng thái:** Core alert-to-analysis-to-notification-to-verification đã hoạt động. `propose_remediation()` hiện sinh proposal có validation host, chưa phải engine thực thi restart/scale/rollback. Vì vậy không được mô tả hệ thống hiện tại là self-healing hoàn chỉnh.
+**Trạng thái:** Core alert-to-analysis-to-notification-to-verification đã hoạt động. Celery fan-out, Aggregator, policy gateway và typed remediation executor là phần cần phát triển. `propose_remediation()` hiện chỉ sinh proposal có validation host, chưa phải engine thực thi restart/scale/rollback; vì vậy không được mô tả hệ thống hiện tại là self-healing hoàn chỉnh.
+
+### 3.3.1. Mô hình Multi-Agent mục tiêu
+
+```text
+Incident Orchestrator
+        -> Celery group/chord
+           -> Correlation Agent
+           -> Dependency Agent
+           -> Metric/Anomaly Agent
+           -> Log Agent
+           -> Probe Agent
+           -> Change/Runbook Agent
+        -> Aggregator
+           -> evidence merge + deterministic RCA scoring
+           -> RAG/LLM explanation and structured proposal
+        -> Policy Gateway -> Human approval
+        -> Typed Ansible Executor (staging allowlist)
+        -> Verification Agent -> incident memory/audit
+```
+
+Các specialist agent chạy song song và chỉ trả về kết quả có schema, evidence ID, trạng thái, thời gian thực hiện và lỗi nếu có. Aggregator là nơi duy nhất hợp nhất kết quả; không agent nào tự thực hiện thay đổi hệ thống. `control-plane-db` là nguồn dữ liệu trạng thái chính, còn ChromaDB chỉ phục vụ retrieval.
 
 ### 3.4. RAG và knowledge base
 
@@ -100,19 +124,17 @@ Hiện có runbook cho Docker, Nginx, PostgreSQL và Redis. Cơ chế runbook wo
 
 ```text
 Metrics / logs / service checks / Alertmanager
-        -> chuẩn hóa và gắn timestamp, node, service, dependency
-        -> anomaly detector + alert rules
-        -> correlation window và incident context
-        -> deterministic runbook hoặc RAG retrieval
-        -> LLM reasoning có tool-use khi cần
-        -> RCA, mức ảnh hưởng, confidence và remediation proposal
-        -> phân loại rủi ro
-        -> tự động hành động an toàn hoặc chờ admin approval
-        -> playbook restart / scale / rollback / traffic shift
-        -> post-action verification và incident memory
+        -> Event Normalizer -> Incident Core
+        -> Celery group/chord fan-out các specialist agent song song
+        -> Aggregator: merge evidence + RCA scoring + impact
+        -> RAG/LLM explanation và structured remediation proposal
+        -> Policy Gateway -> Human approval
+        -> Typed playbook executor trên staging
+        -> Verification Agent -> RESOLVED / FAILED / ESCALATED
+        -> incident memory và audit log
 ```
 
-Trong phiên bản hiện tại, các bước anomaly detector, correlation engine và playbook execution còn là phần phát triển. Không dùng LLM làm quyền thực thi trực tiếp; mọi hành động thay đổi trạng thái phải đi qua policy, allowlist, timeout, audit và điều kiện dừng.
+Trong phiên bản hiện tại, fan-out specialist, Aggregator, anomaly detector, correlation engine và playbook execution còn là phần phát triển. Fan-out phải có timeout, retry có giới hạn và xử lý partial failure. Không dùng LLM làm quyền thực thi trực tiếp; mọi hành động thay đổi trạng thái phải đi qua policy, allowlist, timeout, audit và điều kiện dừng.
 
 ## 5. Khoảng cách cần giải quyết
 
@@ -120,9 +142,9 @@ Trong phiên bản hiện tại, các bước anomaly detector, correlation engi
 |---|---|---|
 | HA hạ tầng | Single-AZ, 3 EC2 cố định | Thiết kế/POC hoặc triển khai Multi-AZ + LB + ASG, có kịch bản node/AZ failure |
 | Phát hiện | Threshold tĩnh | Pipeline time window và ít nhất một mô hình Isolation Forest hoặc mô hình phù hợp |
-| Correlation/RCA | Context chủ yếu từ alert, runbook và Prometheus query | Gom đa nguồn, dependency và lịch sử incident vào incident context |
+| Multi-Agent/RCA | Chưa có Celery fan-out và Aggregator; context chủ yếu từ alert, runbook và Prometheus query | Specialist agents chạy song song, Aggregator gom evidence, dependency và lịch sử incident vào incident context |
 | Knowledge | 4 nhóm runbook, incident memory đã có | Làm giàu tri thức có kiểm duyệt, đánh giá retrieval, sinh draft runbook |
-| Self-healing | Proposal và approval flow, chưa execute thực | Allowlist playbook restart/scale/rollback/traffic shift, approval theo risk và verify |
+| Self-healing | Proposal và approval flow, chưa có typed executor hoàn chỉnh | Aggregator proposal -> policy -> human approval -> Ansible typed executor -> Verification Agent; chỉ staging |
 | Đánh giá | Có latency metric cơ bản, chưa có bộ benchmark | Dataset/scenario, baseline, metrics và bảng so sánh trước/sau |
 | Bảo mật/vận hành | GitHub webhook đã có HMAC; Alertmanager webhook cần hardening theo scope | Secret management, auth ingress, audit action và test failure/rollback |
 
@@ -130,6 +152,9 @@ Trong phiên bản hiện tại, các bước anomaly detector, correlation engi
 
 - Giữ deterministic runbook làm lớp rẻ và ổn định trước khi gọi Gemini.
 - Giữ `GEMINI_MAX_REMOTE_CALLS=1` và các giới hạn quota bảo thủ trừ khi có số liệu chứng minh cần thay đổi.
+- Specialist agents chỉ được gọi nhóm tool read-only phù hợp với role; Aggregator là điểm hợp nhất duy nhất.
+- Fan-out có timeout tổng thể 90 giây, retry giới hạn và phải biểu diễn partial failure bằng uncertainty thay vì tự suy đoán.
+- RCA scoring được tính deterministic trước; độ tin cậy do LLM tự sinh không được dùng làm tiêu chí duy nhất.
 - Terraform chỉ quản lý tài nguyên cloud; Ansible quản lý host/runtime; release script là cổng deploy duy nhất.
 - Không đưa ChromaDB runtime data, `.env*`, Terraform state hoặc SSH key vào repository.
 - Phân biệt rõ `liveness` và `readiness`, staging và production, proposal và execution.
