@@ -1,47 +1,90 @@
-# CONTEXT_V2.md — Bối cảnh, baseline và kiến trúc nâng cấp Multi-Agent AIOps
+# CONTEXT_V2.md — Bối cảnh, phạm vi và kiến trúc Multi-Agent AIOps V2
 
-> **Phiên bản:** 2.0
-> **Cập nhật:** 2026-08-29
-> **Giai đoạn:** Thiết kế và chuyển đổi từ baseline EC2 sang kiến trúc Fintech EKS/RDS Multi-AZ, 08/2026–12/2026
-> **Trạng thái tài liệu:** Kiến trúc mục tiêu; không đồng nghĩa các thành phần V2 đã được triển khai
+> **Phiên bản:** 2.1
+> **Cập nhật:** 2026-08-31
+> **Giai đoạn:** Chuyển đổi từ baseline EC2 sang MVP Fintech chạy trên Amazon EKS và Amazon RDS Multi-AZ, 08/2026–12/2026
+> **Trạng thái tài liệu:** Phạm vi khóa luận đã chốt; luôn phân biệt rõ thành phần đã có, bắt buộc triển khai, POC và Future Work
 
 ## 1. Thông tin khóa luận
 
 | Hạng mục | Nội dung |
 |---|---|
-| Tên tiếng Việt đề xuất | Xây dựng và đánh giá hệ thống Multi-Agent AIOps hỗ trợ phát hiện bất thường, chẩn đoán xuyên miền CI/CD–production và tự phục hồi có kiểm soát cho hạ tầng Fintech trên AWS |
-| Tên tiếng Anh đề xuất | Design and Evaluation of a Multi-Agent AIOps System for Anomaly Detection, Cross-Domain CI/CD-to-Production Diagnosis, and Controlled Remediation in AWS Fintech Infrastructure |
+| Tên tiếng Việt đề xuất | Xây dựng và đánh giá hệ thống Multi-Agent AIOps hỗ trợ phát hiện bất thường, chẩn đoán xuyên tầng ứng dụng–hạ tầng và tự phục hồi có kiểm soát cho hệ thống Fintech trên AWS |
+| Tên tiếng Anh đề xuất | Design and Evaluation of a Multi-Agent AIOps System for Anomaly Detection, Cross-Layer Application-to-Infrastructure Diagnosis, and Controlled Remediation in AWS Fintech Systems |
 | Đơn vị | Trường Đại học Công nghệ Thông tin, ĐHQG TP. Hồ Chí Minh |
 | Cán bộ hướng dẫn | ThS. Trần Thị Dung |
 | Sinh viên | Lê Hoàng Việt (23521778), Lê Quang Tiến (23521572) |
 | Thời gian | 08/2026–12/2026 |
 
-## 2. Bài toán và câu hỏi nghiên cứu
+## 2. Phạm vi đã chốt
 
-Hệ thống Fintech dùng microservices, Kubernetes, database HA và CI/CD tạo ra lượng lớn logs, metrics, traces và workflow events. Monitoring dựa trên threshold có các hạn chế:
+| Nhóm | Thành phần |
+|---|---|
+| **Đã có** | EC2 single-AZ, Docker Compose, Prometheus/Alertmanager, Redis/Celery, Gemini, ChromaDB RAG, Telegram, health check và release rollback |
+| **Bắt buộc trong khóa luận** | VPC public/private subnet trên hai AZ, EKS, RDS PostgreSQL Multi-AZ, GitHub OIDC, deployment identity, metrics/logs/health check, event schema, redaction, durable Incident Core, Application/Infrastructure Agents, deterministic Aggregator, HITL, một remediation staging, Verification và benchmark |
+| **POC nếu còn năng lực** | Karpenter, Neo4j, PostgreSQL/pgvector mới, traces nâng cao, AMP, Network/API Gateway Agent riêng, pattern mining nâng cao, Langfuse |
+| **Future Work** | AgentCore Runtime, A2A deployment, multi-region DR, production self-healing, canary/blue-green nâng cao, tự tạo PR sửa lỗi và mở rộng compliance production |
+
+### 2.1. Mục tiêu nghiên cứu
+
+Mục tiêu nghiên cứu là chứng minh một luồng Multi-Agent xuyên từ dịch vụ nghiệp vụ xuống hạ tầng có thể:
+
+- Gom các tín hiệu liên quan thành một incident.
+- Xác định tầng phát sinh lỗi và phạm vi ảnh hưởng nghiệp vụ.
+- Trả kết luận có evidence ID, mức không chắc chắn và khả năng tái lập.
+- Chỉ cho phép hành động staging qua policy, phê duyệt và verification.
+- Cải thiện kết quả so với baseline bằng benchmark có ground truth.
+
+### 2.2. Mục tiêu triển khai
+
+MVP phải chạy thật trên AWS ở mức khóa luận:
+
+```text
+GitHub Actions + OIDC
+        |
+        v
+VPC hai Availability Zone
+        |
+EKS private worker nodes ---- RDS PostgreSQL Multi-AZ
+        |
+Mobile Banking + scenario services + AIOps services
+        |
+Metrics + logs + health checks
+```
+
+Ba AZ, NAT Gateway riêng theo từng AZ và các dịch vụ managed nâng cao được giữ trong thiết kế production tham khảo, không phải điều kiện đánh trượt khóa luận.
+
+### 2.3. Nội dung không được tuyên bố
+
+- Không tuyên bố một nền tảng Fintech production-ready hoặc đã được chứng nhận compliance.
+- Không tuyên bố HA tuyệt đối cho toàn bộ control plane.
+- Không tự động thay đổi production, IAM, Security Group, database schema hoặc secret.
+- Không coi số lượng agent, việc gọi LLM hay dùng nhiều dịch vụ AWS là đóng góp tự thân.
+
+## 3. Bài toán và câu hỏi nghiên cứu
+
+Hệ thống Fintech dùng microservices, Kubernetes, database HA và CI/CD tạo ra lượng lớn logs, metrics, health events và workflow events. Monitoring dựa trên threshold có các hạn chế:
 
 - Alert fatigue do một lỗi gốc tạo nhiều cảnh báo downstream.
 - Điều tra lâu vì evidence nằm rải rác ở Prometheus, CloudWatch, Kubernetes, RDS và GitHub Actions.
-- Không nhận ra tốt các “unknown unknowns” chưa có rule.
-- Thiếu liên kết giữa commit/workflow/deployment và lỗi production.
-- Log có thể chứa PII/PCI/secret, trong khi mọi quyết định cần audit.
+- Không nhận ra tốt các mẫu lỗi mới chưa có rule.
+- Thiếu liên kết giữa commit, workflow, image, deployment, service nghiệp vụ và lỗi hạ tầng.
+- Log có thể chứa PII, PCI hoặc secret, trong khi mọi quyết định cần audit.
 
 Câu hỏi nghiên cứu:
 
-> Việc kết hợp pattern mining, knowledge graph và các agent chuyên trách có giúp giảm cảnh báo thừa, tăng chất lượng RCA và rút ngắn xử lý sự cố xuyên GitHub Actions–EKS–RDS, đồng thời đảm bảo redaction, least privilege, HITL và auditability hay không?
+> Việc kết hợp Application Agents, Infrastructure Agents, dependency data và deterministic Aggregator có giúp giảm cảnh báo thừa, tăng chất lượng RCA và rút ngắn điều tra sự cố xuyên App–CI/CD–EKS–RDS, đồng thời đảm bảo redaction, least privilege, HITL và auditability hay không?
 
-Phạm vi là sandbox Fintech đại diện. Không tuyên bố đây là hệ thống production-ready hoặc đã được chứng nhận compliance.
+## 4. Baseline repository đã kiểm tra
 
-## 3. Baseline repository đã kiểm tra
-
-### 3.1. Hạ tầng hiện tại
+### 4.1. Hạ tầng hiện tại
 
 Terraform hiện tạo:
 
 - Một VPC `10.10.0.0/16`.
 - Một public subnet ở Availability Zone đầu tiên.
 - Internet Gateway và public route table.
-- Ba EC2 có public IP/EIP: `monitor-ai-01`, `bank-web-01`, `bank-core-01`.
+- Ba EC2 có public IP/EIP: `monitor-ai-01`, `bank-web-01` và `bank-core-01`.
 - Security Group theo role; root volume mã hóa và IMDSv2 bắt buộc.
 
 ```text
@@ -52,9 +95,9 @@ Internet
        -> bank-core-01
 ```
 
-Chưa có private subnet, NAT Gateway, VPC Endpoint, Load Balancer, Auto Scaling Group, EKS hoặc RDS.
+Chưa có private subnet, Load Balancer, EKS hoặc RDS.
 
-### 3.2. Runtime hiện tại
+### 4.2. Runtime hiện tại
 
 | Role | Thành phần |
 |---|---|
@@ -62,7 +105,7 @@ Chưa có private subnet, NAT Gateway, VPC Endpoint, Load Balancer, Auto Scaling
 | Core | Payment API, PostgreSQL container, PostgreSQL exporter |
 | Web | React/Nginx frontend |
 
-Staging và production chạy đồng thời trên cùng EC2 nhưng tách compose/state/cổng:
+Staging và production chạy đồng thời trên cùng EC2 nhưng tách compose, state và cổng:
 
 | Service | Staging | Production |
 |---|---:|---:|
@@ -72,7 +115,7 @@ Staging và production chạy đồng thời trên cùng EC2 nhưng tách compos
 
 `/api/health` là liveness của Payment API; `/api/ready` kiểm tra cả PostgreSQL.
 
-### 3.3. Alert/AI pipeline hiện tại
+### 4.3. Alert/AI pipeline hiện tại
 
 ```text
 Prometheus/Blackbox/service monitor/log watcher
@@ -96,13 +139,13 @@ Khả năng đã có:
 
 Giới hạn quan trọng:
 
-- `process_alerts_task` xử lý alert riêng; chưa có Celery `group/chord`, specialist agents hoặc Aggregator.
+- `process_alerts_task` xử lý alert riêng; chưa có specialist agents hoặc Aggregator.
 - Incident context chủ yếu ở Redis có TTL; chưa có durable incident state machine.
-- `propose_remediation()` chỉ tạo proposal; chưa phải executor cho EKS/RDS/GitHub.
-- GitHub webhook chưa tải/phân tích workflow logs/artifacts như CI/CD Agent mục tiêu.
-- Chưa có pattern mining, knowledge graph, pgvector hoặc PII/PCI redaction boundary đầy đủ.
+- `propose_remediation()` chỉ tạo proposal; chưa phải executor cho EKS, RDS hoặc GitHub.
+- GitHub webhook chưa tải và phân tích workflow logs/artifacts như CI/CD Agent mục tiêu.
+- Chưa có dependency graph xuyên nghiệp vụ–hạ tầng hoặc redaction boundary đầy đủ.
 
-Kết quả kiểm thử ngày 2026-08-29:
+Kết quả kiểm thử baseline ngày 2026-08-29:
 
 ```text
 PYTHONPATH=agent_src venv/bin/pytest -q agent_src/tests
@@ -111,7 +154,7 @@ PYTHONPATH=agent_src venv/bin/pytest -q agent_src/tests
 
 Warnings gồm API deprecated trong dependency test và `datetime.utcnow()` tại log watcher; không làm test thất bại nhưng cần backlog.
 
-### 3.4. CI/CD hiện tại
+### 4.4. CI/CD hiện tại
 
 - CI lint/test/build ba images và validate Docker Compose.
 - Staging deploy theo changed role.
@@ -119,98 +162,115 @@ Warnings gồm API deprecated trong dependency test và `datetime.utcnow()` tạ
 - Image lưu ở GHCR.
 - Deploy qua SSH tới EC2, health check và rollback bằng `automation/app-release-deploy.sh`.
 
-Chưa có GitHub OIDC với AWS, EKS deployment, SAST/DAST đầy đủ, workflow telemetry hoặc canonical deployment identity.
+Chưa có GitHub OIDC với AWS, EKS deployment hoặc canonical deployment identity.
 
-## 4. Kiến trúc V2 mục tiêu
+## 5. Các dịch vụ Fintech mẫu
+
+Mobile Banking là luồng end-to-end bắt buộc. Payment API hiện tại được tái sử dụng và mở rộng thành Transaction Service của luồng này.
+
+| Dịch vụ | Phạm vi | Vai trò và scenario |
+|---|---|---|
+| **Mobile Banking** | **Bắt buộc, triển khai đầy đủ** | Đăng nhập, chuyển tiền; migration lỗi, API chậm hoặc dependency không sẵn sàng |
+| Buy Now Pay Later | Scenario pack/service nhỏ | Tạo khoản vay lỗi, thanh toán timeout |
+| Investment App | Scenario pack/service nhỏ | Market data chậm, đặt lệnh thất bại |
+| AI Credit Scoring | Scenario pack/service nhỏ | Thiếu feature, model endpoint chậm |
+
+Ba dịch vụ mở rộng không cần trở thành sản phẩm hoàn chỉnh hoặc có agent runtime riêng. Chúng phải tái sử dụng Incident Core, contracts, dependency model, Aggregator và evaluation harness chung.
+
+Dependency bắt buộc phải truy được:
 
 ```text
-GitHub Actions/webhooks/API                 AWS workload telemetry
-             |                                      |
-             +---------- Ingestion Gateway ----------+
+Mobile Banking
+  -> Transaction Service
+      -> Kubernetes Deployment/Pod
+          -> RDS PostgreSQL
+      -> Load Balancer / VPC path
+      -> GitHub Workflow / Image / Deployment
+```
+
+## 6. Kiến trúc MVP xuyên App–Infrastructure
+
+```text
+GitHub Actions/webhooks              EKS/RDS/application signals
+             |                                  |
+             +--------- Ingestion Gateway ------+
                               |
-               signature/schema/security redaction
+               authentication + schema validation
                               |
-          Event Normalizer + Pattern Mining + Incident Core
+             redaction before operational persistence
                               |
-                    LangGraph Orchestrator
+              Event Normalizer + Incident Core
+                              |
+                    Shared Orchestrator
              +----------------+----------------+
-             |                |                |
-       Kubernetes Agent    RDS Agent    GitHub Actions Agent
-             \                |                /
-              +------- Security/Compliance ---+
+             |                                 |
+       Application layer                Infrastructure layer
+ Mobile Banking Agent                  Kubernetes Agent
+ BNPL/Investment/Credit context        RDS Agent
+                                       GitHub Actions Agent
+                                       Security Agent
+                                       Network/API context
+             \                                 /
+              +-------- Dependency model ------+
                               |
-                  Evidence Aggregator
-          deterministic RCA + impact + uncertainty
+                  deterministic Aggregator
+                RCA + impact + uncertainty
                               |
-                 RAG/LLM explanation
+                   RAG/LLM explanation
                               |
                  Policy + Human approval
                               |
-                 typed controlled action
+                  typed staging action
                               |
-                  Verification Agent
+                independent Verification
                               |
-               audit + reviewed learning
+                  audit + reviewed memory
 ```
 
-### 4.1. Infrastructure
+### 6.1. AWS bắt buộc
 
-- VPC ba AZ với public subnets cho ingress/NAT và private subnets cho EKS/data.
-- NAT Gateway theo AZ cho production reference; POC một NAT phải ghi rõ giới hạn.
-- VPC endpoints cho các AWS services cần thiết.
-- EKS worker và pods ở private subnets; cluster/workload trải ít nhất hai AZ.
-- Managed Node Group ổn định cho system components; Karpenter cho workload biến động.
-- RDS PostgreSQL Multi-AZ, automated backup, KMS, TLS và monitoring.
-- Secrets Manager và short-lived identity.
+- VPC có public và private subnets trên **hai Availability Zone**.
+- EKS chạy Mobile Banking workload trên private worker nodes và trải ít nhất hai AZ.
+- RDS PostgreSQL Multi-AZ lưu dữ liệu ứng dụng.
+- GitHub Actions dùng OIDC và role ngắn hạn để triển khai.
+- CI/CD ghi commit SHA, workflow run, image digest, deployment và migration ID.
+- Metrics, logs và health check thu thập được từ app, EKS, RDS và workflow.
+- Network access tuân thủ least privilege; không expose monitoring hoặc AI API công khai như baseline.
 
-### 4.2. EKS workload
+### 6.2. Production reference và POC
 
-- Namespaces tách `app`, `aiops`, `observability` và `security`.
-- RBAC/service identity least privilege.
-- Resource request/limit, HPA, readiness/liveness/startup probes.
-- PodDisruptionBudget, topology spread và anti-affinity.
-- NetworkPolicy và Security Group chỉ cho phép path cần thiết.
-- Không expose Prometheus/Alertmanager/AI API công khai như baseline.
+- Ba AZ và NAT Gateway theo AZ là production reference.
+- Managed Node Group là lựa chọn mặc định của MVP; Karpenter là POC.
+- Prometheus/CloudWatch là đủ cho MVP; AMP và traces nâng cao là POC.
+- Dependency model có thể dùng PostgreSQL/JSON/YAML được version hóa; Neo4j là POC.
+- ChromaDB hiện tại có thể tiếp tục cho retrieval; PostgreSQL/pgvector mới là POC.
+- LangGraph chạy container trên EKS là mặc định; AgentCore Runtime và A2A deployment là Future Work.
+- Kagent và Langfuse là POC, không phải điều kiện nghiệm thu.
 
-### 4.3. Observability
+## 7. Application Agents và Infrastructure Agents
 
-| Tín hiệu | Nguồn | Đích |
+### 7.1. Application layer
+
+Application Agent cung cấp:
+
+- Business capability và service criticality.
+- Dependency từ chức năng nghiệp vụ tới service kỹ thuật.
+- Business symptom và impact.
+- Runbook/expected behavior theo nghiệp vụ.
+
+Mobile Banking Agent là bắt buộc. BNPL, Investment và Credit Scoring có thể dùng một generic Application Agent nạp scenario/dependency pack thay vì bốn runtime độc lập.
+
+### 7.2. Infrastructure layer
+
+| Agent | Phạm vi bắt buộc | Quyền |
 |---|---|---|
-| Metrics | EKS, app, RDS, GitHub workflow | ADOT/Prometheus -> AMP hoặc CloudWatch |
-| Logs | Pod, EKS audit/control plane, RDS, GitHub, CloudTrail | CloudWatch Logs sau redaction |
-| Traces | Microservices, agent graph, MCP/tool calls, workflow instrumentation | OpenTelemetry -> X-Ray/CloudWatch |
+| Kubernetes Agent | Pod, Deployment, event, resource, readiness | Kubernetes read-only |
+| RDS Agent | Connection, migration, lock, slow query, database status | RDS/monitoring read-only |
+| GitHub Actions Agent | Workflow, job, log, artifact, deployment | GitHub read-only; mutation chỉ qua policy |
+| Security Agent | Redaction, sensitive-data finding, policy veto | Read-only + veto |
+| Network/API context | Load Balancer, endpoint, DNS/network probe | Tool read-only trong MVP; agent riêng là POC |
 
-GitHub webhook là đường near-real-time; polling scheduler là reconciliation fallback. Logs/artifacts được lấy qua GitHub API và redact trước khi lưu hoặc gửi LLM.
-
-### 4.4. Knowledge
-
-- Neo4j lưu quan hệ Repository–Commit–Workflow–Image–Deployment–Kubernetes workload–Service–RDS.
-- Aurora PostgreSQL-compatible/PostgreSQL với `pgvector` lưu embeddings của runbook và incident đã duyệt.
-- ChromaDB hiện tại chỉ giữ như adapter local trong migration.
-- Control-plane database tách khỏi workload database.
-
-### 4.5. Agent runtime
-
-- LangGraph quản lý state machine, branching, checkpoint và loop limit.
-- Orchestrator route theo event/entity/evidence gap, không chỉ theo keyword.
-- Amazon Bedrock là foundation model platform mục tiêu; Claude 3.5 Sonnet từ đặc tả là ứng viên ban đầu. Model ID phải được cấu hình, kiểm thử trong region và ghi vào audit, không hard-code.
-- AgentCore Runtime/Gateway là target sau POC về region, VPC, auth và cost.
-- MCP dùng cho tool contract; A2A dùng cho agent contract.
-- Celery hiện tại có thể tiếp tục ingestion/background trong phase đầu, nhưng không là incident source of truth.
-- Kubernetes Agent dùng custom LangGraph trong MVP; Kagent chỉ là POC tùy chọn dưới cùng RBAC/MCP policy.
-
-Presentation layer mục tiêu gồm Web Dashboard, Slack hoặc Telegram cho HITL, GitHub Checks cho PR/commit và Jira draft. Email/Teams là mở rộng; mọi nội dung phải dùng bản đã redact.
-
-## 5. Agent contracts và quyền
-
-| Agent | Đầu ra bắt buộc | Quyền |
-|---|---|---|
-| Kubernetes Agent | pod/node/deployment diagnosis + evidence IDs | Kubernetes read-only |
-| RDS Agent | query/connection/lock/failover/migration diagnosis | RDS/monitoring read-only |
-| GitHub Actions Agent | workflow/job/log/artifact/deploy diagnosis | GitHub read-only; mutation chỉ qua policy |
-| Security/Compliance Agent | redaction report, policy findings, veto | Read-only + veto |
-| Aggregator | ranked causes, impact, contradictions, uncertainty | Không mutation |
-| Verification Agent | post-condition results | Read-only; quyền cập nhật verification state |
+### 7.3. Shared contracts
 
 Mỗi agent response phải có:
 
@@ -218,149 +278,195 @@ Mỗi agent response phải có:
 schema_version, incident_id, agent_run_id
 status: COMPLETE | PARTIAL | FAILED
 started_at, completed_at
-evidence[], hypotheses[]
+evidence[], hypotheses[], affected_capabilities[]
 tool_calls[], errors[]
 data_classification, redaction_status
 ```
 
-## 6. Luồng xử lý V2
+Orchestrator và Aggregator dùng chung cho cả hai lớp. Agent không tự kết luận RCA cuối cùng và không tự thực hiện mutation.
+
+## 8. Incident Core, Aggregator và state
+
+Incident Core bắt buộc:
+
+- Nhận dữ liệu từ Alertmanager và GitHub Actions.
+- Chuẩn hóa về event schema chung.
+- Redact secret, PII và PCI trước operational persistence và trước LLM.
+- Lưu incident, evidence, agent run, approval, verification và audit bền vững.
+- Gom event trùng hoặc liên quan vào cùng incident.
+- Xử lý timeout, retry giới hạn, dữ liệu thiếu và agent failure.
+
+Luồng:
 
 ```text
 Signal
   -> authenticate/validate
-  -> redact PII/PCI/secret
-  -> normalize event
-  -> mine/score pattern
+  -> redact
+  -> normalize
   -> deduplicate/correlate
-  -> create or update incident
-  -> LangGraph parallel investigation
-  -> Aggregator
+  -> incident
+  -> Application + Infrastructure investigation
+  -> deterministic Aggregator
   -> RAG/LLM explanation
-  -> policy decision
-  -> approval when required
-  -> typed action
+  -> policy/approval
+  -> staging action
   -> independent verification
-  -> RESOLVED/FAILED/ESCALATED
-  -> reviewed incident/pattern memory
+  -> RESOLVED / VERIFICATION_FAILED / ESCALATED
 ```
 
-Chỉ Verification Agent hoặc deterministic verification service được tạo `RESOLVED`. Exit code thành công không đủ.
+Event trùng chuyển `DUPLICATE` và liên kết về canonical event/incident; nó không tạo incident mới. Approval phải hỗ trợ `REJECTED` và `EXPIRED`. Verification không đạt chuyển `VERIFICATION_FAILED`, không được chuyển `RESOLVED`.
 
-## 7. Pattern mining và self-evolution
+Aggregator:
 
-Log được redact, normalize và phân cụm bằng Drain/Drain3 hoặc thuật toán LogPAI được chọn. Baseline phải có scope theo service, environment và application version.
+- Gom và loại evidence trùng.
+- Phát hiện evidence mâu thuẫn hoặc quá cũ.
+- Xếp hạng nguyên nhân bằng công thức deterministic đã đóng băng.
+- Gắn từng claim với evidence ID.
+- Nêu uncertainty và affected business capabilities.
+- Tạo remediation plan theo schema cố định.
 
-```text
-CANDIDATE -> OBSERVED -> REVIEWED_NORMAL
-                     \-> REVIEWED_ABNORMAL
-                     \-> QUARANTINED
+LLM chỉ viết phần giải thích dễ đọc; không sửa score, evidence hoặc policy decision.
 
-REVIEWED_NORMAL -> DRIFTED -> CANDIDATE
-```
-
-Ba mode:
-
-1. Training trên window đã loại incident/maintenance.
-2. Shadow chỉ đo, không action.
-3. Active sau validation.
-
-Self-evolution chỉ promote runbook, incident memory hoặc pattern sau verification/review. Không tự fine-tune model weights và không tự học từ LLM output chưa kiểm chứng.
-
-## 8. Canonical identity xuyên CI/CD–production
+## 9. Canonical identity xuyên CI/CD–App–Infrastructure
 
 Mỗi deployment record phải nối được:
 
 ```text
-repository -> commit_sha -> pull_request -> workflow_run/job
+business_capability -> application_service
+-> repository -> commit_sha -> pull_request -> workflow_run/job
 -> artifact/image_digest -> deployment_id
 -> EKS cluster/namespace/workload/revision
 -> database_migration_id
 ```
 
-Thiếu chuỗi identity này thì GitHub Actions Agent chỉ có thể báo lỗi CI riêng lẻ, chưa thể chẩn đoán cross-domain.
+Thiếu chuỗi này thì hệ thống chỉ chẩn đoán từng tầng riêng lẻ, chưa đạt mục tiêu xuyên App–Infrastructure.
 
-## 9. Security, HITL và audit
+## 10. Security, HITL và audit
 
 - Webhook phải có signature/auth, replay protection và schema validation.
-- Redaction xảy ra trước LLM, vector store, trace và notification.
+- Operational incident/evidence/knowledge stores chỉ nhận dữ liệu đã redact.
+- Nếu cần giữ raw log cho điều tra, dùng kho tách biệt, mã hóa, quyền hạn chế và retention riêng; raw log không đi vào LLM/knowledge.
 - GitHub Actions dùng OIDC với trust conditions; không giữ AWS access key dài hạn.
-- MCP tools có input/output schema, target allowlist, timeout, rate limit và audit.
-- LLM không có generic shell/SSH/`kubectl`/AWS/SQL mutation.
-- Rerun workflow, restart/scale staging là action có kiểm soát.
-- Production rollback, RDS failover hoặc secret rotation yêu cầu approval rủi ro cao.
-- IAM/SG broadening và destructive migration bị từ chối tự động.
+- Tool có input/output schema, target allowlist, timeout, rate limit và audit.
+- LLM không có generic shell, SSH, `kubectl`, AWS hoặc SQL mutation.
+- Khóa luận chỉ chạy remediation trên staging.
+- Rerun transient job hoặc restart/rollback deployment staging phải qua policy và approval theo mức rủi ro.
+- Production mutation, IAM/SG change, database schema change và secret rotation bị vô hiệu trong MVP.
 - Approval có plan hash, expiry, target, environment và approver identity.
-- Audit store append-only; Langfuse/agent trace không thay thế audit.
+- Chỉ Verification Agent/deterministic verifier được tạo `RESOLVED`.
 
-## 10. Kịch bản và đánh giá bắt buộc
+## 11. Kịch bản và đánh giá
 
-Kịch bản trung tâm: deployment thất bại do database migration. GitHub Agent, RDS Agent và Kubernetes Agent phải phối hợp để xác định migration là root cause và rollout/pod readiness là impact.
+### 11.1. Kịch bản trung tâm bắt buộc
 
-Các scenario bổ sung:
+```text
+Database migration lỗi
+  -> GitHub deployment không hoàn tất
+  -> Transaction Service không sẵn sàng trên EKS
+  -> Mobile Banking không chuyển tiền được
+```
 
-- Pod CrashLoopBackOff/OOMKilled.
+Hệ thống phải xác định migration là root cause; API, pod readiness và giao dịch lỗi là ảnh hưởng lan truyền. Báo cáo phải có technical impact lẫn business impact.
+
+### 11.2. Kịch bản bắt buộc bổ sung
+
+- Pod CrashLoopBackOff hoặc OOMKilled.
 - RDS failover.
-- Flaky test và GitHub rate limit.
-- Webhook downtime với polling fallback.
-- Secret/PII leakage trong CI log.
-- Prometheus hoặc LLM outage.
-- Verification failure sau action.
+- GitHub workflow failure hoặc webhook bị mất.
+- Secret/PII xuất hiện trong log.
+- Một agent hoặc nguồn dữ liệu bị gián đoạn.
+- Verification thất bại sau action.
 
-So sánh:
+### 11.3. Scenario mở rộng
+
+- BNPL: tạo khoản vay lỗi hoặc payment timeout.
+- Investment: market data chậm hoặc order failure.
+- AI Credit Scoring: thiếu feature hoặc model endpoint chậm.
+
+Các scenario này chứng minh khả năng tái sử dụng nền tảng, không bắt buộc xây thêm full-stack production.
+
+### 11.4. Hai nhóm đánh giá
+
+| Nhóm | Câu hỏi | Ví dụ metric |
+|---|---|---|
+| **AWS Platform** | Workload mục tiêu có được triển khai và chịu lỗi đúng thiết kế không? | deploy success, pod/AZ continuity, RDS failover/recovery, OIDC success |
+| **AIOps Quality** | Multi-Agent có điều tra tốt hơn baseline không? | alert compression, RCA top-1/top-3, impact accuracy, evidence coverage, MTTD/MTTR, safety |
+
+Tách hai nhóm để không quy toàn bộ cải thiện AIOps cho việc thay EC2 bằng EKS/RDS.
+
+Phương pháp so sánh:
 
 | Mã | Phương pháp |
 |---|---|
-| B0 | Baseline EC2 hiện tại |
+| B0 | Baseline EC2: alert riêng lẻ + runbook/Gemini + Telegram |
 | B1 | Rule correlation + dependency |
-| B2 | Multi-Agent không pattern/graph đầy đủ |
-| P | V2 đầy đủ |
+| P | Application + Infrastructure Agents + deterministic Aggregator |
 
-Metrics: MTTD, MTTR, alert compression, RCA top-1/top-3, cross-domain accuracy, evidence coverage, false positive, redaction recall, HITL compliance, false resolution, latency và cost/incident.
+Trước benchmark chính chạy ba pilot runs để sửa harness, sau đó đóng băng code/config/weight/prompt. Benchmark chính chạy **tối thiểu 10 lần độc lập cho mỗi cặp scenario–method**, dùng cùng fault profile và ground truth; báo cáo median, IQR, min/max và failure count.
 
-Các con số trong đặc tả là acceptance targets cần đo, không phải kết quả đã đạt.
+## 12. Tiêu chí hoàn thành khóa luận
 
-## 11. Khoảng cách triển khai
+- Ứng dụng Mobile Banking mẫu chạy được trên EKS.
+- EKS workload trải ít nhất hai AZ.
+- Database ứng dụng chạy trên RDS PostgreSQL Multi-AZ.
+- Có ít nhất một pipeline GitHub Actions dùng OIDC.
+- Có deployment identity nối commit–workflow–image–EKS–migration.
+- Một sự cố migration được liên kết từ GitHub tới Kubernetes, RDS và Mobile Banking.
+- Một lỗi hạ tầng được liên kết tới capability nghiệp vụ bị ảnh hưởng.
+- Ít nhất một scenario BNPL, Investment hoặc Credit Scoring tái sử dụng nền tảng chung.
+- Các agent trả evidence có cấu trúc và biểu diễn partial failure.
+- Aggregator xác định root cause/impact bằng công thức đã đóng băng.
+- Dữ liệu nhạy cảm không xuất hiện trong prompt, notification hoặc knowledge store.
+- Có ít nhất một remediation staging chạy qua policy, approval và verification.
+- Verification thất bại không được ghi nhận là resolved.
+- Có benchmark B0, B1 và P với ground truth và số lần chạy đã quy định.
+- Có dữ liệu thô đã sanitized, script tính metric, biểu đồ và mô tả giới hạn.
 
-| Nhóm | Hiện trạng | V2 cần đạt |
+## 13. Khoảng cách triển khai
+
+| Nhóm | Hiện trạng | Kết quả bắt buộc |
 |---|---|---|
-| HA | EC2 single-AZ | EKS/RDS Multi-AZ và failure evidence |
-| CI/CD identity | SSH deploy theo role | OIDC + immutable deployment identity |
-| Observability | Metrics/alerts là chính | metrics/logs/traces + GitHub telemetry |
-| Detection | Threshold | pattern mining + time-window anomaly |
-| Multi-Agent | Chưa có specialist/Aggregator | LangGraph + four domain agents + Aggregator |
-| State | Redis TTL | durable incident/evidence/audit store |
-| Knowledge | ChromaDB | reviewed graph + pgvector |
-| Security | HMAC GitHub và SG | redaction, policy, SoD, KMS, full audit |
-| Remediation | Proposal + EC2 release rollback | typed staging actions + HITL + verification |
-| Evaluation | Unit tests, chưa benchmark V2 | replay dataset, ground truth, baseline và ablation |
+| AWS | EC2 single-AZ | VPC hai AZ, EKS private workload, RDS Multi-AZ |
+| Fintech app | Frontend + Payment API | Mobile Banking end-to-end + scenario pack tái sử dụng |
+| CI/CD | SSH deploy theo role | OIDC + immutable deployment identity |
+| Observability | Metrics/alerts là chính | metrics, logs, health checks + GitHub events |
+| Incident | Redis TTL, alert riêng | durable event/incident/evidence/audit và correlation |
+| Multi-Agent | Chưa có specialist/Aggregator | Application layer + bốn Infrastructure Agents tối thiểu |
+| Dependency | Label/runbook rời rạc | App–service–Kubernetes–RDS–network–deployment links |
+| Security | HMAC GitHub và SG | redaction trước persistence/LLM, policy và HITL |
+| Remediation | Proposal + EC2 release rollback | ít nhất một typed staging action + verification |
+| Evaluation | Unit tests, chưa benchmark V2 | ground truth, pilot, repeated benchmark và ablation phù hợp |
 
-## 12. Nguyên tắc phát triển
+## 14. Nguyên tắc phát triển
 
 - Giữ baseline hoạt động đến khi EKS staging đạt acceptance test.
-- Tách rõ “đã có”, “POC”, “mục tiêu” và “mở rộng”.
+- Không hạ EKS/RDS/OIDC xuống “nếu còn thời gian”.
+- Giảm độ sâu POC/Future Work trước khi cắt luồng Mobile Banking xuyên tầng.
 - Chốt schema và security boundary trước khi thêm agent.
-- Deterministic preprocessing/scoring/policy trước LLM.
+- Deterministic preprocessing, scoring và policy đứng trước LLM.
 - Mọi claim có evidence; không đủ evidence thì `INCONCLUSIVE/ESCALATED`.
-- Mỗi graph có loop limit, deadline và tool budget.
 - Mọi mutation có typed action, policy, idempotency, audit và verification.
 - Không dùng workload database làm control-plane database.
 - Không ghi trước số liệu thực nghiệm.
 - Không commit secret, `.env`, Terraform state, key hoặc runtime data.
 
-## 13. Decision gates
+## 15. Decision gates
 
-| Quyết định | Default | Điều kiện thay đổi |
+| Quyết định | Mặc định cho khóa luận | Phân loại |
 |---|---|---|
-| Agent orchestration | LangGraph | Chỉ đổi khi benchmark/reliability chứng minh |
-| Agent deployment | EKS trước, AgentCore POC | Chuyển AgentCore khi region/VPC/auth/cost đạt |
-| Foundation model | Amazon Bedrock, model qua cấu hình | Model phải có trong region và vượt evaluation; không hard-code |
-| Metrics store | AMP hoặc CloudWatch theo POC | Chốt theo query/cost/retention |
-| Vector store | PostgreSQL/pgvector target | ChromaDB chỉ local migration |
-| Graph | Neo4j | Có fallback relational edges nếu vận hành quá nặng |
-| CI event collection | Webhook + API polling | OTel workflow telemetry là bổ sung |
-| Production mutation | Disabled mặc định | Chỉ mở sau policy/security review ngoài phạm vi MVP |
+| AWS topology | VPC hai AZ, EKS Managed Node Group, RDS Multi-AZ | Bắt buộc |
+| Agent orchestration | LangGraph container trên EKS | Bắt buộc |
+| Foundation model | Gemini baseline; Amazon Bedrock model qua cấu hình nếu tích hợp đạt | Bedrock integration là POC, LLM vendor không quyết định đóng góp |
+| Dependency storage | PostgreSQL/JSON/YAML version hóa | Bắt buộc |
+| Graph database | Neo4j | POC |
+| Vector store | Giữ ChromaDB adapter; pgvector mới | pgvector là POC |
+| Observability | Prometheus/CloudWatch metrics, logs, health checks | Bắt buộc |
+| Advanced observability | AMP, distributed traces, Langfuse | POC |
+| Node autoscaling | Managed Node Group | Bắt buộc; Karpenter là POC |
+| Agent deployment protocol | Internal typed contracts | Bắt buộc; AgentCore/A2A là Future Work |
+| Production mutation | Disabled | Future Work sau security review |
 
-## 14. Tài liệu tham chiếu
+## 16. Tài liệu tham chiếu
 
 Tài liệu local:
 
@@ -370,17 +476,13 @@ Tài liệu local:
 | `PRODUCTION_ARCHITECTURE_COMPLETE.md` | Kiến trúc EC2 hiện tại |
 | `docs/PLANNING.md`, `docs/CONTEXT.md` | Format V1 |
 | `docs/PLANNING_V2.md` | Kế hoạch triển khai chi tiết V2 |
+| `docs/REVIEW_CONTEXT_PLANNING_V2.md` | Nhận xét dùng để chốt phạm vi V2.1 |
 | `agent_src/README.md`, `agent_src/RAG_SYSTEM_GUIDE.md` | AI Agent và RAG hiện tại |
 | `docs/AIops_CICD.md` | CI/CD hiện tại |
 
 Tài liệu chính thức cần kiểm tra khi triển khai:
 
-- [Amazon EKS Karpenter best practices](https://docs.aws.amazon.com/eks/latest/best-practices/karpenter.html)
 - [Amazon EKS VPC and subnet considerations](https://docs.aws.amazon.com/eks/latest/best-practices/subnets.html)
 - [Amazon RDS Multi-AZ deployments](https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/Concepts.MultiAZSingleStandby.html)
 - [GitHub Actions OIDC with AWS](https://docs.github.com/en/actions/how-tos/secure-your-work/security-harden-deployments/oidc-in-aws)
 - [GitHub workflow run logs](https://docs.github.com/en/actions/how-tos/monitor-workflows/use-workflow-run-logs)
-- [Amazon Managed Service for Prometheus on EKS](https://docs.aws.amazon.com/eks/latest/userguide/prometheus.html)
-- [OTel Container Insights for Amazon EKS](https://docs.aws.amazon.com/AmazonCloudWatch/latest/monitoring/container-insights-eks-otel.html)
-- [Amazon Bedrock AgentCore A2A](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/runtime-a2a.html)
-- [Amazon Bedrock AgentCore Gateway with MCP](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/gateway-using.html)
